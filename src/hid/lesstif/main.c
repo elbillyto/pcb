@@ -167,6 +167,7 @@ static int n;
 static int use_private_colormap = 0;
 static int stdin_listen = 0;
 static char *background_image_file = 0;
+char *lesstif_pcbmenu_path = "pcb-menu.res";
 
 HID_Attribute lesstif_attribute_list[] = {
   {"install", "Install private colormap",
@@ -179,8 +180,11 @@ HID_Attribute lesstif_attribute_list[] = {
 
   {"bg-image", "Background Image",
    HID_String, 0, 0, {0, 0, 0}, 0, &background_image_file},
-#define HA_bg_image 1
+#define HA_bg_image 2
 
+  {"pcb-menu", "Location of pcb-menu.res file",
+   HID_String, 0, 0, {0, PCBLIBDIR "/pcb-menu.res", 0}, 0, &lesstif_pcbmenu_path}
+#define HA_pcbmenu 3
 };
 
 REGISTER_ATTRIBUTES (lesstif_attribute_list)
@@ -540,16 +544,34 @@ side'' of the board.
 %end-doc */
 
 static int
+group_showing (int g, int *c)
+{
+  int i, l;
+  *c = PCB->LayerGroups.Entries[g][0];
+  for (i=0; i<PCB->LayerGroups.Number[g]; i++)
+    {
+      l = PCB->LayerGroups.Entries[g][i];
+      if (l >= 0 && l < max_copper_layer)
+	{
+	  *c = l;
+	  if (PCB->Data->Layer[l].On)
+	    return 1;
+	}
+    }
+  return 0;
+}
+
+static int
 SwapSides (int argc, char **argv, int x, int y)
 {
   int old_shown_side = Settings.ShowSolderSide;
-  int comp_group = GetLayerGroupNumberByNumber (max_layer + COMPONENT_LAYER);
-  int solder_group = GetLayerGroupNumberByNumber (max_layer + SOLDER_LAYER);
+  int comp_group = GetLayerGroupNumberByNumber (component_silk_layer);
+  int solder_group = GetLayerGroupNumberByNumber (solder_silk_layer);
   int active_group = GetLayerGroupNumberByNumber (LayerStack[0]);
-  int comp_showing =
-    PCB->Data->Layer[PCB->LayerGroups.Entries[comp_group][0]].On;
-  int solder_showing =
-    PCB->Data->Layer[PCB->LayerGroups.Entries[solder_group][0]].On;
+  int comp_layer;
+  int solder_layer;
+  int comp_showing = group_showing (comp_group, &comp_layer);
+  int solder_showing = group_showing (solder_group, &solder_layer);
 
   if (argc > 0)
     {
@@ -602,10 +624,8 @@ SwapSides (int argc, char **argv, int x, int y)
 	  if (active_group == comp_group)
 	    {
 	      if (comp_showing && !solder_showing)
-		ChangeGroupVisibility (PCB->LayerGroups.Entries[comp_group][0], 0,
-				       0);
-	      ChangeGroupVisibility (PCB->LayerGroups.Entries[solder_group][0], 1,
-				     1);
+		ChangeGroupVisibility (comp_layer, 0, 0);
+	      ChangeGroupVisibility (solder_layer, 1, 1);
 	    }
 	}
       else
@@ -613,10 +633,8 @@ SwapSides (int argc, char **argv, int x, int y)
 	  if (active_group == solder_group)
 	    {
 	      if (solder_showing && !comp_showing)
-		ChangeGroupVisibility (PCB->LayerGroups.Entries[solder_group][0], 0,
-				       0);
-	      ChangeGroupVisibility (PCB->LayerGroups.Entries[comp_group][0], 1,
-				     1);
+		ChangeGroupVisibility (solder_layer, 0, 0);
+	      ChangeGroupVisibility (comp_layer, 1, 1);
 	    }
 	}
     }
@@ -1091,7 +1109,8 @@ DrawBackgroundImage ()
 static HID_Attribute *
 lesstif_get_export_options (int *n)
 {
-  return 0;
+  *n = sizeof (lesstif_attribute_list) / sizeof (HID_Attribute);
+  return lesstif_attribute_list;
 }
 
 static void
@@ -2807,9 +2826,17 @@ static int
 lesstif_set_layer (const char *name, int group, int empty)
 {
   int idx = group;
-  if (idx >= 0 && idx < max_layer)
+  if (idx >= 0 && idx < max_group)
     {
-      idx = PCB->LayerGroups.Entries[idx][0];
+      int n = PCB->LayerGroups.Number[group];
+      for (idx = 0; idx < n-1; idx ++)
+	{
+	  int ni = PCB->LayerGroups.Entries[group][idx];
+	  if (ni >= 0 && ni < max_copper_layer + 2
+	      && PCB->Data->Layer[ni].On)
+	    break;
+	}
+      idx = PCB->LayerGroups.Entries[group][idx];
 #if 0
       if (idx == LayerStack[0]
 	  || GetLayerGroupNumberByNumber (idx) ==
@@ -2823,7 +2850,7 @@ lesstif_set_layer (const char *name, int group, int empty)
   else
     autofade = 0;
 #endif
-  if (idx >= 0 && idx < max_layer + 2)
+  if (idx >= 0 && idx < max_copper_layer + 2)
     return pinout ? 1 : PCB->Data->Layer[idx].On;
   if (idx < 0)
     {

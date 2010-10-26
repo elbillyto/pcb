@@ -234,7 +234,9 @@ static int Parse(char *Executable, char *Path, char *Filename, char *Parameter)
 	    yyin = fopen (tmps, "r");
 	    if (!yyin)
 	      {
-		Message("Can't open %s for reading\n", tmps);
+	        /* Special case this one, we get it all the time... */
+	        if (strcmp (tmps, "./default_font"))
+		  Message("Can't open %s for reading\n", tmps);
 		return(1);
 	      }
             free (tmps);
@@ -342,11 +344,15 @@ int ParseFont(FontTypePtr Ptr, char *Filename)
 	for (p = strtok (path, PCB_PATH_DELIMETER); p && *p;
 		p = strtok (NULL, PCB_PATH_DELIMETER))
 	  {
+#ifdef DEBUG
             Message ("Looking for %s in %s\n", Filename, p);
+#endif
 	    r = Parse(Settings.FontCommand, p, Filename, NULL);
             if (r == 0)
               {
+#ifdef DEBUG
                 Message ("Found %s in %s\n", Filename, p);
+#endif
                 break;
               }
           }

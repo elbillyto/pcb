@@ -218,13 +218,11 @@ static ToggleFlagType *tflags = 0;
 static int n_tflags = 0;
 static int max_tflags = 0;
 
-extern HID ghid_hid;
-
 GhidGui _ghidgui, *ghidgui = NULL;
 
 GHidPort ghid_port, *gport;
 
-static GdkColor WhitePixel, BlackPixel;
+static GdkColor WhitePixel;
 
 static gchar		*bg_image_file;
 
@@ -378,7 +376,7 @@ ghid_update_toggle_flags ()
       a = gtk_action_group_get_action (ghidgui->main_actions, tmpnm);
       if (a != NULL)
 	{
-	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_layer && i < MAX_LAYER) ? &setfalse : &settrue);
+	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_copper_layer && i < MAX_LAYER) ? &setfalse : &settrue);
 	}
 
     }
@@ -1050,7 +1048,7 @@ ghid_make_programmed_menu_actions ()
     {
       layer_process (NULL, &text, NULL, i);
 #ifdef DEBUG_MENUS
-      printf ("ghid_make_programmed_menu_actions():  Added #%2d \"%s\".  max_layer = %d, MAX_LAYER = %d\n", i, text, max_layer, MAX_LAYER);
+      printf ("ghid_make_programmed_menu_actions():  Added #%2d \"%s\".  max_copper_layer = %d, MAX_LAYER = %d\n", i, text, max_copper_layer, MAX_LAYER);
 #endif
       /* name, stock_id, label, accelerator, tooltip, callback */
       layerview_toggle_entries[i].name = g_strdup_printf ("%s%d", LAYERVIEW, i);
@@ -1349,7 +1347,7 @@ layer_select_button_cb (GtkWidget * widget, LayerButtonSet * lb)
   PCB->SilkActive = (lb->index == LAYER_BUTTON_SILK);
   PCB->RatDraw = (lb->index == LAYER_BUTTON_RATS);
 
-  if (lb->index < max_layer)
+  if (lb->index < max_copper_layer)
     ChangeGroupVisibility (lb->index, true, true);
 
   layer_select_button_index = lb->index;
@@ -1421,10 +1419,10 @@ layer_enable_button_cb (GtkWidget * widget, gpointer data)
          |  Xt PCB code.
        */
       if ((group = GetGroupOfLayer (layer)) ==
-	  GetGroupOfLayer (MIN (max_layer, INDEXOFCURRENT)))
+	  GetGroupOfLayer (MIN (max_copper_layer, INDEXOFCURRENT)))
 	{
-	  for (i = (layer + 1) % (max_layer + 1); i != layer;
-	       i = (i + 1) % (max_layer + 1))
+	  for (i = (layer + 1) % (max_copper_layer + 1); i != layer;
+	       i = (i + 1) % (max_copper_layer + 1))
 	    if (PCB->Data->Layer[i].On == true &&
 		GetGroupOfLayer (i) != group)
 	      break;
@@ -1493,7 +1491,7 @@ ghid_show_layer_buttons(void)
 	for (i = 0; i < MAX_LAYER; ++i)
 	{
 		lb = &layer_buttons[i];
-		if (i < max_layer)
+		if (i < max_copper_layer)
 		  {
 			gtk_widget_show(lb->layer_enable_button);
 			gtk_widget_show(lb->radio_select_button);
@@ -1621,7 +1619,7 @@ ghid_layer_enable_buttons_update (void)
   /* Update layer button labels and active state to state inside of PCB
    */
   layer_enable_button_cb_hold_off = TRUE;
-  for (i = 0; i < max_layer; ++i)
+  for (i = 0; i < max_copper_layer; ++i)
     {
       lb = &layer_buttons[i];
       s = UNKNOWN (PCB->Data->Layer[i].Name);
@@ -1726,7 +1724,7 @@ ghid_layer_buttons_update (void)
   else
     layer = PCB->SilkActive ? LAYER_BUTTON_SILK : LayerStack[0];
 
-  if (layer < max_layer)
+  if (layer < max_copper_layer)
     active = PCB->Data->Layer[layer].On;
   else if (layer == LAYER_BUTTON_SILK)
     active = PCB->ElementOn;
@@ -1756,7 +1754,7 @@ ghid_layer_buttons_update (void)
 
       if (a != NULL)
 	{
-	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_layer && i < MAX_LAYER) ? &setfalse : &settrue);
+	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_copper_layer && i < MAX_LAYER) ? &setfalse : &settrue);
 	  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (a), (set && (i == layer) ) ? TRUE : FALSE);
 	  g_object_set_property (G_OBJECT (a), "label", &setlabel);
 	}
@@ -1765,7 +1763,7 @@ ghid_layer_buttons_update (void)
       a = gtk_action_group_get_action (ghidgui->main_actions, tmpnm);
       if (a != NULL)
 	{
-	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_layer && i < MAX_LAYER) ? &setfalse : &settrue);
+	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_copper_layer && i < MAX_LAYER) ? &setfalse : &settrue);
 	  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (a), set ? TRUE : FALSE);
 	  g_value_set_string (&setlabel, text);
 	  g_object_set_property (G_OBJECT (a), "label", &setlabel);
@@ -2504,7 +2502,6 @@ ghid_create_pcb_widgets (void)
   GError	*err = NULL;
 
   gdk_color_parse ("white", &WhitePixel);
-  gdk_color_parse ("black", &BlackPixel);
 
   if (bg_image_file)
     ghidgui->bg_pixbuf = gdk_pixbuf_new_from_file(bg_image_file, &err);
@@ -2591,7 +2588,10 @@ ghid_create_listener (void)
 
 
 /* ------------------------------------------------------------ */
+
 static int stdin_listen = 0;
+static char *pcbmenu_path = "gpcb-menu.res";
+
 HID_Attribute ghid_attribute_list[] = {
   {"listen", "Listen for actions on stdin",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, &stdin_listen},
@@ -2601,9 +2601,19 @@ HID_Attribute ghid_attribute_list[] = {
    HID_String, 0, 0, {0, 0, 0}, 0, &bg_image_file},
 #define HA_bg_image 1
 
+{"pcb-menu", "Location of gpcb-menu.res file",
+   HID_String, 0, 0, {0, PCBLIBDIR "/gpcb-menu.res", 0}, 0, &pcbmenu_path}
+#define HA_pcbmenu 2
 };
 
 REGISTER_ATTRIBUTES (ghid_attribute_list)
+
+HID_Attribute *
+ghid_get_export_options (int *n_ret)
+{
+  *n_ret = sizeof (ghid_attribute_list) / sizeof (HID_Attribute);
+  return ghid_attribute_list;
+}
 
   /* Create top level window for routines that will need top_window
      |  before ghid_create_pcb_widgets() is called.
@@ -2801,7 +2811,7 @@ ToggleView (int argc, char **argv, int x, int y)
   else
     {
       l = -1;
-      for (i = 0; i < max_layer + 2; i++)
+      for (i = 0; i < max_copper_layer + 2; i++)
 	if (strcmp (argv[0], PCB->Data->Layer[i].Name) == 0)
 	  {
 	    l = i;
@@ -2880,15 +2890,6 @@ HID_Action gtk_topwindow_action_list[] = {
 
 REGISTER_ACTIONS (gtk_topwindow_action_list)
 
-static char *pcbmenu_path = "gpcb-menu.res";
-
-static HID_Attribute pcbmenu_attr[] = {
-{"pcb-menu", "Location of gpcb-menu.res file",
-   HID_String, 0, 0, {0, PCBLIBDIR "/gpcb-menu.res", 0}, 0, &pcbmenu_path}
-};
-
-REGISTER_ATTRIBUTES (pcbmenu_attr) 
-     
 /* 
  * This function is used to check if a specified hotkey in the menu
  * resource file is "special".  In this case "special" means that gtk

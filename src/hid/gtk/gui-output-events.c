@@ -407,6 +407,7 @@ ghid_show_crosshair (gboolean show)
 {
   gint x, y;
   static gint x_prev = -1, y_prev = -1;
+  static gboolean draw_markers, draw_markers_prev = FALSE;
   static GdkGC *xor_gc;
   static GdkColor cross_color;
 
@@ -429,7 +430,7 @@ ghid_show_crosshair (gboolean show)
   if (x_prev >= 0)
     {
       draw_crosshair (xor_gc, x_prev, y_prev);
-      if (ghidgui->auto_pan_on && have_crosshair_attachments ())
+      if (draw_markers_prev)
 	{
 	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
 			      0, y_prev - VCD, VCD, VCW);
@@ -445,7 +446,8 @@ ghid_show_crosshair (gboolean show)
   if (x >= 0 && show)
     {
       draw_crosshair (xor_gc, x, y);
-      if (ghidgui->auto_pan_on && have_crosshair_attachments ())
+      draw_markers = ghidgui->auto_pan_on && have_crosshair_attachments ();
+      if (draw_markers)
 	{
 	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
 			      0, y - VCD, VCD, VCW);
@@ -458,9 +460,13 @@ ghid_show_crosshair (gboolean show)
 	}
       x_prev = x;
       y_prev = y;
+      draw_markers_prev = draw_markers;
     }
   else
-    x_prev = y_prev = -1;
+    {
+      x_prev = y_prev = -1;
+      draw_markers_prev = FALSE;
+    }
 }
 
 static gboolean
@@ -775,7 +781,7 @@ describe_location (LocationType X, LocationType Y)
 
   /* don't mess with silk objects! */
   if (type & SILK_TYPE &&
-      GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1) >= max_layer)
+      GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1) >= max_copper_layer)
     return NULL;
 
   if (type == PIN_TYPE || type == PAD_TYPE)

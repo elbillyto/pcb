@@ -110,7 +110,8 @@ static struct
 float
 GetValue (char *val, char *units, bool * absolute)
 {
-  float value;
+  double value;
+  int n = -1;
 
   /* if the first character is a sign we have to add the
    * value to the current one
@@ -118,7 +119,8 @@ GetValue (char *val, char *units, bool * absolute)
   if (*val == '=')
     {
       *absolute = true;
-      value = atof (val + 1);
+      sscanf (val+1, "%lf%n", &value, &n);
+      n++;
     }
   else
     {
@@ -126,14 +128,21 @@ GetValue (char *val, char *units, bool * absolute)
         *absolute = true;
       else
         *absolute = false;
-      value = atof (val);
+      sscanf (val, "%lf%n", &value, &n);
     }
+  if (!units && n > 0)
+    units = val + n;
+    
   if (units && *units)
     {
       if (strncasecmp (units, "mm", 2) == 0)
         value *= MM_TO_COOR;
+      else if (strncasecmp (units, "cm", 2) == 0)
+        value *= MM_TO_COOR * 10;
       else if (strncasecmp (units, "mil", 3) == 0)
         value *= 100;
+      else if (strncasecmp (units, "in", 3) == 0)
+        value *= 100000;
     }
   return value;
 }
@@ -495,7 +504,7 @@ IsDataEmpty (DataTypePtr Data)
 
   hasNoObjects = (Data->ViaN == 0);
   hasNoObjects &= (Data->ElementN == 0);
-  for (i = 0; i < max_layer + 2; i++)
+  for (i = 0; i < max_copper_layer + 2; i++)
     hasNoObjects = hasNoObjects &&
       Data->Layer[i].LineN == 0 &&
       Data->Layer[i].ArcN == 0 &&
@@ -1002,11 +1011,11 @@ PushOnTopOfLayerStack (int NewTop)
 {
   int i;
 
-  /* ignore COMPONENT_LAYER and SOLDER_LAYER */
-  if (NewTop < max_layer)
+  /* ignore silk layers */
+  if (NewTop < max_copper_layer)
     {
       /* first find position of passed one */
-      for (i = 0; i < max_layer; i++)
+      for (i = 0; i < max_copper_layer; i++)
         if (LayerStack[i] == NewTop)
           break;
 
@@ -1036,13 +1045,13 @@ ChangeGroupVisibility (int Layer, bool On, bool ChangeStackOrder)
             Layer, On, ChangeStackOrder);
 
   /* decrement 'i' to keep stack in order of layergroup */
-  if ((group = GetGroupOfLayer (Layer)) < max_layer)
+  if ((group = GetGroupOfLayer (Layer)) < max_group)
     for (i = PCB->LayerGroups.Number[group]; i;)
       {
         int layer = PCB->LayerGroups.Entries[group][--i];
 
         /* don't count the passed member of the group */
-        if (layer != Layer && layer < max_layer)
+        if (layer != Layer && layer < max_copper_layer)
           {
             PCB->Data->Layer[layer].On = On;
 
@@ -1101,9 +1110,9 @@ LayerStringToLayerStack (char *s)
 	}
     }
 
-  for (i = 0; i < max_layer + 2; i++)
+  for (i = 0; i < max_copper_layer + 2; i++)
     {
-      if (i < max_layer)
+      if (i < max_copper_layer)
         LayerStack[i] = i;
       PCB->Data->Layer[i].On = false;
     }
@@ -1140,7 +1149,7 @@ LayerStringToLayerStack (char *s)
       else
 	{
 	  int found = 0;
-	  for (lno = 0; lno < max_layer; lno++)
+	  for (lno = 0; lno < max_copper_layer; lno++)
 	    if (strcasecmp (args[i], PCB->Data->Layer[lno].Name) == 0)
 	      {
 		ChangeGroupVisibility (lno, true, true);
@@ -1154,7 +1163,7 @@ LayerStringToLayerStack (char *s)
 		{
 		  fprintf (stderr, "Named layers in this board are:\n");
 		  listed_layers = 1;
-		  for (lno=0; lno < max_layer; lno ++)
+		  for (lno=0; lno < max_copper_layer; lno ++)
 		    fprintf(stderr, "\t%s\n", PCB->Data->Layer[lno].Name);
 		  fprintf(stderr, "Also: component, solder, rats, invisible, pins, vias, elements or silk, mask, solderside.\n");
 		}
@@ -1165,20 +1174,21 @@ LayerStringToLayerStack (char *s)
 
 /* ----------------------------------------------------------------------
  * lookup the group to which a layer belongs to
- * returns max_layer if no group is found
+ * returns max_group if no group is found, or is
+ * passed Layer is equal to max_copper_layer
  */
 int
 GetGroupOfLayer (int Layer)
 {
   int group, i;
 
-  if (Layer == max_layer)
-    return (Layer);
-  for (group = 0; group < max_layer; group++)
+  if (Layer == max_copper_layer)
+    return max_group;
+  for (group = 0; group < max_group; group++)
     for (i = 0; i < PCB->LayerGroups.Number[group]; i++)
       if (PCB->LayerGroups.Entries[group][i] == Layer)
         return (group);
-  return (max_layer);
+  return max_group;
 }
 
 
@@ -1199,7 +1209,7 @@ GetLayerGroupNumberByNumber (Cardinal Layer)
 {
   int group, entry;
 
-  for (group = 0; group < max_layer; group++)
+  for (group = 0; group < max_group; group++)
     for (entry = 0; entry < PCB->LayerGroups.Number[group]; entry++)
       if (PCB->LayerGroups.Entries[group][entry] == Layer)
         return (group);
@@ -1246,85 +1256,76 @@ void
 SetArcBoundingBox (ArcTypePtr Arc)
 {
   register double ca1, ca2, sa1, sa2;
-  register LocationType ang1, ang2;
+  double minx, maxx, miny, maxy;
+  register LocationType ang1, ang2, delta, a;
   register LocationType width;
 
   /* first put angles into standard form */
   if (Arc->Delta > 360)
     Arc->Delta = 360;
-  ang1 = Arc->StartAngle;
-  ang2 = Arc->StartAngle + Arc->Delta;
-  if (Arc->Delta < 0)
+  if (Arc->Delta < -360)
+    Arc->Delta = -360;
+
+  if (Arc->Delta > 0)
     {
-      LocationType temp;
-      temp = ang1;
-      ang1 = ang2;
-      ang2 = temp;
+      ang1 = Arc->StartAngle;
+      delta = Arc->Delta;
+    }
+  else
+    {
+      ang1 = Arc->StartAngle + Arc->Delta;
+      delta = -Arc->Delta;
     }
   if (ang1 < 0)
-    {
-      ang1 += 360;
-      ang2 += 360;
-    }
+    ang1 = 360 - ((-ang1) % 360);
+  else
+    ang1 = ang1 % 360;
+
+  ang2 = ang1 + delta;
+
   /* calculate sines, cosines */
-  switch (ang1)
+  ca1 = M180 * (double) ang1;
+  sa1 = sin (ca1);
+  ca1 = cos (ca1);
+
+  minx = maxx = ca1;
+  miny = maxy = sa1;
+
+  ca2 = M180 * (double) ang2;
+  sa2 = sin (ca2);
+  ca2 = cos (ca2);
+
+  minx = MIN (minx, ca2);
+  maxx = MAX (maxx, ca2);
+  miny = MIN (miny, sa2);
+  maxy = MAX (maxy, sa2);
+
+  for (a = ang1 - ang1 % 90 + 90; a < ang2; a += 90)
     {
-    case 0:
-      ca1 = 1.0;
-      sa1 = 0;
-      break;
-    case 90:
-      ca1 = 0;
-      sa1 = 1.0;
-      break;
-    case 180:
-      ca1 = -1.0;
-      sa1 = 0;
-      break;
-    case 270:
-      ca1 = 0;
-      sa1 = -1.0;
-      break;
-    default:
-      ca1 = M180 * (double) ang1;
-      sa1 = sin (ca1);
-      ca1 = cos (ca1);
-    }
-  switch (ang2)
-    {
-    case 0:
-      ca2 = 1.0;
-      sa2 = 0;
-      break;
-    case 90:
-      ca2 = 0;
-      sa2 = 1.0;
-      break;
-    case 180:
-      ca2 = -1.0;
-      sa2 = 0;
-      break;
-    case 270:
-      ca2 = 0;
-      sa2 = -1.0;
-      break;
-    default:
-      ca2 = M180 * (double) ang2;
-      sa2 = sin (ca2);
-      ca2 = cos (ca2);
+      switch (a % 360)
+	{
+	case 0:
+	  maxx = 1;
+	  break;
+	case 90:
+	  maxy = 1;
+	  break;
+	case 180:
+	  minx = -1;
+	  break;
+	case 270:
+	  miny = -1;
+	  break;
+	}
     }
 
-  Arc->BoundingBox.X2 = Arc->X - Arc->Width *
-    ((ang1 < 180 && ang2 > 180) ? -1 : MIN (ca1, ca2));
+  Arc->BoundingBox.X2 = Arc->X - Arc->Width * minx;
 
-  Arc->BoundingBox.X1 = Arc->X - Arc->Width *
-    ((ang1 < 360 && ang2 > 360) ? 1 : MAX (ca1, ca2));
+  Arc->BoundingBox.X1 = Arc->X - Arc->Width * maxx;
 
-  Arc->BoundingBox.Y2 = Arc->Y + Arc->Height *
-    ((ang1 < 90 && ang2 > 90) ? 1 : MAX (sa1, sa2));
+  Arc->BoundingBox.Y2 = Arc->Y + Arc->Height * maxy;
 
-  Arc->BoundingBox.Y1 = Arc->Y + Arc->Height *
-    ((ang1 < 270 && ang2 > 270) ? -1 : MIN (sa1, sa2));
+  Arc->BoundingBox.Y1 = Arc->Y + Arc->Height * miny;
 
   width = (Arc->Thickness + Arc->Clearance) / 2;
   Arc->BoundingBox.X1 -= width;
@@ -1343,9 +1344,9 @@ ResetStackAndVisibility (void)
   int comp_group;
   Cardinal i;
 
-  for (i = 0; i < max_layer + 2; i++)
+  for (i = 0; i < max_copper_layer + 2; i++)
     {
-      if (i < max_layer)
+      if (i < max_copper_layer)
         LayerStack[i] = i;
       PCB->Data->Layer[i].On = true;
     }
@@ -1356,7 +1357,7 @@ ResetStackAndVisibility (void)
   PCB->RatOn = true;
 
   /* Bring the component group to the front and make it active.  */
-  comp_group = GetLayerGroupNumberByNumber (max_layer + COMPONENT_LAYER);
+  comp_group = GetLayerGroupNumberByNumber (component_silk_layer);
   ChangeGroupVisibility (PCB->LayerGroups.Entries[comp_group][0], 1, 1);
 }
 
@@ -1382,9 +1383,9 @@ SaveStackAndVisibility (void)
                "yet restored.  cnt = %d\n", SavedStack.cnt);
     }
 
-  for (i = 0; i < max_layer + 2; i++)
+  for (i = 0; i < max_copper_layer + 2; i++)
     {
-      if (i < max_layer)
+      if (i < max_copper_layer)
         SavedStack.LayerStack[i] = LayerStack[i];
       SavedStack.LayerOn[i] = PCB->Data->Layer[i].On;
     }
@@ -1416,9 +1417,9 @@ RestoreStackAndVisibility (void)
                " wrong.  cnt = %d\n", SavedStack.cnt);
     }
 
-  for (i = 0; i < max_layer + 2; i++)
+  for (i = 0; i < max_copper_layer + 2; i++)
     {
-      if (i < max_layer)
+      if (i < max_copper_layer)
         LayerStack[i] = SavedStack.LayerStack[i];
       PCB->Data->Layer[i].On = SavedStack.LayerOn[i];
     }
@@ -1769,14 +1770,14 @@ MoveLayerToGroup (int layer, int group)
 {
   int prev, i, j;
 
-  if (layer < 0 || layer > max_layer + 1)
+  if (layer < 0 || layer > max_copper_layer + 1)
     return -1;
   prev = GetLayerGroupNumberByNumber (layer);
-  if ((layer == max_layer
-       && group == GetLayerGroupNumberByNumber (max_layer + 1))
-      || (layer == max_layer + 1
-          && group == GetLayerGroupNumberByNumber (max_layer))
-      || (group < 0 || group >= max_layer) || (prev == group))
+  if ((layer == solder_silk_layer
+        && group == GetLayerGroupNumberByNumber (component_silk_layer))
+      || (layer == component_silk_layer
+          && group == GetLayerGroupNumberByNumber (solder_silk_layer))
+      || (group < 0 || group >= max_group) || (prev == group))
     return prev;
 
   /* Remove layer from prev group */
@@ -1802,7 +1803,7 @@ LayerGroupsToString (LayerGroupTypePtr lg)
   char *cp = buf;
   char sep = 0;
   int group, entry;
-  for (group = 0; group < max_layer; group++)
+  for (group = 0; group < max_group; group++)
     if (PCB->LayerGroups.Number[group])
       {
         if (sep)
@@ -1811,11 +1812,11 @@ LayerGroupsToString (LayerGroupTypePtr lg)
         for (entry = 0; entry < PCB->LayerGroups.Number[group]; entry++)
           {
             int layer = PCB->LayerGroups.Entries[group][entry];
-            if (layer == max_layer + COMPONENT_LAYER)
+            if (layer == component_silk_layer)
               {
                 *cp++ = 'c';
               }
-            else if (layer == max_layer + SOLDER_LAYER)
+            else if (layer == solder_silk_layer)
               {
                 *cp++ = 's';
               }
@@ -1917,6 +1918,21 @@ AttributePutToList (AttributeListType *list, char *name, char *value, int replac
   list->List[i].value = MyStrdup (value, "AttributePutToList");
   list->Number ++;
   return 0;
+}
+
+void
+AttributeRemoveFromList(AttributeListType *list, char *name)
+{
+  int i, j;
+  for (i=0; i<list->Number; i++)
+    if (strcmp (name, list->List[i].name) == 0)
+      {
+	free (list->List[i].name);
+	free (list->List[i].value);
+	for (j=i; j<list->Number-i; j++)
+	  list->List[j] = list->List[j+1];
+	list->Number --;
+      }
 }
 
 

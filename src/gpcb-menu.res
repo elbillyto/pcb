@@ -217,6 +217,14 @@ MainMenu =
    {"Check polygons" checked=checkplanes Display(ToggleCheckPlanes)}
    -
    {"Vendor drill mapping" ToggleVendor() checked=VendorMapOn}
+   {"Import Settings"
+    {"New elements added at..." foreground=grey50 sensitive=false}
+    {" Center" Import(setnewpoint,center)}
+    {" Mark" Import(setnewpoint,mark)}
+    {" Crosshair" Import(setnewpoint)}
+    -
+    {"Set Dispersion" Import(setdisperse)}
+   }
   }
 
 #
@@ -287,6 +295,7 @@ MainMenu =
    {"Rotate buffer 90 deg CCW" Mode(PasteBuffer) PasteBuffer(Rotate,1)
     a={"Shift-F7" "Shift<Key>F7"}}
    {"Rotate buffer 90 deg CW" Mode(PasteBuffer) PasteBuffer(Rotate,3)}
+   {"Arbitrarily Rotate Buffer" Mode(PasteBuffer) FreeRotateBuffer()}
    {"Mirror buffer (up/down)" Mode(PasteBuffer) PasteBuffer(Mirror)}
    {"Mirror buffer (left/right)" Mode(PasteBuffer) PasteBuffer(Rotate,1)
     PasteBuffer(Mirror) PasteBuffer(Rotate,3)}

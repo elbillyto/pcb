@@ -46,7 +46,10 @@ extern OutputType Output;
 
 extern PCBTypePtr PCB;
 
-#define max_layer (PCB->Data->LayerN)
+#define max_group (PCB->Data->LayerN)
+#define max_copper_layer (PCB->Data->LayerN)
+#define solder_silk_layer (max_copper_layer + SOLDER_LAYER)
+#define component_silk_layer (max_copper_layer + COMPONENT_LAYER)
 
 extern SettingType Settings;
 
@@ -68,8 +71,6 @@ extern char *InputTranslations;
 extern int addedLines;
 extern int LayerStack[MAX_LAYER];
 
-extern bool RedrawOnEnter;
-extern bool render;
 extern bool Bumped;
 
 extern FlagType no_flags;

@@ -77,10 +77,9 @@ FloatPolyType, *FloatPolyTypePtr;
  */
 static BoxType Block;
 static bool Gathering = true;
-static int Erasing = false;
 
-static int doing_pinout = false;
-static int doing_assy = false;
+static int doing_pinout = 0;
+static bool doing_assy = false;
 static const BoxType *clip_box = NULL;
 
 /* ---------------------------------------------------------------------------
@@ -97,7 +96,7 @@ static void DrawPlainVia (PinTypePtr, bool);
 static void DrawPinOrViaNameLowLevel (PinTypePtr);
 static void DrawPadLowLevel (hidGC, PadTypePtr, bool, bool);
 static void DrawPadNameLowLevel (PadTypePtr);
-static void DrawLineLowLevel (LineTypePtr, bool);
+static void DrawLineLowLevel (LineTypePtr);
 static void DrawRegularText (LayerTypePtr, TextTypePtr, int);
 static void DrawPolygonLowLevel (PolygonTypePtr);
 static void DrawArcLowLevel (ArcTypePtr);
@@ -187,9 +186,6 @@ UpdateAll (void)
 void
 Draw (void)
 {
-
-  render = true;
-
   HideCrosshair (true);
 
   /* clear and create event if not drawing to a pixmap
@@ -217,7 +213,6 @@ RedrawOutput (BoxTypePtr area)
 void
 ClearAndRedrawOutput (void)
 {
-  render = true;
   Gathering = false;
   UpdateAll ();
 }
@@ -235,7 +230,6 @@ Redraw (bool ClearWindow, BoxTypePtr screen_area)
 {
   gui->invalidate_all ();
   Gathering = true;
-  render = false;
 }
 
 static int
@@ -367,7 +361,7 @@ PrintAssembly (const BoxType * drawn_area, int side_group, int swap_ident)
 
   /* draw package */
   DrawSilk (swap_ident,
-	    swap_ident ? SOLDER_LAYER : COMPONENT_LAYER,
+	    swap_ident ? solder_silk_layer : component_silk_layer,
 	    drawn_area);
   SWAP_IDENT = save_swap;
 }
@@ -390,7 +384,7 @@ DrawEverything (BoxTypePtr drawn_area)
   PCB->Data->BACKSILKLAYER.Color = PCB->InvisibleObjectsColor;
 
   memset (do_group, 0, sizeof (do_group));
-  for (ngroups = 0, i = 0; i < max_layer; i++)
+  for (ngroups = 0, i = 0; i < max_copper_layer; i++)
     {
       LayerType *l = LAYER_ON_STACK (i);
       int group = GetLayerGroupNumberByNumber (LayerStack[i]);
@@ -401,8 +395,8 @@ DrawEverything (BoxTypePtr drawn_area)
 	}
     }
 
-  component = GetLayerGroupNumberByNumber (max_layer + COMPONENT_LAYER);
-  solder = GetLayerGroupNumberByNumber (max_layer + SOLDER_LAYER);
+  component = GetLayerGroupNumberByNumber (component_silk_layer);
+  solder = GetLayerGroupNumberByNumber (solder_silk_layer);
 
   /*
    * first draw all 'invisible' stuff
@@ -508,9 +502,9 @@ DrawEverything (BoxTypePtr drawn_area)
     }
   /* Draw top silkscreen */
   if (gui->set_layer ("topsilk", SL (SILK, TOP), 0))
-    DrawSilk (0, COMPONENT_LAYER, drawn_area);
+    DrawSilk (0, component_silk_layer, drawn_area);
   if (gui->set_layer ("bottomsilk", SL (SILK, BOTTOM), 0))
-    DrawSilk (1, SOLDER_LAYER, drawn_area);
+    DrawSilk (1, solder_silk_layer, drawn_area);
   if (gui->gui)
     {
       /* Draw element Marks */
@@ -704,7 +698,7 @@ DrawSilk (int new_swap, int layer, const BoxType * drawn_area)
     {
       gui->use_mask (HID_MASK_BEFORE);
 #endif
-      DrawLayer (LAYER_PTR (max_layer + layer), drawn_area);
+      DrawLayer (LAYER_PTR (layer), drawn_area);
       /* draw package */
       r_search (PCB->Data->element_tree, drawn_area, NULL, frontE_callback,
 		NULL);
@@ -722,7 +716,7 @@ DrawSilk (int new_swap, int layer, const BoxType * drawn_area)
   if (gui->poly_after)
     {
       gui->use_mask (HID_MASK_AFTER);
-      DrawLayer (LAYER_PTR (max_layer + layer), drawn_area);
+      DrawLayer (LAYER_PTR (max_copper_layer + layer), drawn_area);
       /* draw package */
       r_search (PCB->Data->element_tree, drawn_area, NULL, frontE_callback,
 		NULL);
@@ -880,7 +874,7 @@ DrawLayerGroup (int group, const BoxType * screen)
       if (strcmp (Layer->Name, "outline") == 0 ||
 	  strcmp (Layer->Name, "route") == 0)
 	rv = 0;
-      if (layernum < max_layer && Layer->On)
+      if (layernum < max_copper_layer && Layer->On)
 	{
 	  /* draw all polygons on this layer */
 	  if (Layer->PolygonN)
@@ -1502,9 +1496,9 @@ ClearPad (PadTypePtr Pad, bool mask)
  * lowlevel drawing routine for lines
  */
 static void
-DrawLineLowLevel (LineTypePtr Line, bool HaveGathered)
+DrawLineLowLevel (LineTypePtr Line)
 {
-  if (Gathering && !HaveGathered)
+  if (Gathering)
     {
       AddPart (Line);
       return;
@@ -1575,7 +1569,7 @@ DrawTextLowLevel (TextTypePtr Text, int min_line_width)
 	      newline.Point1.Y += Text->Y;
 	      newline.Point2.X += Text->X;
 	      newline.Point2.Y += Text->Y;
-	      DrawLineLowLevel (&newline, true);
+	      DrawLineLowLevel (&newline);
 	    }
 
 	  /* move on to next cursor position */
@@ -1661,7 +1655,7 @@ DrawElementPackageLowLevel (ElementTypePtr Element, int unused)
   /* draw lines, arcs, text and pins */
   ELEMENTLINE_LOOP (Element);
   {
-    DrawLineLowLevel (line, false);
+    DrawLineLowLevel (line);
   }
   END_LOOP;
   ARC_LOOP (Element);
@@ -1823,7 +1817,7 @@ DrawLine (LayerTypePtr Layer, LineTypePtr Line, int unused)
       else
 	gui->set_color (Output.fgGC, Layer->Color);
     }
-  DrawLineLowLevel (Line, false);
+  DrawLineLowLevel (Line);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1872,7 +1866,7 @@ DrawRat (RatTypePtr Line, int unused)
 	}
     }
   else
-    DrawLineLowLevel ((LineTypePtr) Line, false);
+    DrawLineLowLevel ((LineTypePtr) Line);
 }
 
 /* ---------------------------------------------------------------------------
@@ -2097,12 +2091,10 @@ DrawElementPinsAndPads (ElementTypePtr Element, int unused)
 void
 EraseVia (PinTypePtr Via)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPinOrViaLowLevel (Via, false);
   if (TEST_FLAG (DISPLAYNAMEFLAG, Via))
     DrawPinOrViaNameLowLevel (Via);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2111,7 +2103,6 @@ EraseVia (PinTypePtr Via)
 void
 EraseRat (RatTypePtr Rat)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   if (TEST_FLAG(VIAFLAG, Rat))
     {
@@ -2125,8 +2116,7 @@ EraseRat (RatTypePtr Rat)
 		     w * 2, w * 2, 0, 360);
     }
   else
-    DrawLineLowLevel ((LineTypePtr) Rat, false);
-  Erasing--;
+    DrawLineLowLevel ((LineTypePtr) Rat);
 }
 
 
@@ -2136,10 +2126,8 @@ EraseRat (RatTypePtr Rat)
 void
 EraseViaName (PinTypePtr Via)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPinOrViaNameLowLevel (Via);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2148,12 +2136,10 @@ EraseViaName (PinTypePtr Via)
 void
 ErasePad (PadTypePtr Pad)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPadLowLevel (Output.fgGC, Pad, false, false);
   if (TEST_FLAG (DISPLAYNAMEFLAG, Pad))
     DrawPadNameLowLevel (Pad);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2162,10 +2148,8 @@ ErasePad (PadTypePtr Pad)
 void
 ErasePadName (PadTypePtr Pad)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPadNameLowLevel (Pad);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2174,12 +2158,10 @@ ErasePadName (PadTypePtr Pad)
 void
 ErasePin (PinTypePtr Pin)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPinOrViaLowLevel (Pin, false);
   if (TEST_FLAG (DISPLAYNAMEFLAG, Pin))
     DrawPinOrViaNameLowLevel (Pin);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2188,10 +2170,8 @@ ErasePin (PinTypePtr Pin)
 void
 ErasePinName (PinTypePtr Pin)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPinOrViaNameLowLevel (Pin);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2200,10 +2180,8 @@ ErasePinName (PinTypePtr Pin)
 void
 EraseLine (LineTypePtr Line)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
-  DrawLineLowLevel (Line, false);
-  Erasing--;
+  DrawLineLowLevel (Line);
 }
 
 /* ---------------------------------------------------------------------------
@@ -2214,10 +2192,8 @@ EraseArc (ArcTypePtr Arc)
 {
   if (!Arc->Thickness)
     return;
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawArcLowLevel (Arc);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2227,7 +2203,6 @@ void
 EraseText (LayerTypePtr Layer, TextTypePtr Text)
 {
   int min_silk_line;
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   if (Layer == & PCB->Data->SILKLAYER
       || Layer == & PCB->Data->BACKSILKLAYER)
@@ -2235,7 +2210,6 @@ EraseText (LayerTypePtr Layer, TextTypePtr Text)
   else
     min_silk_line = PCB->minWid;
   DrawTextLowLevel (Text, min_silk_line);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2244,10 +2218,8 @@ EraseText (LayerTypePtr Layer, TextTypePtr Text)
 void
 ErasePolygon (PolygonTypePtr Polygon)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPolygonLowLevel (Polygon);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2256,12 +2228,11 @@ ErasePolygon (PolygonTypePtr Polygon)
 void
 EraseElement (ElementTypePtr Element)
 {
-  Erasing++;
   /* set color and draw lines, arcs, text and pins */
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   ELEMENTLINE_LOOP (Element);
   {
-    DrawLineLowLevel (line, false);
+    DrawLineLowLevel (line);
   }
   END_LOOP;
   ARC_LOOP (Element);
@@ -2272,7 +2243,6 @@ EraseElement (ElementTypePtr Element)
   if (!TEST_FLAG (HIDENAMEFLAG, Element))
     DrawTextLowLevel (&ELEMENT_TEXT (PCB, Element), PCB->minSlk);
   EraseElementPinsAndPads (Element);
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2281,7 +2251,6 @@ EraseElement (ElementTypePtr Element)
 void
 EraseElementPinsAndPads (ElementTypePtr Element)
 {
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   PIN_LOOP (Element);
   {
@@ -2297,7 +2266,6 @@ EraseElementPinsAndPads (ElementTypePtr Element)
       DrawPadNameLowLevel (pad);
   }
   END_LOOP;
-  Erasing--;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2308,10 +2276,8 @@ EraseElementName (ElementTypePtr Element)
 {
   if (TEST_FLAG (HIDENAMEFLAG, Element))
     return;
-  Erasing++;
   gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawTextLowLevel (&ELEMENT_TEXT (PCB, Element), PCB->minSlk);
-  Erasing--;
 }
 
 
@@ -2420,7 +2386,6 @@ hid_expose_callback (HID * hid, BoxType * region, void *item)
   Output.bgGC = gui->make_gc ();
   Output.pmGC = gui->make_gc ();
 
-  render = true;
   Gathering = false;
 
   /*printf("\033[32mhid_expose_callback, s=%p %d\033[0m\n", &(SWAP_IDENT), SWAP_IDENT); */
