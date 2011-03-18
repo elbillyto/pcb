@@ -40,6 +40,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <time.h> /* Seed for srand() */
 
 #include "global.h"
 #include "data.h"
@@ -53,6 +54,9 @@
 #include "action.h"
 #include "misc.h"
 #include "lrealpath.h"
+#include "free_atexit.h"
+
+#include "hid/common/actions.h"
 
 /* This next one is so we can print the help messages. */
 #include "hid/hidint.h"
@@ -224,7 +228,7 @@ usage_hid (HID * h)
       exporter = NULL;
     }
 
-  note = (UsageNotes *) MyMalloc (sizeof (UsageNotes), "usage_hid");
+  note = (UsageNotes *)malloc (sizeof (UsageNotes));
   note->next = usage_notes;
   note->seen = attributes;
   usage_notes = note;
@@ -371,10 +375,6 @@ print_defaults ()
     }
   exit (1);
 }
-
-/* in hid/common/actions.c */
-extern void print_actions ();
-
 
 #define SSET(F,D,N,H) { N, H, \
 	HID_String,  0, 0, { 0, D, 0 }, 0, &Settings.F }
@@ -722,7 +722,7 @@ InitPaths (char *argv0)
 #ifdef DEBUG
 	      printf ("Looking for %s in %s\n", argv0, p);
 #endif
-	      if ( (tmps = malloc ( (strlen (argv0) + strlen (p) + 2) * sizeof (char))) == NULL )
+	      if ( (tmps = (char *)malloc ( (strlen (argv0) + strlen (p) + 2) * sizeof (char))) == NULL )
 		{
 		  fprintf (stderr, "InitPaths():  malloc failed\n");
 		  exit (1);
@@ -907,6 +907,8 @@ main (int argc, char *argv[])
   bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
   bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
 
+  srand ( time(NULL) ); /* Set seed for rand() */
+
   hid_init ();
 
   hid_load_settings ();
@@ -957,7 +959,7 @@ main (int argc, char *argv[])
     {
       char buf[20];
       sprintf (buf, "signal%d", i + 1);
-      Settings.DefaultLayerName[i] = MyStrdup (buf, "DefaultLayerNames");
+      Settings.DefaultLayerName[i] = strdup (buf);
       Settings.LayerColor[i] = "#c49350";
       Settings.LayerSelectedColor[i] = "#00ffff";
     }
@@ -1018,7 +1020,7 @@ main (int argc, char *argv[])
        * file might not exist
        */
       if (LoadPCB (command_line_pcb))
-	PCB->Filename = MyStrdup (command_line_pcb, "main()");
+	PCB->Filename = strdup (command_line_pcb);
     }
 
   if (Settings.InitialLayerStack
@@ -1029,6 +1031,13 @@ main (int argc, char *argv[])
 
   /*    FIX_ME
      LoadBackgroundImage (Settings.BackgroundImage); */
+
+  /* This must be called before any other atexit functions
+   * are registered, as it configures an atexit function to
+   * clean up and free various items of allocated memory,
+   * and must be the last last atexit function to run.
+   */
+  leaky_init ();
 
   /* Register a function to be called when the program terminates.
    * This makes sure that data is saved even if LEX/YACC routines

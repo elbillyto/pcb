@@ -70,11 +70,9 @@ extern int ghid_flip_x, ghid_flip_y;
 
 #define	DRAW_X(x)	(gint)((SIDE_X(x) - gport->view_x0) / gport->zoom)
 #define	DRAW_Y(y)	(gint)((SIDE_Y(y) - gport->view_y0) / gport->zoom)
-#define	DRAW_Z(z)	(gint)((z) / gport->zoom)
 
 #define	VIEW_X(x)	SIDE_X((gint)((x) * gport->zoom + gport->view_x0))
 #define	VIEW_Y(y)	SIDE_Y((gint)((y) * gport->zoom + gport->view_y0))
-#define	VIEW_Z(z)	(gint)((z) * gport->zoom)
 
 /*
  * Used to intercept "special" hotkeys that gtk doesn't usually pass
@@ -284,11 +282,10 @@ void ghid_port_ranges_zoom (gdouble zoom);
 gboolean ghid_port_ranges_pan (gdouble x, gdouble y, gboolean relative);
 void ghid_port_ranges_scale (gboolean emit_changed);
 void ghid_port_ranges_update_ranges (void);
-void ghid_show_crosshair (gboolean show);
 void ghid_screen_update (void);
 
 gboolean ghid_note_event_location (GdkEventButton * ev);
-
+gboolean have_crosshair_attachments (void);
 gboolean ghid_port_key_press_cb (GtkWidget * drawing_area,
 				 GdkEventKey * kev, GtkUIManager * ui);
 gboolean ghid_port_key_release_cb (GtkWidget * drawing_area,
@@ -304,7 +301,7 @@ gint ghid_port_window_enter_cb (GtkWidget * widget,
 gint ghid_port_window_leave_cb (GtkWidget * widget, 
                            GdkEventCrossing * ev, GHidPort * out);
 gint ghid_port_window_motion_cb (GtkWidget * widget,
-				 GdkEventButton * ev, GHidPort * out);
+				 GdkEventMotion * ev, GHidPort * out);
 gint ghid_port_window_mouse_scroll_cb (GtkWidget * widget,
 				       GdkEventScroll * ev, GHidPort * out);
 
@@ -332,7 +329,7 @@ int ghid_dialog_close_confirm (void);
 #define GUI_DIALOG_CLOSE_CONFIRM_NOSAVE 1
 #define GUI_DIALOG_CLOSE_CONFIRM_SAVE   2
 gint ghid_dialog_confirm_all (gchar * message);
-gchar *ghid_dialog_input (gchar * prompt, gchar * initial);
+gchar *ghid_dialog_input (const char * prompt, const char * initial);
 void ghid_dialog_about (void);
 
 char * ghid_fileselect (const char *, const char *, char *, char *, const char *, int);
@@ -368,7 +365,6 @@ gboolean dup_string (gchar ** dst, gchar * src);
 gboolean utf8_dup_string (gchar ** dst_utf8, gchar * src);
 void free_glist_and_data (GList ** list_head);
 
-
 ModifierKeysState ghid_modifier_keys_state (GdkModifierType * state);
 ButtonState ghid_button_state (GdkModifierType * state);
 gboolean ghid_is_modifier_key_sym (gint ksym);
@@ -385,23 +381,24 @@ gchar *ghid_entry_get_text (GtkWidget * entry);
 void ghid_check_button_connected (GtkWidget * box, GtkWidget ** button,
 				  gboolean active, gboolean pack_start,
 				  gboolean expand, gboolean fill, gint pad,
-				  void (*cb_func) (), gpointer data,
+				  void (*cb_func) (GtkToggleButton *, gpointer), gpointer data,
 				  gchar * string);
 void ghid_button_connected (GtkWidget * box, GtkWidget ** button,
 			    gboolean pack_start, gboolean expand,
-			    gboolean fill, gint pad, void (*cb_func) (),
+			    gboolean fill, gint pad, void (*cb_func) (gpointer),
 			    gpointer data, gchar * string);
 void ghid_spin_button (GtkWidget * box, GtkWidget ** spin_button,
 		       gfloat value, gfloat low, gfloat high, gfloat step0,
 		       gfloat step1, gint digits, gint width,
-		       void (*cb_func) (), gpointer data,
+		       void (*cb_func) (GtkSpinButton *, gpointer), gpointer data,
 		       gboolean right_align, gchar * string);
 void ghid_table_spin_button (GtkWidget * box, gint row, gint column,
 			     GtkWidget ** spin_button, gfloat value,
 			     gfloat low, gfloat high, gfloat step0,
 			     gfloat step1, gint digits, gint width,
-			     void (*cb_func) (), gpointer data,
+			     void (*cb_func) (GtkSpinButton *, gpointer), gpointer data,
 			     gboolean right_align, gchar * string);
+
 void ghid_range_control (GtkWidget * box, GtkWidget ** scale_res,
 			 gboolean horizontal, GtkPositionType pos,
 			 gboolean set_draw_value, gint digits,
@@ -438,7 +435,7 @@ GtkTreeSelection *ghid_scrolled_selection (GtkTreeView * treeview,
 					   GtkSelectionMode s_mode,
 					   GtkPolicyType h_policy,
 					   GtkPolicyType v_policy,
-					   void (*func_cb) (), gpointer data);
+					   void (*func_cb) (GtkTreeSelection *, gpointer), gpointer data);
 
 void ghid_dialog_report (gchar * title, gchar * message);
 void ghid_label_set_markup (GtkWidget * label, const gchar * text);
@@ -491,13 +488,11 @@ GdkPixmap *ghid_render_pixmap (int cx,
 /* gtkhid-gdk.c */
 hidGC ghid_make_gc (void);
 void ghid_destroy_gc (hidGC);
-void ghid_draw_grid (void);
-void ghid_draw_bg_image (void);
 void ghid_use_mask (int use_it);
 void ghid_set_color (hidGC gc, const char *name);
 void ghid_set_line_cap (hidGC gc, EndCapStyle style);
 void ghid_set_line_width (hidGC gc, int width);
-void ghid_set_draw_xor (hidGC gc, int xor);
+void ghid_set_draw_xor (hidGC gc, int _xor);
 void ghid_set_draw_faded (hidGC gc, int faded);
 void ghid_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2);
 void ghid_draw_line (hidGC gc, int x1, int y1, int x2, int y2);
@@ -507,9 +502,12 @@ void ghid_draw_rect (hidGC gc, int x1, int y1, int x2, int y2);
 void ghid_fill_circle (hidGC gc, int cx, int cy, int radius);
 void ghid_fill_polygon (hidGC gc, int n_coords, int *x, int *y);
 void ghid_fill_rect (hidGC gc, int x1, int y1, int x2, int y2);
+void ghid_invalidate_lr (int left, int right, int top, int bottom);
+void ghid_invalidate_all ();
+void ghid_show_crosshair (gboolean show);
 
 /* gtkhid-main.c */
-void ghid_invalidate_all ();
+void ghid_pan_fixup (void);
 void ghid_get_coords (const char *msg, int *x, int *y);
 gint PCBChanged (int argc, char **argv, int x, int y);
 

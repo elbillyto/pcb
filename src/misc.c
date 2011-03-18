@@ -108,7 +108,7 @@ static struct
  * bool variable absolute to false if it leads with a +/- character
  */
 float
-GetValue (char *val, char *units, bool * absolute)
+GetValue (const char *val, const char *units, bool * absolute)
 {
   double value;
   int n = -1;
@@ -427,58 +427,98 @@ SetTextBoundingBox (FontTypePtr FontPtr, TextTypePtr Text)
 {
   SymbolTypePtr symbol = FontPtr->Symbol;
   unsigned char *s = (unsigned char *) Text->TextString;
-  LocationType width = 0, height = 0;
-  BDimension maxThick = 0;
+  BDimension minThick = 0;
   int i;
+  int space = 0;
+
+  LocationType minx=0, miny=0, maxx=0, maxy=0;
+  LocationType tx;
+  int first_time = 1;
+
+  if (PCB->minSlk < PCB->minWid)
+    minThick = PCB->minWid;
+  else
+    minThick = PCB->minSlk;
+
+  minThick /= Text->Scale / 50.0;
+
+  tx = 0;
 
   /* calculate size of the bounding box */
   for (; s && *s; s++)
-    if (*s <= MAX_FONTPOSITION && symbol[*s].Valid)
-      {
-        LineTypePtr line = symbol[*s].Line;
-        for (i = 0; i < symbol[*s].LineN; line++, i++)
-          if (line->Thickness > maxThick)
-            maxThick = line->Thickness;
-        width += symbol[*s].Width + symbol[*s].Delta;
-        height = MAX (height, (LocationType) symbol[*s].Height);
-      }
-    else
-      {
-        width +=
-          ((FontPtr->DefaultSymbol.X2 - FontPtr->DefaultSymbol.X1) * 6 / 5);
-        height = (FontPtr->DefaultSymbol.Y2 - FontPtr->DefaultSymbol.Y1);
-      }
+    {
+      if (*s <= MAX_FONTPOSITION && symbol[*s].Valid)
+	{
+	  LineTypePtr line = symbol[*s].Line;
+	  for (i = 0; i < symbol[*s].LineN; line++, i++)
+	    {
+	      int t = line->Thickness / 4;
+	      if (t < minThick)
+		t = minThick;
+
+	      if (first_time)
+		{
+		  minx = maxx = line->Point1.X;
+		  miny = maxy = line->Point1.Y;
+		  first_time = 0;
+		}
+
+	      minx = MIN (minx, line->Point1.X - t + tx);
+	      miny = MIN (miny, line->Point1.Y - t);
+	      minx = MIN (minx, line->Point2.X - t + tx);
+	      miny = MIN (miny, line->Point2.Y - t);
+	      maxx = MAX (maxx, line->Point1.X + t + tx);
+	      maxy = MAX (maxy, line->Point1.Y + t);
+	      maxx = MAX (maxx, line->Point2.X + t + tx);
+	      maxy = MAX (maxy, line->Point2.Y + t);
+	    }
+	  space = symbol[*s].Delta;
+	}
+      else
+	{
+	  BoxType *ds = &FontPtr->DefaultSymbol;
+	  int w = ds->X2 - ds->X1;
+
+	  minx = MIN (minx, ds->X1 + tx);
+	  miny = MIN (miny, ds->Y1);
+	  minx = MIN (minx, ds->X2 + tx);
+	  miny = MIN (miny, ds->Y2);
+	  maxx = MAX (maxx, ds->X1 + tx);
+	  maxy = MAX (maxy, ds->Y1);
+	  maxx = MAX (maxx, ds->X2 + tx);
+	  maxy = MAX (maxy, ds->Y2);
+
+	  space = w / 5;
+	}
+      tx += symbol[*s].Width + space;
+    }
 
   /* scale values */
-  width *= Text->Scale / 100.;
-  height *= Text->Scale / 100.;
-  maxThick *= Text->Scale / 200.;
-  if (maxThick < 400)
-    maxThick = 400;
+  minx *= Text->Scale / 100.;
+  miny *= Text->Scale / 100.;
+  maxx *= Text->Scale / 100.;
+  maxy *= Text->Scale / 100.;
 
   /* set upper-left and lower-right corner;
    * swap coordinates if necessary (origin is already in 'swapped')
    * and rotate box
    */
-  Text->BoundingBox.X1 = Text->X;
-  Text->BoundingBox.Y1 = Text->Y;
+
   if (TEST_FLAG (ONSOLDERFLAG, Text))
     {
-      Text->BoundingBox.X1 -= maxThick;
-      Text->BoundingBox.Y1 -= SWAP_SIGN_Y (maxThick);
-      Text->BoundingBox.X2 =
-        Text->BoundingBox.X1 + SWAP_SIGN_X (width + maxThick);
-      Text->BoundingBox.Y2 =
-        Text->BoundingBox.Y1 + SWAP_SIGN_Y (height + 2 * maxThick);
+      Text->BoundingBox.X1 = Text->X + minx;
+      Text->BoundingBox.Y1 = Text->Y - miny;
+      Text->BoundingBox.X2 = Text->X + maxx;
+      Text->BoundingBox.Y2 = Text->Y - maxy;
       RotateBoxLowLevel (&Text->BoundingBox, Text->X, Text->Y,
                          (4 - Text->Direction) & 0x03);
     }
   else
     {
-      Text->BoundingBox.X1 -= maxThick;
-      Text->BoundingBox.Y1 -= maxThick;
-      Text->BoundingBox.X2 = Text->BoundingBox.X1 + width + maxThick;
-      Text->BoundingBox.Y2 = Text->BoundingBox.Y1 + height + 2 * maxThick;
+      Text->BoundingBox.X1 = Text->X + minx;
+      Text->BoundingBox.Y1 = Text->Y + miny;
+      Text->BoundingBox.X2 = Text->X + maxx;
+      Text->BoundingBox.Y2 = Text->Y + maxy;
       RotateBoxLowLevel (&Text->BoundingBox,
                          Text->X, Text->Y, Text->Direction);
     }
@@ -723,7 +763,7 @@ ParseRouteString (char *s, RouteStyleTypePtr routeStyle, int scale)
       for (i = 0; *s && *s != ','; i++)
         Name[i] = *s++;
       Name[i] = '\0';
-      routeStyle->Name = MyStrdup (Name, "ParseRouteString()");
+      routeStyle->Name = strdup (Name);
       if (!isdigit ((int) *++s))
         goto error;
       GetNum (&s, &routeStyle->Thick);
@@ -888,6 +928,12 @@ QuitApplication (void)
   else
     DisableEmergencySave ();
 
+  /* Free up memory allocated to the PCB. Why bother when we're about to exit ?
+   * Because it removes some false positives from heap bug detectors such as
+   * lib dmalloc.
+   */
+  FreePCBMemory(PCB);
+
   exit (0);
 }
 
@@ -937,7 +983,7 @@ EvaluateFilename (char *Template, char *Path, char *Filename, char *Parameter)
   if (Settings.verbose)
     printf ("EvaluateFilename: \033[32m%s\033[0m\n", command.Data);
 
-  return (MyStrdup (command.Data, "EvaluateFilename()"));
+  return strdup (command.Data);
 }
 
 /* ---------------------------------------------------------------------------
@@ -956,13 +1002,13 @@ ExpandFilename (char *Dirname, char *Filename)
   DSClearString (&answer);
   if (Dirname)
     {
-      command = MyCalloc (strlen (Filename) + strlen (Dirname) + 7,
-                          sizeof (char), "ExpandFilename()");
+      command = (char *)calloc (strlen (Filename) + strlen (Dirname) + 7,
+                        sizeof (char));
       sprintf (command, "echo %s/%s", Dirname, Filename);
     }
   else
     {
-      command = MyCalloc (strlen (Filename) + 6, sizeof (char), "Expand()");
+      command = (char *)calloc (strlen (Filename) + 6, sizeof (char));
       sprintf (command, "echo %s", Filename);
     }
 
@@ -978,13 +1024,13 @@ ExpandFilename (char *Dirname, char *Filename)
             DSAddCharacter (&answer, c);
         }
 
-      SaveFree (command);
+      free (command);
       return (pclose (pipe) ? NULL : answer.Data);
     }
 
   /* couldn't be expanded by the shell */
   PopenErrorMessage (command);
-  SaveFree (command);
+  free (command);
   return (NULL);
 }
 
@@ -1858,7 +1904,7 @@ pcb_author (void)
             len = comma - gecos;
           else
             len = strlen (gecos);
-          fab_author = malloc (len + 1);
+          fab_author = (char *)malloc (len + 1);
           if (!fab_author)
             {
               perror ("pcb: out of memory.\n");
@@ -1886,7 +1932,7 @@ AttributeGetFromList (AttributeListType *list, char *name)
 }
 
 int
-AttributePutToList (AttributeListType *list, char *name, char *value, int replace)
+AttributePutToList (AttributeListType *list, const char *name, const char *value, int replace)
 {
   int i;
 
@@ -1898,7 +1944,7 @@ AttributePutToList (AttributeListType *list, char *name, char *value, int replac
 	if (strcmp (name, list->List[i].name) == 0)
 	  {
 	    free (list->List[i].value);
-	    list->List[i].value = MyStrdup (value, "AttributePutToList");
+	    list->List[i].value = STRDUP (value);
 	    return 1;
 	  }
     }
@@ -1914,8 +1960,8 @@ AttributePutToList (AttributeListType *list, char *name, char *value, int replac
 
   /* Now add the new attribute.  */
   i = list->Number;
-  list->List[i].name = MyStrdup (name, "AttributePutToList");
-  list->List[i].value = MyStrdup (value, "AttributePutToList");
+  list->List[i].name = STRDUP (name);
+  list->List[i].value = STRDUP (value);
   list->Number ++;
   return 0;
 }

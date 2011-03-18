@@ -21,6 +21,7 @@
 #include "undo.h"
 #include "remove.h"
 #include "crosshair.h"
+#include "draw.h"
 
 #include "hid.h"
 #include "../hidint.h"
@@ -89,7 +90,7 @@ netlist_select (Widget w, void *v, XmListCallbackStruct * cbs)
   str = XmStringCreateLocalized (name);
   XmListReplaceItemsPos (netlist_list, &str, 1, pos);
   XmStringFree (str);
-  XmListSelectPos (netlist_list, pos, false);
+  XmListSelectPos (netlist_list, pos, False);
 }
 
 static void
@@ -136,19 +137,17 @@ nbcb_select_common (LibraryMenuTypePtr net, int pos, int select_flag)
   int i;
 
   InitConnectionLookup ();
-  ResetFoundPinsViasAndPads (false);
-  ResetFoundLinesAndPolygons (false);
-  SaveUndoSerialNumber ();
+  ResetConnections (true);
 
   for (i = net->EntryN, entry = net->Entry; i; i--, entry++)
     if (SeekPad (entry, &conn, false))
       RatFindHook (conn.type, conn.ptr1, conn.ptr2, conn.ptr2, true, true);
-  RestoreUndoSerialNumber ();
+
   SelectConnection (select_flag);
-  ResetFoundPinsViasAndPads (false);
-  ResetFoundLinesAndPolygons (false);
+  ResetConnections (false);
   FreeConnectionLookupMemory ();
   IncrementUndoSerialNumber ();
+  Draw ();
 }
 
 static void
@@ -175,7 +174,7 @@ nbcb_std_callback (Widget w, Std_Nbcb_Func v, XmPushButtonCallbackStruct * cbs)
 {
   int *posl, posc, i;
   XmString **items, **selected;
-  if (XmListGetSelectedPos (netlist_list, &posl, &posc) == false)
+  if (XmListGetSelectedPos (netlist_list, &posl, &posc) == False)
     return;
   if (v == nbcb_find)
     hid_actionl ("connection", "reset", NULL);
@@ -314,7 +313,7 @@ build_netlist_dialog ()
   n = 0;
   stdarg (XmNresizePolicy, XmRESIZE_GROW);
   stdarg (XmNtitle, "Netlists");
-  stdarg (XmNautoUnmanage, false);
+  stdarg (XmNautoUnmanage, False);
   netlist_dialog = XmCreateFormDialog (mainwind, "netlist", args, n);
 
   n = 0;
@@ -435,15 +434,15 @@ LesstifNetlistShow (int argc, char **argv, int x, int y)
 	  XmString item;
 	  int vis = 0;
 
-	  /* Select net first, 'true' causes pick_net() to be invoked */
+	  /* Select net first, 'True' causes pick_net() to be invoked */
 	  item = XmStringCreateLocalized (net->Name);
-	  XmListSelectItem (netlist_list, item, true);
+	  XmListSelectItem (netlist_list, item, True);
 	  XmListSetItem (netlist_list, item);
 	  XmStringFree (item);
 
 	  /* Now the netnode_list has the right contents */
 	  item = XmStringCreateLocalized (argv[0]);
-	  XmListSelectItem (netnode_list, item, false);
+	  XmListSelectItem (netnode_list, item, False);
 
 	  /*
 	   * Only force the item to the top if there are enough to scroll.
@@ -470,7 +469,7 @@ LesstifNetlistShow (int argc, char **argv, int x, int y)
 
 	      item = XmStringCreateLocalized (net->Name);
 	      XmListSetItem (netlist_list, item);
-	      XmListSelectItem (netlist_list, item, true);
+	      XmListSelectItem (netlist_list, item, True);
 	      XmStringFree (item);
 	    }
 	}

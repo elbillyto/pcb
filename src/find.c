@@ -176,7 +176,7 @@ static DrcViolationType
                         long int *object_id_list,
                         int *object_type_list)
 {
-  DrcViolationType *violation = malloc (sizeof (DrcViolationType));
+  DrcViolationType *violation = (DrcViolationType *)malloc (sizeof (DrcViolationType));
 
   violation->title = strdup (title);
   violation->explanation = strdup (explanation);
@@ -345,7 +345,6 @@ static void PrintPinConnections (FILE *, bool);
 static bool PrintAndSelectUnusedPinsAndPadsOfElement (ElementTypePtr,
                                                          FILE *);
 static void DrawNewConnections (void);
-static void ResetConnections (bool);
 static void DumpList (void);
 static void LocateError (LocationType *, LocationType *);
 static void BuildObjectList (int *, long int **, int **);
@@ -569,19 +568,26 @@ FreeLayoutLookupMemory (void)
 
   for (i = 0; i < max_copper_layer; i++)
     {
-      MYFREE (LineList[i].Data);
-      MYFREE (ArcList[i].Data);
-      MYFREE (PolygonList[i].Data);
+      free (LineList[i].Data);
+      LineList[i].Data = NULL;
+      free (ArcList[i].Data);
+      ArcList[i].Data = NULL;
+      free (PolygonList[i].Data);
+      PolygonList[i].Data = NULL;
     }
-  MYFREE (PVList.Data);
-  MYFREE (RatList.Data);
+  free (PVList.Data);
+  PVList.Data = NULL;
+  free (RatList.Data);
+  RatList.Data = NULL;
 }
 
 void
 FreeComponentLookupMemory (void)
 {
-  MYFREE (PadList[0].Data);
-  MYFREE (PadList[1].Data);
+  free (PadList[0].Data);
+  PadList[0].Data = NULL;
+  free (PadList[1].Data);
+  PadList[1].Data = NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -608,9 +614,7 @@ InitComponentLookup (void)
   for (i = 0; i < 2; i++)
     {
       /* allocate memory for working list */
-      PadList[i].Data =
-        (void **) MyCalloc (NumberOfPads[i], sizeof (PadTypePtr),
-                            "InitComponentLookup()");
+      PadList[i].Data = (void **)calloc (NumberOfPads[i], sizeof (PadTypePtr));
 
       /* clear some struct members */
       PadList[i].Location = 0;
@@ -637,16 +641,12 @@ InitLayoutLookup (void)
       if (layer->LineN)
         {
           /* allocate memory for line pointer lists */
-          LineList[i].Data =
-            (void **) MyCalloc (layer->LineN, sizeof (LineTypePtr),
-                                "InitLayoutLookup()");
+          LineList[i].Data = (void **)calloc (layer->LineN, sizeof (LineTypePtr));
           LineList[i].Size = layer->LineN;
         }
       if (layer->ArcN)
         {
-          ArcList[i].Data =
-            (void **) MyCalloc (layer->ArcN, sizeof (ArcTypePtr),
-                                "InitLayoutLookup()");
+          ArcList[i].Data = (void **)calloc (layer->ArcN, sizeof (ArcTypePtr));
           ArcList[i].Size = layer->ArcN;
         }
 
@@ -654,9 +654,7 @@ InitLayoutLookup (void)
       /* allocate memory for polygon list */
       if (layer->PolygonN)
         {
-          PolygonList[i].Data = (void **) MyCalloc (layer->PolygonN,
-                                                    sizeof (PolygonTypePtr),
-                                                    "InitLayoutLookup()");
+          PolygonList[i].Data = (void **)calloc (layer->PolygonN, sizeof (PolygonTypePtr));
           PolygonList[i].Size = layer->PolygonN;
         }
 
@@ -681,15 +679,13 @@ InitLayoutLookup (void)
   else
     TotalV = 0;
   /* allocate memory for 'new PV to check' list and clear struct */
-  PVList.Data = (void **) MyCalloc (TotalP + TotalV, sizeof (PinTypePtr),
-                                    "InitLayoutLookup()");
+  PVList.Data = (void **)calloc (TotalP + TotalV, sizeof (PinTypePtr));
   PVList.Size = TotalP + TotalV;
   PVList.Location = 0;
   PVList.DrawLocation = 0;
   PVList.Number = 0;
   /* Initialize ratline data */
-  RatList.Data = (void **) MyCalloc (PCB->Data->RatN, sizeof (RatTypePtr),
-                                     "InitLayoutLookup()");
+  RatList.Data = (void **)calloc (PCB->Data->RatN, sizeof (RatTypePtr));
   RatList.Size = PCB->Data->RatN;
   RatList.Location = 0;
   RatList.DrawLocation = 0;
@@ -2775,9 +2771,9 @@ PrintElementNameList (ElementTypePtr Element, FILE * FP)
 {
   static DynamicStringType cname, pname, vname;
 
-  CreateQuotedString (&cname, EMPTY (DESCRIPTION_NAME (Element)));
-  CreateQuotedString (&pname, EMPTY (NAMEONPCB_NAME (Element)));
-  CreateQuotedString (&vname, EMPTY (VALUE_NAME (Element)));
+  CreateQuotedString (&cname, (char *)EMPTY (DESCRIPTION_NAME (Element)));
+  CreateQuotedString (&pname, (char *)EMPTY (NAMEONPCB_NAME (Element)));
+  CreateQuotedString (&vname, (char *)EMPTY (VALUE_NAME (Element)));
   fprintf (FP, "(%s %s %s)\n", cname.Data, pname.Data, vname.Data);
 }
 
@@ -2832,7 +2828,7 @@ PrintPadConnections (Cardinal Layer, FILE * FP, bool IsFirst)
     {
       ptr = PADLIST_ENTRY (Layer, 0);
       if (ptr != NULL)
-        PrintConnectionListEntry (UNKNOWN (ptr->Name), NULL, true, FP);
+        PrintConnectionListEntry ((char *)UNKNOWN (ptr->Name), NULL, true, FP);
       else
         printf ("Skipping NULL ptr in 1st part of PrintPadConnections\n");
     }
@@ -2844,7 +2840,7 @@ PrintPadConnections (Cardinal Layer, FILE * FP, bool IsFirst)
     {
       ptr = PADLIST_ENTRY (Layer, i);
       if (ptr != NULL)
-        PrintConnectionListEntry (EMPTY (ptr->Name), ptr->Element, false, FP);
+        PrintConnectionListEntry ((char *)EMPTY (ptr->Name), (ElementTypePtr)ptr->Element, false, FP);
       else
         printf ("Skipping NULL ptr in 2nd part of PrintPadConnections\n");
     }
@@ -2867,7 +2863,7 @@ PrintPinConnections (FILE * FP, bool IsFirst)
     {
       /* the starting pin */
       pv = PVLIST_ENTRY (0);
-      PrintConnectionListEntry (EMPTY (pv->Name), NULL, true, FP);
+      PrintConnectionListEntry ((char *)EMPTY (pv->Name), NULL, true, FP);
     }
 
   /* we maybe have to start with i=1 if we are handling the
@@ -2877,7 +2873,7 @@ PrintPinConnections (FILE * FP, bool IsFirst)
     {
       /* get the elements name or assume that its a via */
       pv = PVLIST_ENTRY (i);
-      PrintConnectionListEntry (EMPTY (pv->Name), pv->Element, false, FP);
+      PrintConnectionListEntry ((char *)EMPTY (pv->Name), (ElementTypePtr)pv->Element, false, FP);
     }
 }
 
@@ -2906,26 +2902,26 @@ ListsEmpty (bool AndRats)
 static bool
 DoIt (bool AndRats, bool AndDraw)
 {
-  bool new = false;
+  bool newone = false;
   do
     {
       /* lookup connections; these are the steps (2) to (4)
        * from the description
        */
-      new = LookupPVConnectionsToPVList ();
-      if (!new)
-        new = LookupLOConnectionsToPVList (AndRats);
-      if (!new)
-        new = LookupLOConnectionsToLOList (AndRats);
-      if (!new)
-        new = LookupPVConnectionsToLOList (AndRats);
+      newone = LookupPVConnectionsToPVList ();
+      if (!newone)
+        newone = LookupLOConnectionsToPVList (AndRats);
+      if (!newone)
+        newone = LookupLOConnectionsToLOList (AndRats);
+      if (!newone)
+        newone = LookupPVConnectionsToLOList (AndRats);
       if (AndDraw)
         DrawNewConnections ();
     }
-  while (!new && !ListsEmpty (AndRats));
+  while (!newone && !ListsEmpty (AndRats));
   if (AndDraw)
     Draw ();
-  return (new);
+  return (newone);
 }
 
 /* returns true if nothing un-found touches the passed line
@@ -2984,7 +2980,7 @@ PrintAndSelectUnusedPinsAndPadsOfElement (ElementTypePtr Element, FILE * FP)
                   }
 
                 /* write name to list and draw selected object */
-                CreateQuotedString (&oname, EMPTY (pin->Name));
+                CreateQuotedString (&oname, (char *)EMPTY (pin->Name));
                 fprintf (FP, "\t%s\n", oname.Data);
                 SET_FLAG (SELECTEDFLAG, pin);
                 DrawPin (pin, 0);
@@ -3028,7 +3024,7 @@ PrintAndSelectUnusedPinsAndPadsOfElement (ElementTypePtr Element, FILE * FP)
               }
 
             /* write name to list and draw selected object */
-            CreateQuotedString (&oname, EMPTY (pad->Name));
+            CreateQuotedString (&oname, (char *)EMPTY (pad->Name));
             fprintf (FP, "\t%s\n", oname.Data);
             SET_FLAG (SELECTEDFLAG, pad);
             DrawPad (pad, 0);
@@ -3093,7 +3089,7 @@ PrintElementConnections (ElementTypePtr Element, FILE * FP, bool AndDraw)
     /* pin might have been checked before, add to list if not */
     if (TEST_FLAG (TheFlag, pin))
       {
-        PrintConnectionListEntry (EMPTY (pin->Name), NULL, true, FP);
+        PrintConnectionListEntry ((char *)EMPTY (pin->Name), NULL, true, FP);
         fputs ("\t\t__CHECKED_BEFORE__\n\t}\n", FP);
         continue;
       }
@@ -3117,7 +3113,7 @@ PrintElementConnections (ElementTypePtr Element, FILE * FP, bool AndDraw)
     /* pad might have been checked before, add to list if not */
     if (TEST_FLAG (TheFlag, pad))
       {
-        PrintConnectionListEntry (EMPTY (pad->Name), NULL, true, FP);
+        PrintConnectionListEntry ((char *)EMPTY (pad->Name), NULL, true, FP);
         fputs ("\t\t__CHECKED_BEFORE__\n\t}\n", FP);
         continue;
       }
@@ -3402,9 +3398,8 @@ LookupConnection (LocationType X, LocationType Y, bool AndDraw,
  * assumes InitConnectionLookup() has already been done
  */
 void
-  RatFindHook
-  (int type, void *ptr1, void *ptr2, void *ptr3, bool undo,
-   bool AndRats)
+RatFindHook (int type, void *ptr1, void *ptr2, void *ptr3,
+             bool undo, bool AndRats)
 {
   User = undo;
   DumpList ();
@@ -3421,9 +3416,7 @@ LookupUnusedPins (FILE * FP)
 {
   /* reset all currently marked connections */
   User = true;
-  SaveUndoSerialNumber ();
   ResetConnections (true);
-  RestoreUndoSerialNumber ();
   InitConnectionLookup ();
 
   ELEMENT_LOOP (PCB->Data);
@@ -3447,11 +3440,10 @@ LookupUnusedPins (FILE * FP)
 /* ---------------------------------------------------------------------------
  * resets all used flags of pins and vias
  */
-void
+bool
 ResetFoundPinsViasAndPads (bool AndDraw)
 {
   bool change = false;
-
 
   VIA_LOOP (PCB->Data);
   {
@@ -3497,24 +3489,17 @@ ResetFoundPinsViasAndPads (bool AndDraw)
   }
   END_LOOP;
   if (change)
-    {
-      SetChangedFlag (true);
-      if (AndDraw)
-        {
-          IncrementUndoSerialNumber ();
-          Draw ();
-        }
-    }
+    SetChangedFlag (true);
+  return change;
 }
 
 /* ---------------------------------------------------------------------------
  * resets all used flags of LOs
  */
-void
+bool
 ResetFoundLinesAndPolygons (bool AndDraw)
 {
   bool change = false;
-
 
   RAT_LOOP (PCB->Data);
   {
@@ -3569,28 +3554,22 @@ ResetFoundLinesAndPolygons (bool AndDraw)
   }
   ENDALL_LOOP;
   if (change)
-    {
-      SetChangedFlag (true);
-      if (AndDraw)
-        {
-          IncrementUndoSerialNumber ();
-          Draw ();
-        }
-    }
+    SetChangedFlag (true);
+  return change;
 }
 
 /* ---------------------------------------------------------------------------
  * resets all found connections
  */
-static void
+bool
 ResetConnections (bool AndDraw)
 {
-  if (AndDraw)
-    SaveUndoSerialNumber ();
-  ResetFoundPinsViasAndPads (AndDraw);
-  if (AndDraw)
-    RestoreUndoSerialNumber ();
-  ResetFoundLinesAndPolygons (AndDraw);
+  bool change = false;
+
+  change = ResetFoundPinsViasAndPads  (AndDraw) || change;
+  change = ResetFoundLinesAndPolygons (AndDraw) || change;
+
+  return change;
 }
 
 /*----------------------------------------------------------------------------
@@ -3937,7 +3916,11 @@ DRCAll (void)
 
   TheFlag = FOUNDFLAG | DRCFLAG | SELECTEDFLAG;
 
-  ResetConnections (true);
+  if (ResetConnections (true))
+    {
+      IncrementUndoSerialNumber ();
+      Draw ();
+    }
 
   User = false;
 
@@ -4356,13 +4339,13 @@ DRCAll (void)
             BuildObjectList (&object_count, &object_id_list, &object_type_list);
 
             title = _("Element %s has %i silk lines which are too thin");
-            name = UNKNOWN (NAMEONPCB_NAME (element));
+            name = (char *)UNKNOWN (NAMEONPCB_NAME (element));
 
             /* -4 is for the %s and %i place-holders */
             /* +11 is the max printed length for a 32 bit integer */
             /* +1 is for the \0 termination */
             buflen = strlen (title) - 4 + strlen (name) + 11 + 1;
-            buffer = malloc (buflen);
+            buffer = (char *)malloc (buflen);
             snprintf (buffer, buflen, title, name, tmpcnt);
 
             violation = pcb_drc_violation_new (buffer,
@@ -4495,8 +4478,8 @@ BuildObjectList (int *object_count, long int **object_id_list, int **object_type
     case ELEMENT_TYPE:
     case RATLINE_TYPE:
       *object_count = 1;
-      *object_id_list = malloc (sizeof (long int));
-      *object_type_list = malloc (sizeof (int));
+      *object_id_list = (long int *)malloc (sizeof (long int));
+      *object_type_list = (int *)malloc (sizeof (int));
       **object_id_list = ((AnyObjectType *)thing_ptr3)->ID;
       **object_type_list = thing_type;
       return;

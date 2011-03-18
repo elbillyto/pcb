@@ -19,8 +19,8 @@ extern Display *display;
 extern Screen *screen_s;
 extern int screen;
 
-Widget mainwind, work_area, command, hscroll, vscroll;
-Widget m_click;
+extern Widget mainwind, work_area, command, hscroll, vscroll;
+extern Widget m_click;
 
 extern Widget lesstif_menu (Widget, char *, Arg *, int);
 extern int lesstif_key_event (XKeyEvent *);
@@ -50,7 +50,7 @@ extern void lesstif_insert_style_buttons (Widget menu);
 extern void lesstif_styles_update_values ();
 extern void lesstif_update_layer_groups ();
 extern void lesstif_update_status_line ();
-extern char *lesstif_prompt_for (char *, char *);
+extern char *lesstif_prompt_for (const char *, const char *);
 extern char *lesstif_fileselect (const char *, const char *,
 				 char *, char *,
 				 const char *, int);

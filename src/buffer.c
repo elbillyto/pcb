@@ -153,7 +153,7 @@ AddLineToBuffer (LayerTypePtr Layer, LineTypePtr Line)
 			       MaskFlags (Line->Flags,
 					  FOUNDFLAG | ExtraFlag));
   if (line && Line->Number)
-    line->Number = MyStrdup (Line->Number, "AddLineToBuffer");
+    line->Number = strdup (Line->Number);
   return (line);
 }
 
@@ -865,7 +865,7 @@ LoadFootprintByName (BufferTypePtr Buffer, char *Footprint)
 
 static const char loadfootprint_syntax[] = "LoadFootprint(filename[,refdes,value])";
 
-static const char loadfootprint_help[] = "Loads a single footprint by name";
+static const char loadfootprint_help[] = "Loads a single footprint by name.";
 
 /* %start-doc actions LoadFootprint
 
@@ -933,7 +933,17 @@ SmashBufferElement (BufferTypePtr Buffer)
       Message (_("Error!  Buffer doesn't contain a single element\n"));
       return (false);
     }
+  /*
+   * At this point the buffer should contain just a single element.
+   * Now we detach the single element from the buffer and then clear the
+   * buffer, ready to receive the smashed elements.  As a result of detaching
+   * it the single element is orphaned from the buffer and thus will not be
+   * free()'d by FreeDataMemory (called via ClearBuffer).  This leaves it
+   * around for us to smash bits off it.  It then becomes our responsibility,
+   * however, to free the single element when we're finished with it.
+   */
   element = &Buffer->Data->Element[0];
+  Buffer->Data->Element = NULL;
   Buffer->Data->ElementN = 0;
   ClearBuffer (Buffer);
   ELEMENTLINE_LOOP (element);
@@ -943,7 +953,7 @@ SmashBufferElement (BufferTypePtr Buffer)
 			  line->Point2.X, line->Point2.Y,
 			  line->Thickness, 0, NoFlags ());
     if (line)
-      line->Number = MyStrdup (NAMEONPCB_NAME (element), "SmashBuffer");
+      line->Number = STRDUP (NAMEONPCB_NAME (element));
   }
   END_LOOP;
   ARC_LOOP (element);
@@ -981,11 +991,11 @@ SmashBufferElement (BufferTypePtr Buffer)
 				 pad->Point2.X, pad->Point2.Y,
 				 pad->Thickness, pad->Clearance, NoFlags ());
     if (line)
-      line->Number = MyStrdup (pad->Number, "SmashBuffer");
+      line->Number = STRDUP (pad->Number);
   }
   END_LOOP;
   FreeElementMemory (element);
-  SaveFree (element);
+  free (element);
   return (true);
 }
 
@@ -1037,6 +1047,8 @@ ConvertBufferToElement (BufferTypePtr Buffer)
   Cardinal group;
   Cardinal pin_n = 1;
   bool hasParts = false, crooked = false;
+  int onsolder;
+  bool warned = false;
 
   if (Buffer->Data->pcb == 0)
     Buffer->Data->pcb = PCB;
@@ -1071,91 +1083,90 @@ ConvertBufferToElement (BufferTypePtr Buffer)
     hasParts = true;
   }
   END_LOOP;
-  /* get the component-side SM pads */
-  group = GetLayerGroupNumberByNumber (SWAP_IDENT ? solder_silk_layer :
-						    component_silk_layer);
-  GROUP_LOOP (Buffer->Data, group);
-  {
-    char num[8];
-    LINE_LOOP (layer);
-    {
-      sprintf (num, "%d", pin_n++);
-      CreateNewPad (Element, line->Point1.X,
-		    line->Point1.Y, line->Point2.X,
-		    line->Point2.Y, line->Thickness,
-		    line->Clearance,
-		    line->Thickness + line->Clearance, NULL,
-		    line->Number ? line->Number : num,
-		    MakeFlags (SWAP_IDENT ? ONSOLDERFLAG : NOFLAG));
-      hasParts = true;
-    }
-    END_LOOP;
-    POLYGON_LOOP (layer);
-    {
-      int x1, y1, x2, y2, w, h, t;
 
-      if (! polygon_is_rectangle (polygon))
-        {
-          crooked = true;
-	  continue;
-        }
-
-      w = polygon->Points[2].X - polygon->Points[0].X;
-      h = polygon->Points[1].Y - polygon->Points[0].Y;
-      t = (w < h) ? w : h;
-      x1 = polygon->Points[0].X + t/2;
-      y1 = polygon->Points[0].Y + t/2;
-      x2 = x1 + (w-t);
-      y2 = y1 + (h-t);
-
-      sprintf (num, "%d", pin_n++);
-      CreateNewPad (Element,
-		    x1, y1, x2, y2, t,
-		    2 * Settings.Keepaway,
-		    t + Settings.Keepaway,
-		    NULL, num,
-		    MakeFlags (SQUAREFLAG | (SWAP_IDENT ? ONSOLDERFLAG : NOFLAG)));
-      hasParts = true;
-    }
-    END_LOOP;
-  }
-  END_LOOP;
-  /* now get the opposite side pads */
-  group = GetLayerGroupNumberByNumber (SWAP_IDENT ? component_silk_layer :
-						    solder_silk_layer);
-  GROUP_LOOP (Buffer->Data, group);
-  {
-    bool warned = false;
-    char num[8];
-    LINE_LOOP (layer);
+  for (onsolder = 0; onsolder < 2; onsolder ++)
     {
-      sprintf (num, "%d", pin_n++);
-      CreateNewPad (Element, line->Point1.X,
-		    line->Point1.Y, line->Point2.X,
-		    line->Point2.Y, line->Thickness,
-		    line->Clearance,
-		    line->Thickness + line->Clearance, NULL,
-		    line->Number ? line->Number : num,
-		    MakeFlags (SWAP_IDENT ? NOFLAG : ONSOLDERFLAG));
-      if (!hasParts && !warned)
+      int silk_layer;
+      int onsolderflag;
+
+      if ((!onsolder) == (!SWAP_IDENT))
 	{
-	  warned = true;
-	  Message
-	    (_("Warning: All of the pads are on the opposite\n"
-	       "side from the component - that's probably not what\n"
-	       "you wanted\n"));
+	  silk_layer = component_silk_layer;
+	  onsolderflag = NOFLAG;
 	}
-      hasParts = true;
+      else
+	{
+	  silk_layer = solder_silk_layer;
+	  onsolderflag = ONSOLDERFLAG;
+	}
+
+#define MAYBE_WARN() \
+	  if (onsolder && !hasParts && !warned) \
+	    { \
+	      warned = true; \
+	      Message \
+		(_("Warning: All of the pads are on the opposite\n" \
+		   "side from the component - that's probably not what\n" \
+		   "you wanted\n")); \
+	    } \
+
+      /* get the component-side SM pads */
+      group = GetLayerGroupNumberByNumber (silk_layer);
+      GROUP_LOOP (Buffer->Data, group);
+      {
+	char num[8];
+	LINE_LOOP (layer);
+	{
+	  sprintf (num, "%d", pin_n++);
+	  CreateNewPad (Element, line->Point1.X,
+			line->Point1.Y, line->Point2.X,
+			line->Point2.Y, line->Thickness,
+			line->Clearance,
+			line->Thickness + line->Clearance, NULL,
+			line->Number ? line->Number : num,
+			MakeFlags (onsolderflag));
+	  MAYBE_WARN();
+	  hasParts = true;
+	}
+	END_LOOP;
+	POLYGON_LOOP (layer);
+	{
+	  int x1, y1, x2, y2, w, h, t;
+
+	  if (! polygon_is_rectangle (polygon))
+	    {
+	      crooked = true;
+	      continue;
+	    }
+
+	  w = polygon->Points[2].X - polygon->Points[0].X;
+	  h = polygon->Points[1].Y - polygon->Points[0].Y;
+	  t = (w < h) ? w : h;
+	  x1 = polygon->Points[0].X + t/2;
+	  y1 = polygon->Points[0].Y + t/2;
+	  x2 = x1 + (w-t);
+	  y2 = y1 + (h-t);
+
+	  sprintf (num, "%d", pin_n++);
+	  CreateNewPad (Element,
+			x1, y1, x2, y2, t,
+			2 * Settings.Keepaway,
+			t + Settings.Keepaway,
+			NULL, num,
+			MakeFlags (SQUAREFLAG | onsolderflag));
+	  MAYBE_WARN();
+	  hasParts = true;
+	}
+	END_LOOP;
+      }
+      END_LOOP;
     }
-    END_LOOP;
-  }
-  END_LOOP;
+
   /* now add the silkscreen. NOTE: elements must have pads or pins too */
   LINE_LOOP (&Buffer->Data->SILKLAYER);
   {
     if (line->Number && !NAMEONPCB_NAME (Element))
-      NAMEONPCB_NAME (Element) = MyStrdup (line->Number,
-					   "ConvertBufferToElement");
+      NAMEONPCB_NAME (Element) = strdup (line->Number);
     CreateNewLineInElement (Element, line->Point1.X,
 			    line->Point1.Y, line->Point2.X,
 			    line->Point2.Y, line->Thickness);
@@ -1207,7 +1218,7 @@ LoadLayoutToBuffer (BufferTypePtr Buffer, char *Filename)
     {
       /* clear data area and replace pointer */
       ClearBuffer (Buffer);
-      SaveFree (Buffer->Data);
+      free (Buffer->Data);
       Buffer->Data = newPCB->Data;
       newPCB->Data = NULL;
       Buffer->X = newPCB->CursorX;
@@ -1439,8 +1450,9 @@ angle is given, the user is prompted for one.
 int
 ActionFreeRotateBuffer(int argc, char **argv, int x, int y)
 {
-  HideCrosshair(false);
   char *angle_s;
+
+  HideCrosshair(false);
 
   if (argc < 1)
     angle_s = gui->prompt_for ("Enter Rotation (degrees, CCW):", "0");

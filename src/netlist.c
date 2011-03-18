@@ -242,10 +242,8 @@ netlist_clear (LibraryMenuType * net, LibraryEntryType * pin)
 static void
 netlist_style (LibraryMenuType *net, const char *style)
 {
-  if (net->Style)
-    MYFREE (net->Style);
-  if (style)
-    net->Style = MyStrdup ((char *)style, "Netlist(Style)");
+  free (net->Style);
+  net->Style = STRDUP ((char *)style);
 }
 
 /* The primary purpose of this action is to rebuild a netlist from a
@@ -390,7 +388,7 @@ Netlist (int argc, char **argv, int x, int y)
 	}
     }
   else if (strcasecmp (argv[0], "style") == 0)
-    func = (void *)netlist_style;
+    func = (NFunc)netlist_style;
   else if (strcasecmp (argv[0], "add") == 0)
     {
       /* Add is different, because the net/pin won't already exist.  */

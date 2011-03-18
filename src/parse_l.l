@@ -61,12 +61,15 @@ RCSID("$Id$");
 #include "strflags.h"
 #include "parse_l.h"
 #include "parse_y.h"
+#include "create.h"
+
+#define YY_NO_INPUT
 
 /* ---------------------------------------------------------------------------
  * some shared parser identifiers
  */
 #ifdef FLEX_SCANNER
-int				yylineno;		/* linenumber */
+
 #define yyunput ATTRIBUTE_UNUSED yyunput
 #endif
 
@@ -169,7 +172,7 @@ Attribute	{ return(T_ATTRIBUTE); }
 							 * leading and trailing '"'
 							 */
 						yyleng -= 2;
-						yylval.string = MyCalloc(yyleng+1, sizeof(char), "LEX");
+						yylval.string = (char *)calloc (yyleng+1, sizeof (char));
 						p1 = (char *) (yytext +1);
 						p2 = yylval.string;
 						while(yyleng--)
@@ -245,8 +248,7 @@ static int Parse(char *Executable, char *Path, char *Filename, char *Parameter)
 	  {
 	    used_popen = 1;
 	    /* release old command and create new from template */
-	    if (command)
-	      MYFREE (command);
+	    free (command);
 	    command = EvaluateFilename(Executable, Path, Filename, Parameter);
 
 	    /* open pipe to stdout of command */
@@ -274,6 +276,8 @@ static int Parse(char *Executable, char *Path, char *Filename, char *Parameter)
 		 * on termination.
 		 */
 
+	CreateBeLenient (true);
+
 #if !defined(HAS_ATEXIT) && !defined(HAS_ON_EXIT)
 	if (PCB)
 	  SaveTMPData();
@@ -284,6 +288,8 @@ static int Parse(char *Executable, char *Path, char *Filename, char *Parameter)
 #endif
 	/* clean up parse buffer */
 	yy_delete_buffer(YY_CURRENT_BUFFER);
+
+	CreateBeLenient (false);
 
 	if (used_popen)
 	  return(pclose(yyin) ? 1 : returncode);

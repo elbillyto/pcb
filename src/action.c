@@ -72,6 +72,7 @@
 #include "macro.h"
 
 #include <assert.h>
+#include <stdlib.h> /* rand() */
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
@@ -135,6 +136,7 @@ typedef enum
   F_Move,
   F_NameOnPCB,
   F_Netlist,
+  F_NetByName,
   F_None,
   F_Notify,
   F_Object,
@@ -371,6 +373,7 @@ static FunctionType Functions[] = {
   {"Move", F_Move},
   {"NameOnPCB", F_NameOnPCB},
   {"Netlist", F_Netlist},
+  {"NetByName", F_NetByName},
   {"None", F_None},
   {"Notify", F_Notify},
   {"Object", F_Object},
@@ -462,7 +465,7 @@ extern int stroke_trans (char *s);
 #endif
 static void ChangeFlag (char *, char *, int, char *);
 
-#define ARG(n) (argc > (n) ? argv[n] : 0)
+#define ARG(n) (argc > (n) ? argv[n] : NULL)
 
 #ifdef HAVE_LIBSTROKE
 
@@ -1408,8 +1411,6 @@ NotifyMode (void)
 		    Draw ();
 		  }
 		}
-
-	    /* free memory allocated by gui->prompt_for() */
 	    free (string);
 	  }
 	break;
@@ -1495,7 +1496,7 @@ NotifyMode (void)
 		{
 		  /* Create POLYAREAs from the original polygon
 		   * and the new hole polygon */
-		  original = PolygonToPoly (Crosshair.AttachedObject.Ptr2);
+		  original = PolygonToPoly ((PolygonType *)Crosshair.AttachedObject.Ptr2);
 		  new_hole = PolygonToPoly (&Crosshair.AttachedPolygon);
 
 		  /* Subtract the hole from the original polygon shape */
@@ -1506,7 +1507,7 @@ NotifyMode (void)
 		   */
 		  SaveUndoSerialNumber ();
 		  Flags = ((PolygonType *)Crosshair.AttachedObject.Ptr2)->Flags;
-		  PolyToPolygonsOnLayer (PCB->Data, Crosshair.AttachedObject.Ptr1,
+		  PolyToPolygonsOnLayer (PCB->Data, (LayerType *)Crosshair.AttachedObject.Ptr1,
 					 result, Flags);
 		  RemoveObject (POLYGON_TYPE,
 				Crosshair.AttachedObject.Ptr1,
@@ -2211,24 +2212,25 @@ ActionSetValue (int argc, char **argv, int x, int y)
   char *function = ARG (0);
   char *val = ARG (1);
   char *units = ARG (2);
-  bool r;			/* flag for 'relative' value */
+  bool absolute;			/* flag for 'absolute' value */
   float value;
   int err = 0;
 
   if (function && val)
     {
       HideCrosshair (true);
-      value = GetValue (val, units, &r);
+      value = GetValue (val, units, &absolute);
       switch (GetFunctionID (function))
 	{
 	case F_ViaDrillingHole:
-	  SetViaDrillingHole (r ? value : value + Settings.ViaDrillingHole,
+	  SetViaDrillingHole (absolute ? value :
+                                value + Settings.ViaDrillingHole,
 			      false);
 	  hid_action ("RouteStylesChanged");
 	  break;
 
 	case F_Grid:
-	  if (!r)
+	  if (!absolute)
 	    {
 	      if ((value == (int) value && PCB->Grid == (int) PCB->Grid)
 		  || (value != (int) value && PCB->Grid != (int) PCB->Grid)
@@ -2256,20 +2258,20 @@ ActionSetValue (int argc, char **argv, int x, int y)
 
 	case F_LineSize:
 	case F_Line:
-	  SetLineSize (r ? value : value + Settings.LineThickness);
+	  SetLineSize (absolute ? value : value + Settings.LineThickness);
 	  hid_action ("RouteStylesChanged");
 	  break;
 
 	case F_Via:
 	case F_ViaSize:
-	  SetViaSize (r ? value : value + Settings.ViaThickness, false);
+	  SetViaSize (absolute ? value : value + Settings.ViaThickness, false);
 	  hid_action ("RouteStylesChanged");
 	  break;
 
 	case F_Text:
 	case F_TextScale:
 	  value /= 45;
-	  SetTextScale (r ? value : value + Settings.TextScale);
+	  SetTextScale (absolute ? value : value + Settings.TextScale);
 	  break;
 	default:
 	  err = 1;
@@ -2338,10 +2340,6 @@ Any ``found'' pins and vias are marked ``not found''.
 @item Reset
 All ``found'' objects are marked ``not found''.
 
-@item Measure
-The net under the cursor is found and measured (the lengths of all
-line segments are added together)
-
 @end table
 
 %end-doc */
@@ -2363,18 +2361,27 @@ ActionConnection (int argc, char **argv, int x, int y)
 	  }
 
 	case F_ResetLinesAndPolygons:
-	  ResetFoundLinesAndPolygons (true);
+	  if (ResetFoundLinesAndPolygons (true))
+	    {
+	      IncrementUndoSerialNumber ();
+	      Draw ();
+	    }
 	  break;
 
 	case F_ResetPinsViasAndPads:
-	  ResetFoundPinsViasAndPads (true);
+	  if (ResetFoundPinsViasAndPads (true))
+	    {
+	      IncrementUndoSerialNumber ();
+	      Draw ();
+	    }
 	  break;
 
 	case F_Reset:
-	  SaveUndoSerialNumber ();
-	  ResetFoundPinsViasAndPads (true);
-	  RestoreUndoSerialNumber ();
-	  ResetFoundLinesAndPolygons (true);
+	  if (ResetConnections (true))
+	    {
+	      IncrementUndoSerialNumber ();
+	      Draw ();
+	    }
 	  break;
 	}
       RestoreCrosshair (true);
@@ -2522,7 +2529,7 @@ static const char display_syntax[] =
   "Display(ToggleThindraw|ToggleThindrawPoly|ToggleOrthoMove|ToggleLocalRef)\n"
   "Display(ToggleCheckPlanes|ToggleShowDRC|ToggleAutoDRC)\n"
   "Display(ToggleLiveRoute|LockNames|OnlyNames)\n"
-  "Display(Pinout|PinOrPadName)\n" "Display(Scroll, Direction)";
+  "Display(Pinout|PinOrPadName)";
 
 static const char display_help[] = "Several display-related actions.";
 
@@ -2604,6 +2611,16 @@ left, or right, but not up+left or down+right.
 @item ToggleName
 Selects whether the pinouts show the pin names or the pin numbers.
 
+@item ToggleLockNames
+If set, text will ignore left mouse clicks and actions that work on
+objects under the mouse. You can still select text with a lasso (left
+mouse drag) and perform actions on the selection.
+
+@item ToggleOnlyNames
+If set, only text will be sensitive for mouse clicks and actions that
+work on objects under the mouse. You can still select other objects
+with a lasso (left mouse drag) and perform actions on the selection.
+
 @item ToggleMask
 Turns the solder mask on or off.
 
@@ -2635,14 +2652,30 @@ Toggles whether the names of pins, pads, or (yes) vias will be
 displayed.  If the cursor is over an element, all of its pins and pads
 are affected.
 
-@item Step <direction> <amount> <units>
-Steps the crosshair in the given direction, with 1=down/left, 2=down,
-etc, according to the numeric keypad layout.  If amount is not given,
-the crosshair steps along the grid.
-
 @end table
 
 %end-doc */
+
+static enum crosshair_shape
+CrosshairShapeIncrement (enum crosshair_shape shape)
+{
+  switch(shape)
+    {
+    case Basic_Crosshair_Shape:
+      shape = Union_Jack_Crosshair_Shape;
+      break;
+    case Union_Jack_Crosshair_Shape:
+      shape = Dozen_Crosshair_Shape;
+      break;
+    case Dozen_Crosshair_Shape:
+      shape = Crosshair_Shapes_Number;
+      break;
+    case Crosshair_Shapes_Number:
+      shape = Basic_Crosshair_Shape;
+      break;
+    }
+  return shape;
+}
 
 static int
 ActionDisplay (int argc, char **argv, int childX, int childY)
@@ -2725,7 +2758,8 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  break;
 
 	case F_CycleCrosshair:
-	  Crosshair.shape++;
+	  //Crosshair.shape++;
+	  Crosshair.shape = CrosshairShapeIncrement(Crosshair.shape);
 	  if (Crosshair_Shapes_Number == Crosshair.shape)
 	    Crosshair.shape = Basic_Crosshair_Shape;
 	  break;
@@ -2787,10 +2821,11 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  TOGGLE_FLAG (AUTODRCFLAG, PCB);
 	  if (TEST_FLAG (AUTODRCFLAG, PCB) && Settings.Mode == LINE_MODE)
 	    {
-	      SaveUndoSerialNumber ();
-	      ResetFoundPinsViasAndPads (true);
-	      RestoreUndoSerialNumber ();
-	      ResetFoundLinesAndPolygons (true);
+	      if (ResetConnections (true))
+		{
+		  IncrementUndoSerialNumber ();
+		  Draw ();
+		}
 	      if (Crosshair.AttachedLine.State != STATE_FIRST)
 		LookupConnection (Crosshair.AttachedLine.Point1.X,
 				  Crosshair.AttachedLine.Point1.Y, true, 1,
@@ -2832,7 +2867,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 
 	    oldGrid = PCB->Grid;
 	    PCB->Grid = 1.0;
-	    if (MoveCrosshairAbsolute (childX, childY))
+	    if (MoveCrosshairAbsolute (Crosshair.X, Crosshair.Y))
 	      RestoreCrosshair (false);	/* was hidden by MoveCrosshairAbs */
 	    SetGrid (oldGrid, true);
 	  }
@@ -2972,7 +3007,8 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 static const char mode_syntax[] =
   "Mode(Arc|Arrow|Copy|InsertPoint|Line|Lock|Move|None|PasteBuffer)\n"
   "Mode(Polygon|Rectangle|Remove|Rotate|Text|Thermal|Via)\n"
-  "Mode(Notify|Release|Cancel|Stroke)\n" "Mode(Save|Restore)";
+  "Mode(Notify|Release|Cancel|Stroke)\n"
+  "Mode(Save|Restore)";
 
 static const char mode_help[] = "Change or use the tool mode.";
 
@@ -3262,7 +3298,8 @@ ActionRemoveSelected (int argc, char **argv, int x, int y)
 
 /* --------------------------------------------------------------------------- */
 
-static const char renumber_syntax[] = "Renumber()\n" "Renumber(filename)";
+static const char renumber_syntax[] = "Renumber()\n"
+                                      "Renumber(filename)";
 
 static const char renumber_help[] =
   "Renumber all elements.  The changes will be recorded to filename\n"
@@ -3357,10 +3394,10 @@ ActionRenumber (int argc, char **argv, int x, int y)
    *
    * We'll actually renumber things in the 2nd pass.
    */
-  element_list = calloc (PCB->Data->ElementN, sizeof (ElementTypePtr));
-  locked_element_list = calloc (PCB->Data->ElementN, sizeof (ElementTypePtr));
-  was = calloc (PCB->Data->ElementN, sizeof (char *));
-  is = calloc (PCB->Data->ElementN, sizeof (char *));
+  element_list = (ElementType **)calloc (PCB->Data->ElementN, sizeof (ElementTypePtr));
+  locked_element_list = (ElementType **)calloc (PCB->Data->ElementN, sizeof (ElementTypePtr));
+  was = (char **)calloc (PCB->Data->ElementN, sizeof (char *));
+  is = (char **)calloc (PCB->Data->ElementN, sizeof (char *));
   if (element_list == NULL || locked_element_list == NULL || was == NULL
       || is == NULL)
     {
@@ -3430,7 +3467,7 @@ ActionRenumber (int argc, char **argv, int x, int y)
   unique = TEST_FLAG (UNIQUENAMEFLAG, PCB);
   CLEAR_FLAG (UNIQUENAMEFLAG, PCB);
 
-  cnt_list = calloc (cnt_list_sz, sizeof (struct _cnt_list));
+  cnt_list = (struct _cnt_list *)calloc (cnt_list_sz, sizeof (struct _cnt_list));
   for (i = 0; i < cnt; i++)
     {
       /* If there is no refdes, maybe just spit out a warning */
@@ -3453,7 +3490,7 @@ ActionRenumber (int argc, char **argv, int x, int y)
 	  if (j == cnt_list_sz)
 	    {
 	      cnt_list_sz += 100;
-	      cnt_list = realloc (cnt_list, cnt_list_sz);
+	      cnt_list = (struct _cnt_list *)realloc (cnt_list, cnt_list_sz);
 	      if (cnt_list == NULL)
 		{
 		  fprintf (stderr, "realloc failed() in %s\n", __FUNCTION__);
@@ -3497,7 +3534,7 @@ ActionRenumber (int argc, char **argv, int x, int y)
 		  sz++;
 		  tmpi = tmpi / 10;
 		}
-	      tmps = malloc (sz * sizeof (char));
+	      tmps = (char *)malloc (sz * sizeof (char));
 	      sprintf (tmps, "%s%d", cnt_list[j].name, cnt_list[j].cnt);
 
 	      /* 
@@ -3587,7 +3624,7 @@ ActionRenumber (int argc, char **argv, int x, int y)
 		    {
 		      free (PCB->NetlistLib.Menu[i].Entry[j].ListEntry);
 		      PCB->NetlistLib.Menu[i].Entry[j].ListEntry =
-			malloc ((strlen (is[k]) + strlen (pin) +
+			(char *)malloc ((strlen (is[k]) + strlen (pin) +
 				 2) * sizeof (char));
 		      sprintf (PCB->NetlistLib.Menu[i].Entry[j].ListEntry,
 			       "%s-%s", is[k], pin);
@@ -3823,8 +3860,7 @@ ActionAddRats (int argc, char **argv, int x, int y)
 
 static const char delete_syntax[] =
   "Delete(Object|Selected)\n"
-  "Delete(AllRats|SelectedRats)"
-  ;
+  "Delete(AllRats|SelectedRats)";
 
 static const char delete_help[] = "Delete stuff.";
 
@@ -3995,9 +4031,10 @@ ActionAutoRoute (int argc, char **argv, int x, int y)
 /* --------------------------------------------------------------------------- */
 
 static const char markcrosshair_syntax[] =
-  "MarkCrosshair()\n" "MarkCrosshair(Center)";
+  "MarkCrosshair()\n"
+  "MarkCrosshair(Center)";
 
-static const char markcrosshair_help[] = "Set/Reset the Crosshair mark";
+static const char markcrosshair_help[] = "Set/Reset the Crosshair mark.";
 
 /* %start-doc actions MarkCrosshair
 
@@ -4070,12 +4107,12 @@ ActionChangeSize (int argc, char **argv, int x, int y)
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
-  bool r;			/* indicates if absolute size is given */
+  bool absolute;			/* indicates if absolute size is given */
   float value;
 
   if (function && delta)
     {
-      value = GetValue (delta, units, &r);
+      value = GetValue (delta, units, &absolute);
       HideCrosshair (true);
       switch (GetFunctionID (function))
 	{
@@ -4089,54 +4126,54 @@ ActionChangeSize (int argc, char **argv, int x, int y)
 			       &ptr1, &ptr2, &ptr3)) != NO_TYPE)
 	      if (TEST_FLAG (LOCKFLAG, (PinTypePtr) ptr2))
 		Message (_("Sorry, the object is locked\n"));
-	    if (ChangeObjectSize (type, ptr1, ptr2, ptr3, value, r))
+	    if (ChangeObjectSize (type, ptr1, ptr2, ptr3, value, absolute))
 	      SetChangedFlag (true);
 	    break;
 	  }
 
 	case F_SelectedVias:
-	  if (ChangeSelectedSize (VIA_TYPE, value, r))
+	  if (ChangeSelectedSize (VIA_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_SelectedPins:
-	  if (ChangeSelectedSize (PIN_TYPE, value, r))
+	  if (ChangeSelectedSize (PIN_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_SelectedPads:
-	  if (ChangeSelectedSize (PAD_TYPE, value, r))
+	  if (ChangeSelectedSize (PAD_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_SelectedArcs:
-	  if (ChangeSelectedSize (ARC_TYPE, value, r))
+	  if (ChangeSelectedSize (ARC_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_SelectedLines:
-	  if (ChangeSelectedSize (LINE_TYPE, value, r))
+	  if (ChangeSelectedSize (LINE_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_SelectedTexts:
-	  if (ChangeSelectedSize (TEXT_TYPE, value, r))
+	  if (ChangeSelectedSize (TEXT_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_SelectedNames:
-	  if (ChangeSelectedSize (ELEMENTNAME_TYPE, value, r))
+	  if (ChangeSelectedSize (ELEMENTNAME_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_SelectedElements:
-	  if (ChangeSelectedSize (ELEMENT_TYPE, value, r))
+	  if (ChangeSelectedSize (ELEMENT_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_Selected:
 	case F_SelectedObjects:
-	  if (ChangeSelectedSize (CHANGESIZE_TYPES, value, r))
+	  if (ChangeSelectedSize (CHANGESIZE_TYPES, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	}
@@ -4164,12 +4201,12 @@ ActionChange2ndSize (int argc, char **argv, int x, int y)
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
-  bool r;
+  bool absolute;
   float value;
 
   if (function && delta)
     {
-      value = GetValue (delta, units, &r);
+      value = GetValue (delta, units, &absolute);
       HideCrosshair (true);
       switch (GetFunctionID (function))
 	{
@@ -4183,23 +4220,23 @@ ActionChange2ndSize (int argc, char **argv, int x, int y)
 		 SearchScreen (x, y, CHANGE2NDSIZE_TYPES,
 			       &ptr1, &ptr2, &ptr3)) != NO_TYPE)
 	      if (ChangeObject2ndSize
-		  (type, ptr1, ptr2, ptr3, value, r, true))
+		  (type, ptr1, ptr2, ptr3, value, absolute, true))
 		SetChangedFlag (true);
 	    break;
 	  }
 
 	case F_SelectedVias:
-	  if (ChangeSelected2ndSize (VIA_TYPE, value, r))
+	  if (ChangeSelected2ndSize (VIA_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 
 	case F_SelectedPins:
-	  if (ChangeSelected2ndSize (PIN_TYPE, value, r))
+	  if (ChangeSelected2ndSize (PIN_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	case F_Selected:
 	case F_SelectedObjects:
-	  if (ChangeSelected2ndSize (PIN_TYPES, value, r))
+	  if (ChangeSelected2ndSize (PIN_TYPES, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	}
@@ -4233,12 +4270,12 @@ ActionChangeClearSize (int argc, char **argv, int x, int y)
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
-  bool r;
+  bool absolute;
   float value;
 
   if (function && delta)
     {
-      value = 2 * GetValue (delta, units, &r);
+      value = 2 * GetValue (delta, units, &absolute);
       HideCrosshair (true);
       switch (GetFunctionID (function))
 	{
@@ -4252,33 +4289,33 @@ ActionChangeClearSize (int argc, char **argv, int x, int y)
 		 SearchScreen (x, y,
 			       CHANGECLEARSIZE_TYPES, &ptr1, &ptr2,
 			       &ptr3)) != NO_TYPE)
-	      if (ChangeObjectClearSize (type, ptr1, ptr2, ptr3, value, r))
+	      if (ChangeObjectClearSize (type, ptr1, ptr2, ptr3, value, absolute))
 		SetChangedFlag (true);
 	    break;
 	  }
 	case F_SelectedVias:
-	  if (ChangeSelectedClearSize (VIA_TYPE, value, r))
+	  if (ChangeSelectedClearSize (VIA_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	case F_SelectedPads:
-	  if (ChangeSelectedClearSize (PAD_TYPE, value, r))
+	  if (ChangeSelectedClearSize (PAD_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	case F_SelectedPins:
-	  if (ChangeSelectedClearSize (PIN_TYPE, value, r))
+	  if (ChangeSelectedClearSize (PIN_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	case F_SelectedLines:
-	  if (ChangeSelectedClearSize (LINE_TYPE, value, r))
+	  if (ChangeSelectedClearSize (LINE_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	case F_SelectedArcs:
-	  if (ChangeSelectedClearSize (ARC_TYPE, value, r))
+	  if (ChangeSelectedClearSize (ARC_TYPE, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	case F_Selected:
 	case F_SelectedObjects:
-	  if (ChangeSelectedClearSize (CHANGECLEARSIZE_TYPES, value, r))
+	  if (ChangeSelectedClearSize (CHANGECLEARSIZE_TYPES, value, absolute))
 	    SetChangedFlag (true);
 	  break;
 	}
@@ -4290,7 +4327,8 @@ ActionChangeClearSize (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------------------  */
 
 static const char minmaskgap_syntax[] =
-  "MinMaskGap(delta)\n" "MinMaskGap(Selected, delta)";
+  "MinMaskGap(delta)\n"
+  "MinMaskGap(Selected, delta)";
 
 static const char minmaskgap_help[] =
   "Ensures the mask is a minimum distance from pins and pads.";
@@ -4309,7 +4347,7 @@ ActionMinMaskGap (int argc, char **argv, int x, int y)
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
-  bool r;
+  bool absolute;
   int value;
   int flags;
 
@@ -4323,7 +4361,7 @@ ActionMinMaskGap (int argc, char **argv, int x, int y)
       delta = function;
       flags = 0;
     }
-  value = 2 * GetValue (delta, units, &r);
+  value = 2 * GetValue (delta, units, &absolute);
 
   HideCrosshair (true);
   SaveUndoSerialNumber ();
@@ -4374,7 +4412,8 @@ ActionMinMaskGap (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------------------  */
 
 static const char mincleargap_syntax[] =
-  "MinClearGap(delta)\n" "MinClearGap(Selected, delta)";
+  "MinClearGap(delta)\n"
+  "MinClearGap(Selected, delta)";
 
 static const char mincleargap_help[] =
   "Ensures that polygons are a minimum distance from objects.";
@@ -4393,7 +4432,7 @@ ActionMinClearGap (int argc, char **argv, int x, int y)
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
-  bool r;
+  bool absolute;
   int value;
   int flags;
 
@@ -4407,7 +4446,7 @@ ActionMinClearGap (int argc, char **argv, int x, int y)
       delta = function;
       flags = 0;
     }
-  value = 2 * GetValue (delta, units, &r);
+  value = 2 * GetValue (delta, units, &absolute);
 
   HideCrosshair (true);
   SaveUndoSerialNumber ();
@@ -4573,7 +4612,8 @@ ActionChangePinName (int argc, char **argv, int x, int y)
 /* --------------------------------------------------------------------------- */
 
 static const char changename_syntax[] =
-  "ChangeName(Object)\n" "ChangeName(Layout|Layer)";
+  "ChangeName(Object)\n"
+  "ChangeName(Layout|Layer)";
 
 static const char changename_help[] = "Sets the name of objects.";
 
@@ -4650,7 +4690,8 @@ ActionChangeName (int argc, char **argv, int x, int y)
 	case F_Layout:
 	  name =
 	    gui->prompt_for (_("Enter the layout name:"), EMPTY (PCB->Name));
-	  if (name && ChangeLayoutName (name))	/* XXX memory leak */
+	  /* NB: ChangeLayoutName takes ownership of the passed memory */
+	  if (name && ChangeLayoutName (name))
 	    SetChangedFlag (true);
 	  break;
 
@@ -4658,7 +4699,8 @@ ActionChangeName (int argc, char **argv, int x, int y)
 	case F_Layer:
 	  name = gui->prompt_for (_("Enter the layer name:"),
 				  EMPTY (CURRENT->Name));
-	  if (name && ChangeLayerName (CURRENT, name))	/* XXX memory leak */
+	  /* NB: ChangeLayerName takes ownership of the passed memory */
+	  if (name && ChangeLayerName (CURRENT, name))
 	    SetChangedFlag (true);
 	  break;
 	}
@@ -5340,14 +5382,15 @@ ActionChangePaste (int argc, char **argv, int x, int y)
 /* --------------------------------------------------------------------------- */
 
 static const char select_syntax[] =
-  "Select(ToggleObject)\n"
+  "Select(Object|ToggleObject)\n"
   "Select(All|Block|Connection)\n"
   "Select(ElementByName|ObjectByName|PadByName|PinByName)\n"
   "Select(ElementByName|ObjectByName|PadByName|PinByName, Name)\n"
-  "Select(TextByName|ViaByName)\n"
-  "Select(TextByName|ViaByName, Name)\n" "Select(Convert)";
+  "Select(TextByName|ViaByName|NetByName)\n"
+  "Select(TextByName|ViaByName|NetByName, Name)\n"
+  "Select(Convert)";
 
-static const char select_help[] = "Toggles or sets the selection";
+static const char select_help[] = "Toggles or sets the selection.";
 
 /* %start-doc actions Select
 
@@ -5359,6 +5402,7 @@ static const char select_help[] = "Toggles or sets the selection";
 @item PinByName
 @item TextByName
 @item ViaByName
+@item NetByName
 
 These all rely on having a regular expression parser built into
 @code{pcb}.  If the name is not specified then the user is prompted
@@ -5392,7 +5436,6 @@ ActionSelect (int argc, char **argv, int x, int y)
   char *function = ARG (0);
   if (function)
     {
-
       HideCrosshair (true);
       switch (GetFunctionID (function))
 	{
@@ -5417,6 +5460,9 @@ ActionSelect (int argc, char **argv, int x, int y)
 	case F_ViaByName:
 	  type = VIA_TYPE;
 	  goto commonByName;
+	case F_NetByName:
+	  type = NET_TYPE;
+	  goto commonByName;
 
 	commonByName:
 	  {
@@ -5428,7 +5474,7 @@ ActionSelect (int argc, char **argv, int x, int y)
 	      {
 		if (SelectObjectByName (type, pattern, true))
 		  SetChangedFlag (true);
-		if (ARG (1) == 0)
+		if (ARG (1) == NULL)
 		  free (pattern);
 	      }
 	    break;
@@ -5483,6 +5529,7 @@ ActionSelect (int argc, char **argv, int x, int y)
 	case F_Connection:
 	  if (SelectConnection (true))
 	    {
+              Draw ();
 	      IncrementUndoSerialNumber ();
 	      SetChangedFlag (true);
 	    }
@@ -5534,10 +5581,11 @@ static const char unselect_syntax[] =
   "Unselect(All|Block|Connection)\n"
   "Unselect(ElementByName|ObjectByName|PadByName|PinByName)\n"
   "Unselect(ElementByName|ObjectByName|PadByName|PinByName, Name)\n"
-  "Unselect(TextByName|ViaByName)\n" "Unselect(TextByName|ViaByName, Name)\n";
+  "Unselect(TextByName|ViaByName)\n"
+  "Unselect(TextByName|ViaByName, Name)\n";
 
 static const char unselect_help[] =
-  "unselects the object at the pointer location or the specified objects";
+  "Unselects the object at the pointer location or the specified objects.";
 
 /* %start-doc actions Unselect
 
@@ -5573,7 +5621,6 @@ static int
 ActionUnselect (int argc, char **argv, int x, int y)
 {
   char *function = ARG (0);
-
   if (function)
     {
       HideCrosshair (true);
@@ -5600,6 +5647,9 @@ ActionUnselect (int argc, char **argv, int x, int y)
 	case F_ViaByName:
 	  type = VIA_TYPE;
 	  goto commonByName;
+	case F_NetByName:
+	  type = NET_TYPE;
+	  goto commonByName;
 
 	commonByName:
 	  {
@@ -5611,7 +5661,7 @@ ActionUnselect (int argc, char **argv, int x, int y)
 	      {
 		if (SelectObjectByName (type, pattern, false))
 		  SetChangedFlag (true);
-		if (ARG (1) == 0)
+		if (ARG (1) == NULL)
 		  free (pattern);
 	      }
 	    break;
@@ -5659,6 +5709,7 @@ ActionUnselect (int argc, char **argv, int x, int y)
 	case F_Connection:
 	  if (SelectConnection (false))
 	    {
+              Draw ();
 	      IncrementUndoSerialNumber ();
 	      SetChangedFlag (true);
 	    }
@@ -5730,8 +5781,8 @@ ActionSaveTo (int argc, char **argv, int x, int y)
 
   if (strcasecmp (function, "LayoutAs") == 0)
     {
-      MYFREE (PCB->Filename);
-      PCB->Filename = MyStrdup (name, __FUNCTION__);
+      free (PCB->Filename);
+      PCB->Filename = strdup (name);
       SavePCB (PCB->Filename);
       return 0;
     }
@@ -5795,7 +5846,8 @@ ActionSaveTo (int argc, char **argv, int x, int y)
 /* --------------------------------------------------------------------------- */
 
 static const char savesettings_syntax[] =
-  "SaveSettings()\n" "SaveSettings(local)";
+  "SaveSettings()\n"
+  "SaveSettings(local)";
 
 static const char savesettings_help[] = "Saves settings.";
 
@@ -5890,7 +5942,7 @@ ActionLoadFrom (int argc, char **argv, int x, int y)
   else if (strcasecmp (function, "Netlist") == 0)
     {
       if (PCB->Netlistname)
-	SaveFree (PCB->Netlistname);
+	free (PCB->Netlistname);
       PCB->Netlistname = StripWhiteSpaceAndDup (name);
       FreeLibraryMemory (&PCB->NetlistLib);
       if (!ImportNetlist (PCB->Netlistname))
@@ -5929,7 +5981,7 @@ ActionNew (int argc, char **argv, int x, int y)
   if (!PCB->Changed || gui->confirm_dialog (_("OK to clear layout data?"), 0))
     {
       if (name)
-	name = MyStrdup (name, "ActionNew");
+	name = strdup (name);
       else
 	name = gui->prompt_for (_("Enter the layout name:"), "");
 
@@ -5950,7 +6002,8 @@ ActionNew (int argc, char **argv, int x, int y)
       CreateNewPCBPost (PCB, 1);
 
       /* setup the new name and reset some values to default */
-      PCB->Name = name;		/* XXX memory leak */
+      free (PCB->Name);
+      PCB->Name = name;
 
       ResetStackAndVisibility ();
       CreateDefaultFont ();
@@ -6041,8 +6094,8 @@ Selects the given buffer to be the current paste buffer.
 static int
 ActionPasteBuffer (int argc, char **argv, int x, int y)
 {
-  char *function = argc ? argv[0] : "";
-  char *sbufnum = argc > 1 ? argv[1] : "";
+  char *function = argc ? argv[0] : (char *)"";
+  char *sbufnum = argc > 1 ? argv[1] : (char *)"";
   char *name;
   static char *default_file = NULL;
   int free_name = 0;
@@ -6137,7 +6190,7 @@ ActionPasteBuffer (int argc, char **argv, int x, int y)
 	  {
 	    static int oldx = 0, oldy = 0;
 	    int x, y;
-	    bool r;
+	    bool absolute;
 
 	    if (argc == 1)
 	      {
@@ -6145,11 +6198,11 @@ ActionPasteBuffer (int argc, char **argv, int x, int y)
 	      }
 	    else if (argc == 3 || argc == 4)
 	      {
-		x = GetValue (ARG (1), ARG (3), &r);
-		if (!r)
+		x = GetValue (ARG (1), ARG (3), &absolute);
+		if (!absolute)
 		  x += oldx;
-		y = GetValue (ARG (2), ARG (3), &r);
-		if (!r)
+		y = GetValue (ARG (2), ARG (3), &absolute);
+		if (!absolute)
 		  y += oldy;
 	      }
 	    else
@@ -6183,7 +6236,8 @@ ActionPasteBuffer (int argc, char **argv, int x, int y)
 
 /* --------------------------------------------------------------------------- */
 
-static const char undo_syntax[] = "Undo()\n" "Undo(ClearList)";
+static const char undo_syntax[] = "Undo()\n"
+                                  "Undo(ClearList)";
 
 static const char undo_help[] = "Undo recent changes.";
 
@@ -6512,12 +6566,12 @@ ActionMoveObject (int argc, char **argv, int x, int y)
   char *y_str = ARG (1);
   char *units = ARG (2);
   LocationType nx, ny;
-  bool r1, r2;
+  bool absolute1, absolute2;
   void *ptr1, *ptr2, *ptr3;
   int type;
 
-  ny = GetValue (y_str, units, &r1);
-  nx = GetValue (x_str, units, &r2);
+  ny = GetValue (y_str, units, &absolute1);
+  nx = GetValue (x_str, units, &absolute2);
 
   type = SearchScreen (x, y, MOVE_TYPES, &ptr1, &ptr2, &ptr3);
   if (type == NO_TYPE)
@@ -6525,9 +6579,9 @@ ActionMoveObject (int argc, char **argv, int x, int y)
       Message (_("Nothing found under crosshair\n"));
       return 1;
     }
-  if (r1)
+  if (absolute1)
     nx -= x;
-  if (r2)
+  if (absolute2)
     ny -= y;
   Crosshair.AttachedObject.RubberbandN = 0;
   if (TEST_FLAG (RUBBERBANDFLAG, PCB))
@@ -6732,7 +6786,8 @@ static const char changeflag_syntax[] =
   "ChangeFlag(SelectedLines|SelectedPins|SelectedVias, flag, value)\n"
   "ChangeFlag(SelectedPads|SelectedTexts|SelectedNames, flag, value)\n"
   "ChangeFlag(SelectedElements, flag, value)\n"
-  "flag = square | octagon | thermal | join\n" "value = 0 | 1";
+  "flag = square | octagon | thermal | join\n"
+  "value = 0 | 1";
 
 static const char changeflag_help[] = "Sets or clears flags on objects.";
 
@@ -7012,7 +7067,8 @@ static int
 parse_layout_attribute_units (char *name, int def)
 {
   const char *as, *units = NULL;
-  int n = 0, v, r;
+  int n = 0, v;
+  bool absolute;
 
   as = AttributeGet (PCB, name);
   if (!as)
@@ -7022,7 +7078,7 @@ parse_layout_attribute_units (char *name, int def)
   units = as + n;
   if (! *units)
     units = NULL;
-  v = GetValue (as, units, &r);
+  v = GetValue (as, units, &absolute);
   return v;
 }
 
@@ -7095,7 +7151,6 @@ ActionElementList (int argc, char **argv, int x, int y)
   if (!e)
     {
       int nx, ny, d;
-      char *as;
 
 #ifdef DEBUG
       printf("  ... Footprint not on board, need to add it.\n");
@@ -7114,8 +7169,8 @@ ActionElementList (int argc, char **argv, int x, int y)
 
       if (d > 0)
 	{
-	  nx += random () % (d*2) - d;
-	  ny += random () % (d*2) - d;
+	  nx += rand () % (d*2) - d;
+	  ny += rand () % (d*2) - d;
 	}
 
       if (nx < 0)
@@ -7191,7 +7246,7 @@ ActionElementList (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------- */
 static const char elementsetattr_syntax[] = "ElementSetAttr(refdes,name[,value])";
 
-static const char elementsetattr_help[] = "Sets or clears an element-specific attribute";
+static const char elementsetattr_help[] = "Sets or clears an element-specific attribute.";
 
 /* %start-doc actions elementsetattr
 
@@ -7237,8 +7292,8 @@ ActionElementSetAttr (int argc, char **argv, int x, int y)
 
   if (attr && value)
     {
-      MYFREE (attr->value);
-      attr->value = MyStrdup (value, "ElementSetAttr");
+      free (attr->value);
+      attr->value = strdup (value);
     }
   if (attr && ! value)
     {
@@ -7255,7 +7310,7 @@ ActionElementSetAttr (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------- */
 static const char execcommand_syntax[] = "ExecCommand(command)";
 
-static const char execcommand_help[] = "Runs a command";
+static const char execcommand_help[] = "Runs a command.";
 
 /* %start-doc actions execcommand
 
@@ -7285,6 +7340,13 @@ ActionExecCommand (int argc, char **argv, int x, int y)
 static int
 pcb_spawnvp (char **argv)
 {
+#ifdef HAVE__SPAWNVP
+  int result = _spawnvp (_P_WAIT, argv[0], (const char * const *) argv);
+  if (result == -1)
+    return 1;
+  else
+    return 0;
+#else
   int pid;
   pid = fork ();
   if (pid < 0)
@@ -7306,6 +7368,7 @@ pcb_spawnvp (char **argv)
       wait (&rv);
     }
   return 0;
+#endif
 }
 
 /* ---------------------------------------------------------------- */
@@ -7478,7 +7541,7 @@ static const char import_syntax[] =
   "Import(setnewpoint[,(mark|center|X,Y)])\n"
   "Import(setdisperse,D,units)\n";
 
-static const char import_help[] = "Import schematics";
+static const char import_help[] = "Import schematics.";
 
 /* %start-doc actions Import
 
@@ -7549,7 +7612,7 @@ Note that Import() doesn't delete anything - after an Import, elements
 which shouldn't be on the board are selected and may be removed once
 it's determined that the deletion is appropriate.
 
-In @code{Import()} is called with @code{setnewpoint} then the location
+If @code{Import()} is called with @code{setnewpoint}, then the location
 of new components can be specified.  This is where parts show up when
 they're added to the board.  The default is the center of the board.
 
@@ -7604,8 +7667,7 @@ ActionImport (int argc, char **argv, int x, int y)
 
   if (mode && strcasecmp (mode, "setdisperse") == 0)
     {
-      const char *ds, *units;
-      int d, r;
+      char *ds, *units;
       char buf[50];
 
       ds = ARG (1);
@@ -7613,7 +7675,7 @@ ActionImport (int argc, char **argv, int x, int y)
       if (!ds)
 	{
 	  const char *as = AttributeGet (PCB, "import::disperse");
-	  ds = gui->prompt_for("Enter dispersion:", as ? as : "0");
+	  ds = gui->prompt_for(_("Enter dispersion:"), as ? as : "0");
 	}
       if (units)
 	{
@@ -7622,6 +7684,8 @@ ActionImport (int argc, char **argv, int x, int y)
 	}
       else
 	AttributePut (PCB, "import::disperse", ds);
+      if (ARG (1) == NULL)
+        free (ds);
       return 0;
     }
 
@@ -7643,7 +7707,7 @@ ActionImport (int argc, char **argv, int x, int y)
 	{
 	  AttributeRemove (PCB, "import::newX");
 	  AttributeRemove (PCB, "import::newY");
-	  return;
+	  return 0;
 	}
       else if (strcasecmp (xs, "mark") == 0)
 	{
@@ -7655,13 +7719,13 @@ ActionImport (int argc, char **argv, int x, int y)
 	}
       else if (ys)
 	{
-	  int r;
-	  x = GetValue (xs, units, &r);
-	  y = GetValue (ys, units, &r);
+	  bool absolute;
+	  x = GetValue (xs, units, &absolute);
+	  y = GetValue (ys, units, &absolute);
 	}
       else
 	{
-	  Message ("Bad syntax for Import(setnewpoint)");
+	  Message (_("Bad syntax for Import(setnewpoint)"));
 	  return 1;
 	}
 
@@ -7751,20 +7815,21 @@ ActionImport (int argc, char **argv, int x, int y)
 	return 1;
       }
 
-      cmd = (char **) malloc ((6 + nsources) * sizeof (char *));
+      cmd = (char **) malloc ((7 + nsources) * sizeof (char *));
       cmd[0] =  Settings.GnetlistProgram;
       cmd[1] = "-g";
       cmd[2] = "pcbfwd";
       cmd[3] = "-o";
       cmd[4] = tmpfile;
+      cmd[5] = "--";
       for (i=0; i<nsources; i++)
-	cmd[5+i] = sources[i];
-      cmd[5+nsources] = NULL;
+	cmd[6+i] = sources[i];
+      cmd[6+nsources] = NULL;
 
 #ifdef DEBUG
       printf("ActionImport:  ===========  About to run gnetlist  ============\n");
-      printf("%s %s %s %s %s %s ...\n", 
-	     cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5]);
+      printf("%s %s %s %s %s %s %s ...\n", 
+	     cmd[0], cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
 #endif
 
       if (pcb_spawnvp (cmd))
@@ -7838,7 +7903,7 @@ ActionImport (int argc, char **argv, int x, int y)
 	  cmd[i++] = "-f";
 	  cmd[i++] = user_makefile;
 	}
-      cmd[i++] = user_target ? user_target : "pcb_import";
+      cmd[i++] = user_target ? user_target : (char *)"pcb_import";
       cmd[i++] = NULL;
 
       if (pcb_spawnvp (cmd))

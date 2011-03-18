@@ -269,11 +269,12 @@ int
 ActionLoadVendorFrom (int argc, char **argv, int x, int y)
 {
   int i;
-  char *fname = NULL, *name = NULL;
+  char *fname = NULL;
   static char *default_file = NULL;
   char *sval;
   Resource *res, *drcres, *drlres;
   int type;
+  bool free_fname = false;
 
   cached_drill = -1;
 
@@ -291,11 +292,10 @@ ActionLoadVendorFrom (int argc, char **argv, int x, int y)
       if (fname == NULL)
 	AFAIL (load_vendor);
 
-      if (default_file != NULL)
-	{
-	  free (default_file);
-	  default_file = NULL;
-	}
+      free_fname = true;
+
+      free (default_file);
+      default_file = NULL;
 
       if (fname && *fname)
 	default_file = strdup (fname);
@@ -321,7 +321,7 @@ ActionLoadVendorFrom (int argc, char **argv, int x, int y)
     }
 
   /* figure out the vendor name, if specified */
-  vendor_name = UNKNOWN (resource_value (res, "vendor"));
+  vendor_name = (char *)UNKNOWN (resource_value (res, "vendor"));
 
   /* figure out the units, if specified */
   sval = resource_value (res, "units");
@@ -459,7 +459,8 @@ ActionLoadVendorFrom (int argc, char **argv, int x, int y)
 
   vendorMapEnable = true;
   apply_vendor_map ();
-  free (name);
+  if (free_fname)
+    free (fname);
   return 0;
 }
 
@@ -700,7 +701,7 @@ add_to_drills (char *sval)
 
   /* increment the count and make sure we have memory */
   n_vendor_drills++;
-  if ((vendor_drills = realloc (vendor_drills,
+  if ((vendor_drills = (int *)realloc (vendor_drills,
 				n_vendor_drills * sizeof (int))) == NULL)
     {
       fprintf (stderr, "realloc() failed to allocate %ld bytes\n",

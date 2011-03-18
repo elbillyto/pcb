@@ -37,7 +37,6 @@ RCSID ("$Id$");
 #define R_OK 4
 #endif
 
-Display *display;
 static Colormap cmap;
 
 static Arg args[30];
@@ -271,7 +270,7 @@ LayersChanged (int argc, char **argv, int x, int y)
 	    {
 	      stdarg (XmNforeground, bg_color);
 	      stdarg (XmNbackground, fg_colors[i]);
-	      stdarg (XmNset, current_layer == i ? true : false);
+	      stdarg (XmNset, current_layer == i ? True : False);
 	    }
 	  XtSetValues (lb->w[i], args, n);
 
@@ -398,7 +397,7 @@ layerpick_button_callback (Widget w, int layer,
       if (!lb->is_pick)
 	continue;
       for (i = 0; i < LB_NUMPICK; i++)
-	XmToggleButtonSetState (lb->w[i], layer == i, false);
+	XmToggleButtonSetState (lb->w[i], layer == i, False);
     }
   switch (layer)
     {
@@ -672,9 +671,7 @@ note_widget_flag (Widget w, char *type, char *name)
   if (n_wflags >= max_wflags)
     {
       max_wflags += 20;
-      wflags =
-	MyRealloc (wflags, max_wflags * sizeof (WidgetFlagType),
-		   __FUNCTION__);
+      wflags = (WidgetFlagType *) realloc (wflags, max_wflags * sizeof (WidgetFlagType));
     }
   wflags[n_wflags].w = w;
   wflags[n_wflags].flagname = name;
@@ -1100,6 +1097,7 @@ lesstif_key_event (XKeyEvent * e)
   int mods = 0;
   int i, vi;
   static int sorted = 0;
+  acc_table_t *my_table = 0;
 
   if (!sorted)
     {
@@ -1204,10 +1202,13 @@ lesstif_key_event (XKeyEvent * e)
   else
     have_xy = 0;
 
-  for (vi = 1; vi < cur_table[i].u.a.node->c; vi++)
-    if (resource_type (cur_table[i].u.a.node->v[vi]) == 10)
+  /* Parsing actions may not return until more user interaction
+     happens, so remember which table we're scanning.  */
+  my_table = cur_table;
+  for (vi = 1; vi < my_table[i].u.a.node->c; vi++)
+    if (resource_type (my_table[i].u.a.node->v[vi]) == 10)
       if (hid_parse_actions
-	  (cur_table[i].u.a.node->v[vi].value))
+	  (my_table[i].u.a.node->v[vi].value))
 	break;
   cur_table = 0;
   return 1;
@@ -1305,7 +1306,7 @@ add_resource_to_menu (Widget menu, Resource * node, XtCallbackProc callback)
 
 		if (resource_value (node->v[i].subres, "set"))
 		  {
-		    stdarg (XmNset, true);
+		    stdarg (XmNset, True);
 		  }
 		stdarg (XmNindicatorType, XmONE_OF_MANY);
 		btn = XmCreateToggleButton (menu, "menubutton", args, n);

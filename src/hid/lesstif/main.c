@@ -44,6 +44,9 @@ RCSID ("$Id$");
 #define XtRDouble "Double"
 #endif
 
+/* How big the viewport can be relative to the pcb size.  */
+#define MAX_ZOOM_SCALE	10
+
 typedef struct hid_gc_struct
 {
   HID *me_pointer;
@@ -51,7 +54,7 @@ typedef struct hid_gc_struct
   const char *colorname;
   int width;
   EndCapStyle cap;
-  char xor;
+  char xor_set;
   char erase;
 } hid_gc_struct;
 
@@ -118,6 +121,7 @@ static PinoutData *pinout = 0;
 static int crosshair_x = 0, crosshair_y = 0;
 static int in_move_event = 0, crosshair_in_window = 1;
 
+Widget mainwind;
 Widget work_area, messages, command, hscroll, vscroll;
 static Widget m_mark, m_crosshair, m_grid, m_zoom, m_mode, m_status;
 static Widget m_rats;
@@ -190,6 +194,7 @@ HID_Attribute lesstif_attribute_list[] = {
 REGISTER_ATTRIBUTES (lesstif_attribute_list)
 
 static void lesstif_use_mask (int use_it);
+static void zoom_max ();
 static void zoom_to (double factor, int x, int y);
 static void zoom_by (double factor, int x, int y);
 static void zoom_toggle (int x, int y);
@@ -337,7 +342,7 @@ PCBChanged (int argc, char **argv, int x, int y)
   stdarg (XmNsliderSize, PCB->MaxHeight ? PCB->MaxHeight : 1);
   stdarg (XmNmaximum, PCB->MaxHeight ? PCB->MaxHeight : 1);
   XtSetValues (vscroll, args, n);
-  zoom_by (1000000, 0, 0);
+  zoom_max ();
 
   hid_action ("NetlistChanged");
   hid_action ("LayersChanged");
@@ -452,7 +457,7 @@ ZoomAction (int argc, char **argv, int x, int y)
     }
   if (argc < 1)
     {
-      zoom_to (1000000, 0, 0);
+      zoom_max ();
       return 0;
     }
   vp = argv[0];
@@ -664,7 +669,7 @@ command_callback (Widget w, XtPointer uptr, XmTextVerifyCallbackStruct * cbs)
 }
 
 static void
-command_event_handler (Widget w, XtPointer p, XEvent * e, bool * cont)
+command_event_handler (Widget w, XtPointer p, XEvent * e, Boolean * cont)
 {
   char buf[10];
   KeySym sym;
@@ -680,7 +685,7 @@ command_event_handler (Widget w, XtPointer p, XEvent * e, bool * cont)
 	  XtUnmanageChild (m_cmd);
 	  XtUnmanageChild (m_cmd_label);
 	  XmTextSetString (w, "");
-	  *cont = false;
+	  *cont = False;
 	  break;
 	}
       break;
@@ -1001,14 +1006,18 @@ LoadBackgroundFile (FILE *f, char *filename)
 	 vinfo->depth, vinfo->class);
 #endif
 
-  if (vinfo->class == TrueColor
+#if !defined(__cplusplus)
+#define c_class class
+#endif
+
+  if (vinfo->c_class == TrueColor
       && vinfo->depth == 16
       && vinfo->red_mask == 0xf800
       && vinfo->green_mask == 0x07e0
       && vinfo->blue_mask == 0x001f)
     pixel_type = PT_RGB565;
 
-  if (vinfo->class == TrueColor
+  if (vinfo->c_class == TrueColor
       && vinfo->depth == 24
       && vinfo->red_mask == 0xff0000
       && vinfo->green_mask == 0x00ff00
@@ -1131,6 +1140,7 @@ set_scroll (Widget s, int pos, int view, int pcb)
 void
 lesstif_pan_fixup ()
 {
+#if 0
   if (view_left_x > PCB->MaxWidth - (view_width * view_zoom))
     view_left_x = PCB->MaxWidth - (view_width * view_zoom);
   if (view_top_y > PCB->MaxHeight - (view_height * view_zoom))
@@ -1145,11 +1155,26 @@ lesstif_pan_fixup ()
       zoom_by (1, 0, 0);
       return;
     }
+#endif
 
   set_scroll (hscroll, view_left_x, view_width, PCB->MaxWidth);
   set_scroll (vscroll, view_top_y, view_height, PCB->MaxHeight);
 
   lesstif_invalidate_all ();
+}
+
+static void
+zoom_max ()
+{
+  double new_zoom = PCB->MaxWidth / view_width;
+  if (new_zoom < PCB->MaxHeight / view_height)
+    new_zoom = PCB->MaxHeight / view_height;
+
+  view_left_x = -(view_width * new_zoom - PCB->MaxWidth) / 2;
+  view_top_y = -(view_height * new_zoom - PCB->MaxHeight) / 2;
+  view_zoom = new_zoom;
+  pixel_slop = view_zoom;
+  lesstif_pan_fixup ();
 }
 
 static void
@@ -1169,6 +1194,8 @@ zoom_to (double new_zoom, int x, int y)
   max_zoom = PCB->MaxWidth / view_width;
   if (max_zoom < PCB->MaxHeight / view_height)
     max_zoom = PCB->MaxHeight / view_height;
+
+  max_zoom *= MAX_ZOOM_SCALE;
 
   if (new_zoom < 1)
     new_zoom = 1;
@@ -1294,7 +1321,7 @@ mod_changed (XKeyEvent * e, int set)
 }
 
 static void
-work_area_input (Widget w, XtPointer v, XEvent * e, bool * ctd)
+work_area_input (Widget w, XtPointer v, XEvent * e, Boolean * ctd)
 {
   static int pressed_button = 0;
   static int ignore_release = 0;
@@ -1673,7 +1700,7 @@ work_area_first_expose (Widget work_area, void *me,
       XRenderColor a = {0, 0, 0, 0x8000};
 
       pale_pixmap = XCreatePixmap (display, window, 1, 1, 8);
-      pa.repeat = true;
+      pa.repeat = True;
       pale_picture = XRenderCreatePicture (display, pale_pixmap,
 			    XRenderFindStandardFormat(display, PictStandardA8),
 			    CPRepeat, &pa);
@@ -1813,7 +1840,7 @@ lesstif_do_export (HID_Attr_Val * options)
   XtManageChild (hscroll);
 
   n = 0;
-  stdarg (XmNresize, true);
+  stdarg (XmNresize, True);
   stdarg (XmNresizePolicy, XmRESIZE_ANY);
   messages = XmCreateForm (mainwind, "messages", args, n);
   XtManageChild (messages);
@@ -1908,7 +1935,7 @@ typedef union
   char *s;
 } val_union;
 
-static bool
+static Boolean
 cvtres_string_to_double (Display * d, XrmValue * args, Cardinal * num_args,
 			 XrmValue * from, XrmValue * to,
 			 XtPointer * converter_data)
@@ -1920,7 +1947,7 @@ cvtres_string_to_double (Display * d, XrmValue * args, Cardinal * num_args,
   else
     to->addr = (XPointer) & rv;
   to->size = sizeof (rv);
-  return true;
+  return True;
 }
 
 static void
@@ -1988,7 +2015,7 @@ lesstif_parse_arguments (int *argc, char ***argv)
   amax = acount;
 #endif
 
-  new_options = malloc ((amax + 1) * sizeof (XrmOptionDescRec));
+  new_options = (XrmOptionDescRec *) malloc ((amax + 1) * sizeof (XrmOptionDescRec));
 
 #if 0
   memcpy (new_options + acount, lesstif_options, sizeof (lesstif_options));
@@ -2001,8 +2028,8 @@ lesstif_parse_arguments (int *argc, char ***argv)
   rmax = rcount;
 #endif
 
-  new_resources = malloc ((rmax + 1) * sizeof (XtResource));
-  new_values = malloc ((rmax + 1) * sizeof (val_union));
+  new_resources = (XtResource *) malloc ((rmax + 1) * sizeof (XtResource));
+  new_values = (val_union *) malloc ((rmax + 1) * sizeof (val_union));
 #if 0
   memcpy (new_resources + acount, lesstif_resources,
 	  sizeof (lesstif_resources));
@@ -2110,7 +2137,7 @@ lesstif_parse_arguments (int *argc, char ***argv)
   XmAddWMProtocolCallback (appwidget, close_atom,
 			   (XtCallbackProc) mainwind_delete_cb, 0);
 
-  /*  XSynchronize(display, true); */
+  /*  XSynchronize(display, True); */
 
   XtGetApplicationResources (appwidget, new_values, new_resources,
 			     rmax, 0, 0);
@@ -2236,8 +2263,7 @@ draw_grid ()
   if (n > npoints)
     {
       npoints = n + 10;
-      points =
-	MyRealloc (points, npoints * sizeof (XPoint), "lesstif_draw_grid");
+      points = (XPoint *) realloc (points, npoints * sizeof (XPoint));
     }
   n = 0;
   prevx = 0;
@@ -2400,7 +2426,7 @@ lesstif_update_status_line ()
 static int idle_proc_set = 0;
 static int need_redraw = 0;
 
-static bool
+static Boolean
 idle_proc (XtPointer dummy)
 {
   if (need_redraw)
@@ -2430,29 +2456,60 @@ idle_proc (XtPointer dummy)
 	}
       XSetForeground (display, bg_gc, bgcolor);
       XFillRectangle (display, main_pixmap, bg_gc, 0, 0, mx, my);
-      if (region.X2 > PCB->MaxWidth || region.Y2 > PCB->MaxHeight)
-	{
-	  XSetForeground (display, bg_gc, offlimit_color);
-	  if (region.X2 > PCB->MaxWidth)
-	    {
-	      mx = Vx (PCB->MaxWidth);
-	      if (flip_x)
-		XFillRectangle (display, main_pixmap, bg_gc, 0, 0,
-				mx-1, my);
-	      else
-		XFillRectangle (display, main_pixmap, bg_gc, mx+1, 0,
-				view_width - mx + 1, my);
 
-	    }
-	  if (region.Y2 > PCB->MaxHeight)
+      if (region.X1 < 0 || region.Y1 < 0
+	  || region.X2 > PCB->MaxWidth || region.Y2 > PCB->MaxHeight)
+	{
+	  int leftmost, rightmost, topmost, bottommost;
+
+	  leftmost = Vx (0);
+	  rightmost = Vx (PCB->MaxWidth);
+	  topmost = Vy (0);
+	  bottommost = Vy (PCB->MaxHeight);
+	  if (leftmost > rightmost) {
+	    int t = leftmost;
+	    leftmost = rightmost;
+	    rightmost = t;
+	  }
+	  if (topmost > bottommost) {
+	    int t = topmost;
+	    topmost = bottommost;
+	    bottommost = t;
+	  }
+	  if (leftmost < 0)
+	    leftmost = 0;
+	  if (topmost < 0)
+	    topmost = 0;
+	  if (rightmost > view_width)
+	    rightmost = view_width;
+	  if (bottommost > view_height)
+	    bottommost = view_height;
+
+	  XSetForeground (display, bg_gc, offlimit_color);
+
+	  /* L T R
+             L x R
+             L B R */
+
+	  if (leftmost > 0)
 	    {
-	      my = Vy (PCB->MaxHeight) + 1;
-	      if (flip_y)
-		XFillRectangle (display, main_pixmap, bg_gc, 0, 0, mx,
-				my-1);
-	      else
-		XFillRectangle (display, main_pixmap, bg_gc, 0, my, mx,
-				view_height - my + 1);
+	      XFillRectangle (display, main_pixmap, bg_gc, 0, 0,
+			      leftmost, view_height);
+	    }
+	  if (rightmost < view_width)
+	    {
+	      XFillRectangle (display, main_pixmap, bg_gc, rightmost+1, 0,
+			      view_width-rightmost+1, view_height);
+	    }
+	  if (topmost > 0)
+	    {
+	      XFillRectangle (display, main_pixmap, bg_gc, leftmost, 0,
+			      rightmost-leftmost+1, topmost);
+	    }
+	  if (bottommost < view_height)
+	    {
+	      XFillRectangle (display, main_pixmap, bg_gc, leftmost, bottommost+1,
+			      rightmost-leftmost+1, view_height-bottommost+1);
 	    }
 	}
       DrawBackgroundImage();
@@ -2794,7 +2851,7 @@ idle_proc (XtPointer dummy)
 
   show_crosshair (1);
   idle_proc_set = 0;
-  return true;
+  return True;
 }
 
 void
@@ -2881,7 +2938,7 @@ lesstif_set_layer (const char *name, int group, int empty)
 static hidGC
 lesstif_make_gc (void)
 {
-  hidGC rv = malloc (sizeof (hid_gc_struct));
+  hidGC rv = (hid_gc_struct *) malloc (sizeof (hid_gc_struct));
   memset (rv, 0, sizeof (hid_gc_struct));
   rv->me_pointer = &lesstif_gui;
   return rv;
@@ -3035,7 +3092,7 @@ set_gc (hidGC gc)
     }
 #if 0
   printf ("set_gc c%s %08lx w%d c%d x%d e%d\n",
-	  gc->colorname, gc->color, gc->width, gc->cap, gc->xor, gc->erase);
+	  gc->colorname, gc->color, gc->width, gc->cap, gc->xor_set, gc->erase);
 #endif
   switch (gc->cap)
     {
@@ -3057,7 +3114,7 @@ set_gc (hidGC gc)
       join = JoinBevel;
       break;
     }
-  if (gc->xor)
+  if (gc->xor_set)
     {
       XSetFunction (display, my_gc, GXxor);
       XSetForeground (display, my_gc, gc->color ^ bgcolor);
@@ -3101,9 +3158,9 @@ lesstif_set_line_width (hidGC gc, int width)
 }
 
 static void
-lesstif_set_draw_xor (hidGC gc, int xor)
+lesstif_set_draw_xor (hidGC gc, int xor_set)
 {
-  gc->xor = xor;
+  gc->xor_set = xor_set;
 }
 
 static void
@@ -3493,7 +3550,7 @@ hidval
 lesstif_watch_file (int fd, unsigned int condition, void (*func) (hidval watch, int fd, unsigned int condition, hidval user_data),
     hidval user_data)
 {
-  WatchStruct *watch = malloc (sizeof(WatchStruct));
+  WatchStruct *watch = (WatchStruct *) malloc (sizeof(WatchStruct));
   hidval ret;
   unsigned int xt_condition = 0;
 
@@ -3543,7 +3600,7 @@ static hidval
 lesstif_add_block_hook (void (*func) (hidval data), hidval user_data )
 {
   hidval ret;
-  BlockHookStruct *block_hook = malloc( sizeof( BlockHookStruct ));
+  BlockHookStruct *block_hook = (BlockHookStruct *) malloc( sizeof( BlockHookStruct ));
 
   block_hook->func = func;
   block_hook->user_data = user_data;
@@ -3675,7 +3732,7 @@ lesstif_show_item (void *item)
   if (!mainwind)
     return;
 
-  pd = (PinoutData *) MyCalloc (1, sizeof (PinoutData), "lesstif_show_item");
+  pd = (PinoutData *) calloc (1, sizeof (PinoutData));
 
   pd->item = item;
 

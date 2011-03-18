@@ -66,6 +66,8 @@ RCSID ("$Id$");
 static int ID = 1;		/* current object ID; incremented after */
 				/* each creation of an object */
 
+static bool be_lenient = false;
+
 /* ----------------------------------------------------------------------
  * some local prototypes
  */
@@ -74,14 +76,24 @@ static void AddTextToElement (TextTypePtr, FontTypePtr,
 			      FlagType);
 
 /* ---------------------------------------------------------------------------
+ *  Set the lenience mode.
+ */
+
+void
+CreateBeLenient (bool v)
+{
+  be_lenient = v;
+}
+
+/* ---------------------------------------------------------------------------
  * creates a new paste buffer
  */
 DataTypePtr
 CreateNewBuffer (void)
 {
   DataTypePtr data;
-  data = (DataTypePtr) MyCalloc (1, sizeof (DataType), "CreateNewBuffer()");
-  data->pcb = (void *) PCB;
+  data = (DataTypePtr) calloc (1, sizeof (DataType));
+  data->pcb = (PCBTypePtr) PCB;
   return data;
 }
 
@@ -136,9 +148,9 @@ CreateNewPCB (bool SetDefaultNames)
   int i;
 
   /* allocate memory, switch all layers on and copy resources */
-  ptr = MyCalloc (1, sizeof (PCBType), "CreateNewPCB()");
+  ptr = (PCBTypePtr)calloc (1, sizeof (PCBType));
   ptr->Data = CreateNewBuffer ();
-  ptr->Data->pcb = (void *) ptr;
+  ptr->Data->pcb = (PCBTypePtr) ptr;
 
   ptr->ThermStyle = 4;
   ptr->IsleArea = 2.e8;
@@ -193,8 +205,7 @@ CreateNewPCB (bool SetDefaultNames)
   ptr->minRing = Settings.minRing;
 
   for (i = 0; i < MAX_LAYER; i++)
-    ptr->Data->Layer[i].Name = MyStrdup (Settings.DefaultLayerName[i],
-					 "CreateNewPCB()");
+    ptr->Data->Layer[i].Name = strdup (Settings.DefaultLayerName[i]);
 
   return (ptr);
 }
@@ -213,10 +224,8 @@ CreateNewPCBPost (PCBTypePtr pcb, int use_defaults)
       if (ParseGroupString (Settings.Groups, &pcb->LayerGroups, DEF_LAYER))
 	return 1;
 
-      pcb->Data->Layer[component_silk_layer].Name =
-	MyStrdup ("silk", "CreateNewPCB()");
-      pcb->Data->Layer[solder_silk_layer].Name =
-	MyStrdup ("silk", "CreateNewPCB()");
+      pcb->Data->Layer[component_silk_layer].Name = strdup ("silk");
+      pcb->Data->Layer[solder_silk_layer].Name = strdup ("silk");
     }
   return 0;
 }
@@ -232,17 +241,20 @@ CreateNewVia (DataTypePtr Data,
 {
   PinTypePtr Via;
 
-  VIA_LOOP (Data);
-  {
-    if (SQUARE (via->X - X) + SQUARE (via->Y - Y) <=
-	SQUARE (via->Thickness / 2 + Thickness / 2)) 
+  if (!be_lenient)
     {
-      Message (_("Dropping via at (%d, %d) because it would overlap with the via "
-	"at (%d, %d)\n"), X/100, Y/100, via->X/100, via->Y/100);
-      return (NULL);		/* don't allow via stacking */
+      VIA_LOOP (Data);
+      {
+	if (SQUARE (via->X - X) + SQUARE (via->Y - Y) <=
+	    SQUARE (via->DrillingHole / 2 + DrillingHole / 2)) 
+	  {
+	    Message (_("Dropping via at (%d, %d) because it's hole would overlap with the via "
+		       "at (%d, %d)\n"), X/100, Y/100, via->X/100, via->Y/100);
+	    return (NULL);		/* don't allow via stacking */
+	  }
+      }
+      END_LOOP;
     }
-  }
-  END_LOOP;
 
   Via = GetViaMemory (Data);
 
@@ -262,7 +274,7 @@ CreateNewVia (DataTypePtr Data,
 	       0.01 * Via->DrillingHole, 0.01 * DrillingHole);
     }
 
-  Via->Name = MyStrdup (Name, "CreateNewVia()");
+  Via->Name = STRDUP (Name);
   Via->Flags = Flags;
   CLEAR_FLAG (WARNFLAG, Via);
   SET_FLAG (VIAFLAG, Via);
@@ -578,9 +590,14 @@ CreateNewText (LayerTypePtr Layer, FontTypePtr PCBFont,
 	       LocationType X, LocationType Y,
 	       BYTE Direction, int Scale, char *TextString, FlagType Flags)
 {
-  TextTypePtr text = GetTextMemory (Layer);
-  if (!text)
-    return (text);
+  TextType *text;
+
+  if (TextString == NULL)
+    return NULL;
+
+  text = GetTextMemory (Layer);
+  if (text == NULL)
+    return NULL;
 
   /* copy values, width and height are set by drawing routine
    * because at this point we don't know which symbols are available
@@ -590,7 +607,7 @@ CreateNewText (LayerTypePtr Layer, FontTypePtr PCBFont,
   text->Direction = Direction;
   text->Flags = Flags;
   text->Scale = Scale;
-  text->TextString = MyStrdup (TextString, "CreateNewText()");
+  text->TextString = strdup (TextString);
 
   /* calculate size of the bounding box */
   SetTextBoundingBox (PCBFont, text);
@@ -702,8 +719,7 @@ CreateNewArcInElement (ElementTypePtr Element,
   if (Element->ArcN >= Element->ArcMax)
     {
       Element->ArcMax += STEP_ELEMENTARC;
-      arc = MyRealloc (arc, Element->ArcMax * sizeof (ArcType),
-		       "CreateNewArcInElement()");
+      arc = (ArcTypePtr)realloc (arc, Element->ArcMax * sizeof (ArcType));
       Element->Arc = arc;
       memset (arc + Element->ArcN, 0, STEP_ELEMENTARC * sizeof (ArcType));
     }
@@ -749,8 +765,7 @@ CreateNewLineInElement (ElementTypePtr Element,
   if (Element->LineN >= Element->LineMax)
     {
       Element->LineMax += STEP_ELEMENTLINE;
-      line = MyRealloc (line, Element->LineMax * sizeof (LineType),
-			"CreateNewLineInElement()");
+      line = (LineTypePtr)realloc (line, Element->LineMax * sizeof (LineType));
       Element->Line = line;
       memset (line + Element->LineN, 0, STEP_ELEMENTLINE * sizeof (LineType));
     }
@@ -785,8 +800,8 @@ CreateNewPin (ElementTypePtr Element,
   pin->Thickness = Thickness;
   pin->Clearance = Clearance;
   pin->Mask = Mask;
-  pin->Name = MyStrdup (Name, "CreateNewPin()");
-  pin->Number = MyStrdup (Number, "CreateNewPin()");
+  pin->Name = STRDUP (Name);
+  pin->Number = STRDUP (Number);
   pin->Flags = Flags;
   CLEAR_FLAG (WARNFLAG, pin);
   SET_FLAG (PINFLAG, pin);
@@ -872,8 +887,8 @@ CreateNewPad (ElementTypePtr Element,
   pad->Thickness = Thickness;
   pad->Clearance = Clearance;
   pad->Mask = Mask;
-  pad->Name = MyStrdup (Name, "CreateNewPad()");
-  pad->Number = MyStrdup (Number, "CreateNewPad()");
+  pad->Name = STRDUP (Name);
+  pad->Number = STRDUP (Number);
   pad->Flags = Flags;
   CLEAR_FLAG (WARNFLAG, pad);
   pad->ID = ID++;
@@ -890,14 +905,13 @@ AddTextToElement (TextTypePtr Text, FontTypePtr PCBFont,
 		  LocationType X, LocationType Y,
 		  BYTE Direction, char *TextString, int Scale, FlagType Flags)
 {
-  MYFREE (Text->TextString);
+  free (Text->TextString);
+  Text->TextString = (TextString && *TextString) ? strdup (TextString) : NULL;
   Text->X = X;
   Text->Y = Y;
   Text->Direction = Direction;
   Text->Flags = Flags;
   Text->Scale = Scale;
-  Text->TextString = (TextString && *TextString) ?
-    MyStrdup (TextString, "AddTextToElement()") : NULL;
 
   /* calculate size of the bounding box */
   SetTextBoundingBox (PCBFont, Text);
@@ -918,8 +932,7 @@ CreateNewLineInSymbol (SymbolTypePtr Symbol,
   if (Symbol->LineN >= Symbol->LineMax)
     {
       Symbol->LineMax += STEP_SYMBOLLINE;
-      line = MyRealloc (line, Symbol->LineMax * sizeof (LineType),
-			"CreateNewLineInSymbol()");
+      line = (LineTypePtr)realloc (line, Symbol->LineMax * sizeof (LineType));
       Symbol->Line = line;
       memset (line + Symbol->LineN, 0, STEP_SYMBOLLINE * sizeof (LineType));
     }
@@ -976,12 +989,12 @@ CreateNewNet (LibraryTypePtr lib, char *name, char *style)
 
   sprintf (temp, "  %s", name);
   menu = GetLibraryMenuMemory (lib);
-  menu->Name = MyStrdup (temp, "CreateNewNet()");
+  menu->Name = strdup (temp);
   menu->flag = 1;		/* net is enabled by default */
   if (style == NULL || NSTRCMP ("(unknown)", style) == 0)
     menu->Style = NULL;
   else
-    menu->Style = MyStrdup (style, "CreateNewNet()");
+    menu->Style = strdup (style);
   return (menu);
 }
 
@@ -993,7 +1006,7 @@ CreateNewConnection (LibraryMenuTypePtr net, char *conn)
 {
   LibraryEntryTypePtr entry = GetLibraryEntryMemory (net);
 
-  entry->ListEntry = MyStrdup (conn, "CreateNewConnection()");
+  entry->ListEntry = STRDUP (conn);
   return (entry);
 }
 
@@ -1006,12 +1019,10 @@ CreateNewAttribute (AttributeListTypePtr list, char *name, char *value)
   if (list->Number >= list->Max)
     {
       list->Max += 10;
-      list->List = MyRealloc (list->List,
-			      list->Max * sizeof (AttributeType),
-			      "CreateNewAttribute");
+      list->List = (AttributeType *)realloc (list->List, list->Max * sizeof (AttributeType));
     }
-  list->List[list->Number].name = MyStrdup (name, "CreateNewAttribute");
-  list->List[list->Number].value = MyStrdup (value, "CreateNewAttribute");
+  list->List[list->Number].name = STRDUP (name);
+  list->List[list->Number].value = STRDUP (value);
   list->Number++;
   return &list->List[list->Number - 1];
 }

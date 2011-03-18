@@ -20,11 +20,6 @@
 #include "gui.h"
 #include "hid/common/draw_helpers.h"
 
-
-#if !GTK_CHECK_VERSION(2,8,0) && defined(HAVE_GDK_GDKX_H)
-#include <gdk/gdkx.h>
-#endif
-
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
@@ -33,42 +28,24 @@
 RCSID ("$Id$");
 
 
-extern HID ghid_hid;
-
-
 static void zoom_to (double factor, int x, int y);
 static void zoom_by (double factor, int x, int y);
 
 int ghid_flip_x = 0, ghid_flip_y = 0;
 
-/* ------------------------------------------------------------ */
 
-static inline int 
-Vx2 (int x)
-{     
-  return (x - gport->view_x0) / gport->zoom + 0.5;
-}       
-        
-static inline int 
-Vy2 (int y)
-{     
-  return (y - gport->view_y0) / gport->zoom + 0.5;
-}       
-
-/* ------------------------------------------------------------ */
-
-static void
+void
 ghid_pan_fixup ()
 {
 
-  /* 
+  /*
    * don't pan so far to the right that we see way past the right 
    * edge of the board.
    */
   if (gport->view_x0 > PCB->MaxWidth - gport->view_width)
     gport->view_x0 = PCB->MaxWidth - gport->view_width;
 
-  /* 
+  /*
    * don't pan so far down that we see way past the bottom edge of
    * the board.
    */
@@ -82,20 +59,20 @@ ghid_pan_fixup ()
    if (gport->view_y0 < 0)
     gport->view_y0 = 0;
 
+  /* if we can see the entire board and some, then zoom to fit */
+  if (gport->view_width > PCB->MaxWidth &&
+      gport->view_height > PCB->MaxHeight)
+    {
+      zoom_by (1, 0, 0);
+      return;
+    }
 
-   /* if we can see the entire board and some, then zoom to fit */
-   if (gport->view_width > PCB->MaxWidth &&
-       gport->view_height > PCB->MaxHeight)
-     {
-       zoom_by (1, 0, 0);
-       return;
-     }
+  ghidgui->adjustment_changed_holdoff = TRUE;
+  gtk_range_set_value (GTK_RANGE (ghidgui->h_range), gport->view_x0);
+  gtk_range_set_value (GTK_RANGE (ghidgui->v_range), gport->view_y0);
+  ghidgui->adjustment_changed_holdoff = FALSE;
 
-   gtk_range_set_value (GTK_RANGE (ghidgui->h_range), gport->view_x0);
-   gtk_range_set_value (GTK_RANGE (ghidgui->v_range), gport->view_y0);
-
-   ghid_invalidate_all ();
-
+  ghid_port_ranges_changed();
 }
 
 /* ------------------------------------------------------------ */
@@ -311,79 +288,6 @@ zoom_by (double factor, int x, int y)
 
 /* ------------------------------------------------------------ */
 
-void
-ghid_invalidate_lr (int left, int right, int top, int bottom)
-{
-  ghid_invalidate_all ();
-}
-
-void
-ghid_invalidate_all ()
-{
-  int eleft, eright, etop, ebottom;
-  BoxType region;
-
-  if (!gport->pixmap)
-    return;
-
-  region.X1 = MIN(Px(0), Px(gport->width + 1));
-  region.Y1 = MIN(Py(0), Py(gport->height + 1));
-  region.X2 = MAX(Px(0), Px(gport->width + 1));
-  region.Y2 = MAX(Py(0), Py(gport->height + 1));
-
-  eleft = Vx (0);
-  eright = Vx (PCB->MaxWidth);
-  etop = Vy (0);
-  ebottom = Vy (PCB->MaxHeight);
-  if (eleft > eright)
-    {
-      int tmp = eleft;
-      eleft = eright;
-      eright = tmp;
-    }
-  if (etop > ebottom)
-    {
-      int tmp = etop;
-      etop = ebottom;
-      ebottom = tmp;
-    }
-
-  if (eleft > 0)
-    gdk_draw_rectangle (gport->drawable, gport->offlimits_gc,
-			1, 0, 0, eleft, gport->height);
-  else
-    eleft = 0;
-  if (eright < gport->width)
-    gdk_draw_rectangle (gport->drawable, gport->offlimits_gc,
-			1, eright, 0, gport->width - eright, gport->height);
-  else
-    eright = gport->width;
-  if (etop > 0)
-    gdk_draw_rectangle (gport->drawable, gport->offlimits_gc,
-			1, eleft, 0, eright - eleft + 1, etop);
-  else
-    etop = 0;
-  if (ebottom < gport->height)
-    gdk_draw_rectangle (gport->drawable, gport->offlimits_gc,
-			1, eleft, ebottom, eright - eleft + 1,
-			gport->height - ebottom);
-  else
-    ebottom = gport->height;
-
-  gdk_draw_rectangle (gport->drawable, gport->bg_gc, 1,
-		      eleft, etop, eright - eleft + 1, ebottom - etop + 1);
-
-  ghid_draw_bg_image();
-
-  hid_expose_callback (&ghid_hid, &region, 0);
-  ghid_draw_grid ();
-  if (ghidgui->need_restore_crosshair)
-    RestoreCrosshair (FALSE);
-  ghidgui->need_restore_crosshair = FALSE;
-  ghid_screen_update ();
-}
-
-
 int
 ghid_set_layer (const char *name, int group, int empty)
 {
@@ -565,47 +469,26 @@ ghid_set_crosshair (int x, int y, int action)
 
   if (action == HID_SC_WARP_POINTER)
     {
-#if GTK_CHECK_VERSION(2,8,0)
-    gint xofs, yofs;
-    GdkDisplay *display;
-    GdkScreen *screen;
+      gint xofs, yofs;
+      GdkDisplay *display;
+      GdkScreen *screen;
 
-    display = gdk_display_get_default ();
-    screen = gdk_display_get_default_screen (display); 
+      display = gdk_display_get_default ();
+      screen = gdk_display_get_default_screen (display);
 
-    /*
-     * Figure out where the drawing area is on the screen because
-     * gdk_display_warp_pointer will warp relative to the whole display
-     * but the value we've been given is relative to your drawing area
-     */ 
-    gdk_window_get_origin (gport->drawing_area->window, &xofs, &yofs);
-
-    /* 
-     * Note that under X11, gdk_display_warp_pointer is just a wrapper around XWarpPointer, but
-     * hopefully by avoiding the direct call to an X function we might still work under windows
-     * and other non-X11 based gdk's
-     */
-    gdk_display_warp_pointer (display, screen, xofs + Vx (x), yofs + Vy (y));
-
-
-#else
-#  ifdef HAVE_GDK_GDKX_H
-    gint xofs, yofs;
-    gdk_window_get_origin (gport->drawing_area->window, &xofs, &yofs);
-    XWarpPointer (GDK_DRAWABLE_XDISPLAY (gport->drawing_area->window),
-		  None, GDK_WINDOW_XID (gport->drawing_area->window),
-		  0, 0, 0, 0,
-		  xofs + Vx (x), yofs + Vy (y));
-#  else
-#    error  "sorry.  You need gtk+>=2.8.0 unless you are on X windows"
-#  endif
-#endif
+      /*
+       * Figure out where the drawing area is on the screen because
+       * gdk_display_warp_pointer will warp relative to the whole display
+       * but the value we've been given is relative to your drawing area
+       */
+      gdk_window_get_origin (gport->drawing_area->window, &xofs, &yofs);
+      gdk_display_warp_pointer (display, screen, xofs + Vx (x), yofs + Vy (y));
     }
 }
 
 typedef struct
 {
-  void (*func) ();
+  void (*func) (hidval);
   gint id;
   hidval user_data;
 }
@@ -701,7 +584,7 @@ ghid_watch_file (int fd, unsigned int condition, void (*func) (hidval watch, int
   watch->user_data = user_data;
   watch->fd = fd;
   watch->channel = g_io_channel_unix_new( fd );
-  watch->id = g_io_add_watch( watch->channel, glib_condition, ghid_watch, watch );
+  watch->id = g_io_add_watch( watch->channel, (GIOCondition)glib_condition, ghid_watch, watch );
 
   ret.ptr = (void *) watch;
   return ret;
@@ -808,8 +691,8 @@ ghid_confirm_dialog (char *msg, ...)
     }
 
   dialog = gtk_message_dialog_new (GTK_WINDOW (out->top_window),
-				   GTK_DIALOG_MODAL |
-				   GTK_DIALOG_DESTROY_WITH_PARENT,
+				   (GtkDialogFlags) (GTK_DIALOG_MODAL |
+						     GTK_DIALOG_DESTROY_WITH_PARENT),
 				   GTK_MESSAGE_QUESTION,
 				   GTK_BUTTONS_NONE,
 				   "%s", msg);
@@ -867,7 +750,7 @@ ghid_report_dialog (char *title, char *msg)
 }
 
 char *
-ghid_prompt_for (char *msg, char *default_string)
+ghid_prompt_for (const char *msg, const char *default_string)
 {
   char *rv;
 
@@ -950,7 +833,7 @@ ghid_attributes_need_rows (int new_max)
       gtk_table_attach (GTK_TABLE (attr_table), attr_row[attr_max_rows].del,
 			0, 1,
 			attr_max_rows, attr_max_rows+1,
-			GTK_FILL | GTK_EXPAND,
+			(GtkAttachOptions)(GTK_FILL | GTK_EXPAND),
 			GTK_FILL,
 			0, 0);
       g_signal_connect (G_OBJECT (attr_row[attr_max_rows].del), "clicked",
@@ -960,7 +843,7 @@ ghid_attributes_need_rows (int new_max)
       gtk_table_attach (GTK_TABLE (attr_table), attr_row[attr_max_rows].w_name,
 			1, 2,
 			attr_max_rows, attr_max_rows+1,
-			GTK_FILL | GTK_EXPAND,
+			(GtkAttachOptions)(GTK_FILL | GTK_EXPAND),
 			GTK_FILL,
 			0, 0);
 
@@ -968,7 +851,7 @@ ghid_attributes_need_rows (int new_max)
       gtk_table_attach (GTK_TABLE (attr_table), attr_row[attr_max_rows].w_value,
 			2, 3,
 			attr_max_rows, attr_max_rows+1,
-			GTK_FILL | GTK_EXPAND,
+			(GtkAttachOptions)(GTK_FILL | GTK_EXPAND),
 			GTK_FILL,
 			0, 0);
 
@@ -1338,7 +1221,7 @@ Load (int argc, char **argv, int x, int y)
   if (argc > 1)
     return hid_actionv ("LoadFrom", argc, argv);
 
-  function = argc ? argv[0] : "Layout";
+  function = argc ? argv[0] : (char *)"Layout";
 
   if (strcasecmp (function, "Netlist") == 0)
     {
@@ -1410,7 +1293,7 @@ Save (int argc, char **argv, int x, int y)
   if (argc > 1)
     return hid_actionv ("SaveTo", argc, argv);
 
-  function = argc ? argv[0] : "Layout";
+  function = argc ? argv[0] : (char *)"Layout";
 
   if (strcasecmp (function, "Layout") == 0)
     if (PCB->Filename)
@@ -1754,8 +1637,11 @@ currently within the window already.
 static int
 Center(int argc, char **argv, int x, int y)
 {
-  int x0, y0, w2, h2, dx, dy;
- 
+  int x0, y0, w2, h2;
+  GdkDisplay *display;
+  GdkScreen *screen;
+  int xofs, yofs;
+
   if (argc != 0)
     AFAIL (center);
 
@@ -1767,7 +1653,7 @@ Center(int argc, char **argv, int x, int y)
   x0 = x - w2;
   y0 = y - h2;
 
-  if (x0 < 0) 
+  if (x0 < 0)
     {
       x0 = 0;
       x = x0 + w2;
@@ -1776,14 +1662,11 @@ Center(int argc, char **argv, int x, int y)
   if (y0 < 0)
     {
       y0 = 0;
-      y = y0 + w2;
+      y = y0 + h2;
     }
 
-  dx = (x0 - gport->view_x0) / gport->zoom ;
-  dy = (y0 - gport->view_y0) / gport->zoom;
   gport->view_x0 = x0;
   gport->view_y0 = y0;
-
 
   ghid_pan_fixup ();
 
@@ -1791,54 +1674,16 @@ Center(int argc, char **argv, int x, int y)
      currently within the window already.  Watch out for edges,
      though.  */
 
-#if GTK_CHECK_VERSION(2,8,0)
-  {
-    GdkDisplay *display;
-    GdkScreen *screen;
-    gint cx, cy;
+  display = gdk_display_get_default ();
+  screen = gdk_display_get_default_screen (display);
 
-    display = gdk_display_get_default ();
-    screen = gdk_display_get_default_screen (display); 
-
-    /* figure out where the pointer is and then move it from there by the specified delta */
-    gdk_display_get_pointer (display, NULL, &cx, &cy, NULL); 
-    gdk_display_warp_pointer (display, screen, cx - dx, cy - dy);
-
-    /* 
-     * Note that under X11, gdk_display_warp_pointer is just a wrapper around XWarpPointer, but
-     * hopefully by avoiding the direct call to an X function we might still work under windows
-     * and other non-X11 based gdk's
-     */
-  }
-#else  
-#  ifdef HAVE_GDK_GDKX_H
-  {
-
-    Window w_src, w_dst; 
-    w_src = GDK_WINDOW_XID (gport->drawing_area->window);
-    w_dst = w_src;
-
-    /* don't warp with the auto drc - that creates auto-scroll chaos */
-    if (TEST_FLAG (AUTODRCFLAG, PCB) && Settings.Mode == LINE_MODE
-	&& Crosshair.AttachedLine.State != STATE_FIRST)
-      return 0;
-    
-    XWarpPointer (GDK_DRAWABLE_XDISPLAY (gport->drawing_area->window),
-		 w_src, w_dst,
-		 0, 0, 0, 0,
-		 Vx2 (x), Vy2 (y));
-    
-    /* XWarpPointer creates Motion events normally bound to
-     *  EventMoveCrosshair.
-     *  We don't do any updates when EventMoveCrosshair
-     *  is called the next time to prevent from rounding errors
-     */
-    /* FIXME?
-     * IgnoreMotionEvents = ignore;
-     */
-  }
-#  endif
-#endif
+  /*
+   * Figure out where the drawing area is on the screen because
+   * gdk_display_warp_pointer will warp relative to the whole display
+   * but the value we've been given is relative to your drawing area
+   */
+  gdk_window_get_origin (gport->drawing_area->window, &xofs, &yofs);
+  gdk_display_warp_pointer (display, screen, xofs + Vx (x), yofs + Vy (y));
 
   return 0;
 }
@@ -1980,7 +1825,7 @@ Open the DRC violations window.
 static int
 DoWindows (int argc, char **argv, int x, int y)
 {
-  char *a = argc == 1 ? argv[0] : "";
+  char *a = argc == 1 ? argv[0] : (char *)"";
 
   if (strcmp (a, "1") == 0 || strcasecmp (a, "Layout") == 0)
     {

@@ -72,7 +72,7 @@ RCSID ("$Id$");
  */
 static bool FindPad (char *, char *, ConnectionType *, bool);
 static bool ParseConnection (char *, char *, char *);
-static bool DrawShortestRats (NetListTypePtr, void (*)());
+static bool DrawShortestRats (NetListTypePtr, void (*)(register ConnectionTypePtr, register ConnectionTypePtr, register RouteStyleTypePtr));
 static bool GatherSubnets (NetListTypePtr, bool, bool);
 static bool CheckShorts (LibraryMenuTypePtr);
 static void TransferNet (NetListTypePtr, NetTypePtr, NetTypePtr);
@@ -228,15 +228,14 @@ ProcNetlist (LibraryTypePtr net_menu)
   if (!net_menu->MenuN)
     return (NULL);
   FreeNetListMemory (Wantlist);
-  SaveFree (Wantlist);
-  /*  MYFREE (Wantlist); *//* awkward */
+  free (Wantlist);
   badnet = false;
 
   /* find layer groups of the component side and solder side */
   SLayer = GetLayerGroupNumberByNumber (solder_silk_layer);
   CLayer = GetLayerGroupNumberByNumber (component_silk_layer);
 
-  Wantlist = MyCalloc (1, sizeof (NetListType), "ProcNetlist()");
+  Wantlist = (NetListTypePtr)calloc (1, sizeof (NetListType));
   if (Wantlist)
     {
       ALLPIN_LOOP (PCB->Data);
@@ -342,6 +341,7 @@ TransferNet (NetListTypePtr Netl, NetTypePtr SourceNet, NetTypePtr DestNet)
 {
   ConnectionTypePtr conn;
 
+  /* It would be worth checking if SourceNet is NULL here to avoid a segfault. Seb James. */
   CONNECTION_LOOP (SourceNet);
   {
     conn = GetConnectionMemory (DestNet);
@@ -360,9 +360,8 @@ TransferNet (NetListTypePtr Netl, NetTypePtr SourceNet, NetTypePtr DestNet)
 static bool
 CheckShorts (LibraryMenuTypePtr theNet)
 {
-  bool new, warn = false;
-  PointerListTypePtr generic = MyCalloc (1, sizeof (PointerListType),
-					 "CheckShorts");
+  bool newone, warn = false;
+  PointerListTypePtr generic = (PointerListTypePtr)calloc (1, sizeof (PointerListType));
   /* the first connection was starting point so
    * the menu is always non-null
    */
@@ -383,17 +382,17 @@ CheckShorts (LibraryMenuTypePtr theNet)
 	    SET_FLAG (WARNFLAG, pin);
 	    continue;
 	  }
-	new = true;
+	newone = true;
 	POINTER_LOOP (generic);
 	{
 	  if (*ptr == pin->Spare)
 	    {
-	      new = false;
+	      newone = false;
 	      break;
 	    }
 	}
 	END_LOOP;
-	if (new)
+	if (newone)
 	  {
 	    menu = GetPointerMemory (generic);
 	    *menu = pin->Spare;
@@ -419,17 +418,17 @@ CheckShorts (LibraryMenuTypePtr theNet)
 	    SET_FLAG (WARNFLAG, pad);
 	    continue;
 	  }
-	new = true;
+	newone = true;
 	POINTER_LOOP (generic);
 	{
 	  if (*ptr == pad->Spare)
 	    {
-	      new = false;
+	      newone = false;
 	      break;
 	    }
 	}
 	END_LOOP;
-	if (new)
+	if (newone)
 	  {
 	    menu = GetPointerMemory (generic);
 	    *menu = pad->Spare;
@@ -442,7 +441,7 @@ CheckShorts (LibraryMenuTypePtr theNet)
   }
   ENDALL_LOOP;
   FreePointerListMemory (generic);
-  SaveFree (generic);
+  free (generic);
   return (warn);
 }
 
@@ -464,8 +463,7 @@ GatherSubnets (NetListTypePtr Netl, bool NoWarn, bool AndRats)
   for (m = 0; Netl->NetN > 0 && m < Netl->NetN; m++)
     {
       a = &Netl->Net[m];
-      ResetFoundPinsViasAndPads (false);
-      ResetFoundLinesAndPolygons (false);
+      ResetConnections (false);
       RatFindHook (a->Connection[0].type, a->Connection[0].ptr1,
 		   a->Connection[0].ptr2, a->Connection[0].ptr2, false,
 		   AndRats);
@@ -546,26 +544,37 @@ GatherSubnets (NetListTypePtr Netl, bool NoWarn, bool AndRats)
       if (!NoWarn)
 	Warned |= CheckShorts (a->Connection[0].menu);
     }
-  ResetFoundPinsViasAndPads (false);
-  ResetFoundLinesAndPolygons (false);
+  ResetConnections (false);
   return (Warned);
 }
 
 /* ---------------------------------------------------------------------------
  * Draw a rat net (tree) having the shortest lines
  * this also frees the subnet memory as they are consumed
+ *
+ * Note that the Netl we are passed is NOT the main netlist - it's the
+ * connectivity for ONE net.  It represents the CURRENT connectivity
+ * state for the net, with each Netl->Net[N] representing one
+ * copper-connected subset of the net.
  */
 
 static bool
-DrawShortestRats (NetListTypePtr Netl, void (*funcp) ())
+DrawShortestRats (NetListTypePtr Netl, void (*funcp) (register ConnectionTypePtr, register ConnectionTypePtr, register RouteStyleTypePtr))
 {
   RatTypePtr line;
   register float distance, temp;
   register ConnectionTypePtr conn1, conn2, firstpoint, secondpoint;
   PolygonTypePtr polygon;
   bool changed = false;
+  bool havepoints;
   Cardinal n, m, j;
   NetTypePtr next, subnet, theSubnet = NULL;
+
+  /* This is just a sanity check, to make sure we're passed
+   * *something*.
+   */
+  if (!Netl || Netl->NetN < 1)
+    return false;
 
   /*
    * Everything inside the NetList Netl should be connected together.
@@ -575,14 +584,41 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) ())
    * connected items.  This loop finds the closest vertex pairs between
    * each blob and draws rats that merge the blobs until there's just
    * one big blob.
+   *
+   * Just to clarify, with some examples:
+   *
+   * Each Netl is one full net from a netlist, like from gnetlist.
+   * Each Netl->Net[N] is a subset of that net that's already
+   * physically connected on the pcb.
+   *
+   * So a new design with no traces yet, would have a huge list of Net[N],
+   * each with one pin in it.
+   *
+   * A fully routed design would have one Net[N] with all the pins
+   * (for that net) in it.
+   */
+
+  /*
+   * We keep doing this do/while loop until everything's connected.
+   * I.e. once per rat we add.
    */
   distance = 0.0;
-  while (Netl->NetN > 1)
+  havepoints = true; /* so we run the loop at least once */
+  while (Netl->NetN > 1 && havepoints)
     {
+      /* This is the top of the "find one rat" logic.  */
+      havepoints = false;
       firstpoint = secondpoint = NULL;
+
+      /* Test Net[0] vs Net[N] for N=1..max.  Find the shortest
+	 distance between any two points in different blobs.  */
       subnet = &Netl->Net[0];
       for (j = 1; j < Netl->NetN; j++)
 	{
+	  /*
+	   * Scan between Net[0] blob (subnet) and Net[N] blob (next).
+	   * Note the shortest distance we find.
+	   */
 	  next = &Netl->Net[j];
 	  for (n = subnet->ConnectionN - 1; n != -1; n--)
 	    {
@@ -590,6 +626,13 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) ())
 	      for (m = next->ConnectionN - 1; m != -1; m--)
 		{
 		  conn2 = &next->Connection[m];
+		  /*
+		   * At this point, conn1 and conn2 are two pins in
+		   * different blobs of the same net.  See how far
+		   * apart they are, and if they're "closer" than what
+		   * we already have.
+		   */
+
 		  /*
 		   * Prefer to connect Connections over polygons to the
 		   * polygons (ie assume the user wants a via to a plane,
@@ -606,6 +649,7 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) ())
 		      firstpoint = conn2;
 		      secondpoint = conn1;
 		      theSubnet = next;
+		      havepoints = true;
 		    }
 		  else if (conn2->type == POLYGON_TYPE &&
 		      (polygon = (PolygonTypePtr)conn2->ptr2) &&
@@ -617,6 +661,7 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) ())
 		      firstpoint = conn1;
 		      secondpoint = conn2;
 		      theSubnet = next;
+		      havepoints = true;
 		    }
 		  else if ((temp = SQUARE (conn1->X - conn2->X) +
 		       SQUARE (conn1->Y - conn2->Y)) < distance || !firstpoint)
@@ -625,35 +670,45 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) ())
 		      firstpoint = conn1;
 		      secondpoint = conn2;
 		      theSubnet = next;
+		      havepoints = true;
 		    }
 		}
 	    }
 	}
-      if (funcp)
-	{
-	  (*funcp) (firstpoint, secondpoint, subnet->Style);
-	}
-      else
-	{
-	  /* found the shortest distance subnet, draw the rat */
-	  if ((line = CreateNewRat (PCB->Data,
-				    firstpoint->X, firstpoint->Y,
-				    secondpoint->X, secondpoint->Y,
-				    firstpoint->group, secondpoint->group,
-				    Settings.RatThickness,
-				    NoFlags ())) != NULL)
-	    {
-	      if (distance == 0)
-		SET_FLAG (VIAFLAG, line);
-	      AddObjectToCreateUndoList (RATLINE_TYPE, line, line, line);
-	      DrawRat (line, 0);
-	      changed = true;
-	    }
-	}
 
-      /* copy theSubnet into the current subnet */
-      TransferNet (Netl, theSubnet, subnet);
+      /*
+       * If HAVEPOINTS is true, we've found a pair of points in two
+       * separate blobs of the net, and need to connect them together.
+       */
+      if (havepoints)
+	{
+	  if (funcp)
+	    {
+	      (*funcp) (firstpoint, secondpoint, subnet->Style);
+	    }
+	  else
+	    {
+	      /* found the shortest distance subnet, draw the rat */
+	      if ((line = CreateNewRat (PCB->Data,
+					firstpoint->X, firstpoint->Y,
+					secondpoint->X, secondpoint->Y,
+					firstpoint->group, secondpoint->group,
+					Settings.RatThickness,
+					NoFlags ())) != NULL)
+		{
+		  if (distance == 0)
+		    SET_FLAG (VIAFLAG, line);
+		  AddObjectToCreateUndoList (RATLINE_TYPE, line, line, line);
+		  DrawRat (line, 0);
+		  changed = true;
+		}
+	    }
+
+	  /* copy theSubnet into the current subnet */
+	  TransferNet (Netl, theSubnet, subnet);
+	}
     }
+
   /* presently nothing to do with the new subnet */
   /* so we throw it away and free the space */
   FreeNetMemory (&Netl->Net[--(Netl->NetN)]);
@@ -673,7 +728,7 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) ())
  *  if SelectedOnly is true, it will only draw rats to selected pins and pads
  */
 bool
-AddAllRats (bool SelectedOnly, void (*funcp) ())
+AddAllRats (bool SelectedOnly, void (*funcp) (register ConnectionTypePtr, register ConnectionTypePtr, register RouteStyleTypePtr))
 {
   NetListTypePtr Nets, Wantlist;
   NetTypePtr lonesome;
@@ -695,7 +750,7 @@ AddAllRats (bool SelectedOnly, void (*funcp) ())
   /* initialize finding engine */
   InitConnectionLookup ();
   SaveFindFlag (DRCFLAG);
-  Nets = MyCalloc (1, sizeof (NetListType), "AddAllRats()");
+  Nets = (NetListTypePtr)calloc (1, sizeof (NetListType));
   /* now we build another netlist (Nets) for each
    * net in Wantlist that shows how it actually looks now,
    * then fill in any missing connections with rat lines.
@@ -728,7 +783,7 @@ AddAllRats (bool SelectedOnly, void (*funcp) ())
   }
   END_LOOP;
   FreeNetListMemory (Nets);
-  MYFREE (Nets);
+  free (Nets);
   FreeConnectionLookupMemory ();
   RestoreFindFlag ();
   if (funcp)
@@ -912,7 +967,7 @@ AddNet (void)
 	  return (NULL);
 	}
       entry = GetLibraryEntryMemory (menu);
-      entry->ListEntry = MyStrdup (name2, "AddNet");
+      entry->ListEntry = strdup (name2);
       netnode_to_netname (name2);
       goto ratIt;
     }
@@ -921,7 +976,7 @@ AddNet (void)
   if (menu)
     {
       entry = GetLibraryEntryMemory (menu);
-      entry->ListEntry = MyStrdup (name1, "AddNet");
+      entry->ListEntry = strdup (name1);
       netnode_to_netname (name1);
       goto ratIt;
     }
@@ -939,11 +994,11 @@ AddNet (void)
     }
 
   menu = GetLibraryMenuMemory (&PCB->NetlistLib);
-  menu->Name = MyStrdup (ratname, "AddNet");
+  menu->Name = strdup (ratname);
   entry = GetLibraryEntryMemory (menu);
-  entry->ListEntry = MyStrdup (name1, "AddNet");
+  entry->ListEntry = strdup (name1);
   entry = GetLibraryEntryMemory (menu);
-  entry->ListEntry = MyStrdup (name2, "AddNet");
+  entry->ListEntry = strdup (name2);
   menu->flag = 1;
 
 ratIt:

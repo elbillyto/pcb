@@ -223,8 +223,7 @@ GetUndoSlot (int CommandType, int ID, int Kind)
 
       UndoMax += STEP_UNDOLIST;
       size = UndoMax * sizeof (UndoListType);
-      UndoList = (UndoListTypePtr) MyRealloc (UndoList, size,
-					      "AddCommandToUndoList()");
+      UndoList = (UndoListTypePtr) realloc (UndoList, size);
       memset (&UndoList[UndoN], 0, STEP_REMOVELIST * sizeof (UndoListType));
 
       /* ask user to flush the table because of it's size */
@@ -242,7 +241,7 @@ GetUndoSlot (int CommandType, int ID, int Kind)
     switch (ptr->Type)
       {
       case UNDO_CHANGENAME:
-	SaveFree (ptr->Data.ChangeName.Name);
+	free (ptr->Data.ChangeName.Name);
 	break;
       case UNDO_REMOVE:
 	type =
@@ -351,7 +350,7 @@ UndoChangeName (UndoListTypePtr Entry)
       if (TEST_FLAG (LOCKFLAG, (TextTypePtr) ptr3))
 	return (false);
       Entry->Data.ChangeName.Name =
-	(ChangeObjectName (type, ptr1, ptr2, ptr3,
+	(char *)(ChangeObjectName (type, ptr1, ptr2, ptr3,
 			   Entry->Data.ChangeName.Name));
       return (true);
     }
@@ -721,7 +720,7 @@ UndoRemovePoint (UndoListTypePtr Entry)
   /* lookup entry (polygon not point was saved) by it's ID */
   assert (Entry->Kind == POLYGON_TYPE);
   type =
-    SearchObjectByID (PCB->Data, (void *) &layer, (void *) &polygon, &ptr3,
+    SearchObjectByID (PCB->Data, (void **) &layer, (void **) &polygon, &ptr3,
 		      Entry->ID, Entry->Kind);
   switch (type)
     {
@@ -771,8 +770,8 @@ UndoInsertPoint (UndoListTypePtr Entry)
   assert (Entry->Kind == POLYGONPOINT_TYPE);
   /* lookup entry by it's ID */
   type =
-    SearchObjectByID (PCB->Data, (void *) &layer, (void *) &polygon,
-		      (void *) &pnt, Entry->ID, Entry->Kind);
+    SearchObjectByID (PCB->Data, (void **) &layer, (void **) &polygon,
+		      (void **) &pnt, Entry->ID, Entry->Kind);
   switch (type)
     {
     case POLYGONPOINT_TYPE:	/* removes an inserted polygon point */
@@ -834,8 +833,8 @@ UndoSwapCopiedObject (UndoListTypePtr Entry)
   if (type == NO_TYPE)
     return FALSE;
 
-  obj = ptr2;
-  obj2 = ptr2b;
+  obj = (AnyObjectType *)ptr2;
+  obj2 = (AnyObjectType *)ptr2b;
 
   swap_id = obj->ID;
   obj->ID = obj2->ID;
@@ -846,9 +845,9 @@ UndoSwapCopiedObject (UndoListTypePtr Entry)
   if (andDraw)
     DrawRecoveredObject (Entry->Kind, ptr1, ptr2, ptr3);
 
-  obj = MoveObjectToBuffer (PCB->Data, RemoveList, type, ptr1, ptr2, ptr3);
+  obj = (AnyObjectType *)MoveObjectToBuffer (PCB->Data, RemoveList, type, ptr1, ptr2, ptr3);
   if (Entry->Kind == POLYGON_TYPE)
-    InitClip (PCB->Data, ptr1b, (PolygonType *)obj);
+    InitClip (PCB->Data, (LayerTypePtr)ptr1b, (PolygonType *)obj);
   return (true);
 }
 
@@ -1211,9 +1210,10 @@ ClearUndoList (bool Force)
       for (undo = UndoList; UndoN; undo++, UndoN--)
 	{
 	  if (undo->Type == UNDO_CHANGENAME)
-	    SaveFree (undo->Data.ChangeName.Name);
+	    free (undo->Data.ChangeName.Name);
 	}
-      MYFREE (UndoList);
+      free (UndoList);
+      UndoList = NULL;
       if (RemoveList)
 	{
           FreeDataMemory (RemoveList);
@@ -1370,7 +1370,7 @@ CopyObjectToUndoList (int undo_type, int Type, void *Ptr1, void *Ptr2, void *Ptr
     RemoveList = CreateNewBuffer ();
 
   undo = GetUndoSlot (undo_type, OBJECT_ID (Ptr2), Type);
-  copy = CopyObjectToBuffer (RemoveList, PCB->Data, Type, Ptr1, Ptr2, Ptr3);
+  copy = (AnyObjectType *)CopyObjectToBuffer (RemoveList, PCB->Data, Type, Ptr1, Ptr2, Ptr3);
   undo->Data.CopyID = copy->ID;
 }
 
@@ -1630,11 +1630,11 @@ AddNetlistLibToUndoList (LibraryTypePtr lib)
       undo->Data.NetlistChange.lib = lib;
 
       /* and what the old data is that we'll need to restore */
-      undo->Data.NetlistChange.old = malloc (sizeof (LibraryTypePtr));
+      undo->Data.NetlistChange.old = (LibraryTypePtr)malloc (sizeof (LibraryTypePtr));
       old = undo->Data.NetlistChange.old;
       old->MenuN = lib->MenuN;
       old->MenuMax = lib->MenuMax;
-      old->Menu = malloc (old->MenuMax * sizeof (LibraryMenuType));
+      old->Menu = (LibraryMenuTypePtr)malloc (old->MenuMax * sizeof (LibraryMenuType));
       if (old->Menu == NULL)
 	{
 	  fprintf (stderr, "malloc() failed in %s\n", __FUNCTION__);
@@ -1658,7 +1658,7 @@ AddNetlistLibToUndoList (LibraryTypePtr lib)
 
       
 	  old->Menu[i].Entry = 
-	    malloc (old->Menu[i].EntryMax * sizeof (LibraryEntryType));
+	    (LibraryEntryTypePtr)malloc (old->Menu[i].EntryMax * sizeof (LibraryEntryType));
 	  if (old->Menu[i].Entry == NULL)
 	    {
 	      fprintf (stderr, "malloc() failed in %s\n", __FUNCTION__);

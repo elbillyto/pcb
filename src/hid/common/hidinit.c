@@ -431,11 +431,7 @@ hid_save_settings (int locally)
       fname = Concat (homedir, PCB_DIR_SEPARATOR_S, ".pcb", NULL);
 
       if (stat (fname, &st))
-#ifdef WIN32
-	if (mkdir (fname))
-#else
-	if (mkdir (fname, 0777))
-#endif
+	if (MKDIR (fname, 0777))
 	  {
 	    free (fname);
 	    return;
@@ -655,9 +651,10 @@ hid_cache_color (int set, const char *name, hidval * val, void **vcache)
   ecache *e;
 
   cache = (ccache *) * vcache;
-  if (cache == 0)
-    cache = *vcache = (void *) calloc (sizeof (ccache), 1);
-
+  if (cache == 0) {
+    cache = (ccache *) calloc (sizeof (ccache), 1);
+    *vcache = cache;
+  }
   if (cache->lru && strcmp (cache->lru->name, name) == 0)
     {
       copy_color (set, &(cache->lru->val), val);
@@ -709,7 +706,7 @@ derive_default_filename(const char *pcbfile, HID_Attribute *filename_attrib, con
 
 	if (!pf || (memory && filename_attrib->default_val.str_value != *memory)) return;
 
-	buf = malloc (strlen (pf) + strlen(suffix) + 1);
+	buf = (char *)malloc (strlen (pf) + strlen(suffix) + 1);
 	if (memory) *memory = buf;
 	if (buf) {
 		size_t bl;

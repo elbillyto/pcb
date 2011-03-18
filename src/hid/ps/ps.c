@@ -22,6 +22,7 @@
 #include "hid/common/draw_helpers.h"
 #include "../ps/ps.h"
 #include "../../print.h"
+#include "hid/common/hidinit.h"
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
@@ -338,6 +339,21 @@ ps_start_file (FILE *f)
    */
   fprintf (f, "%%%%Pages: (atend)\n" );
 
+  /*
+   * %%DocumentMedia: <name> <width> <height> <weight> <color> <type>
+   *
+   * Substitute 0 or "" for N/A.  Width and height are in points
+   * (1/72").
+   *
+   * Media sizes are in PCB units
+   */
+  fprintf (f, "%%%%DocumentMedia: %s %g %g 0 \"\" \"\"\n",
+	   media_data[media].name,
+	   media_data[media].Width * 72.0 / 100000.0,
+	   media_data[media].Height * 72.0 / 100000.0);
+  fprintf (f, "%%%%DocumentPaperSizes: %s\n",
+	   media_data[media].name);
+
   /* End General Header Comments. */
 
   /* General Body Comments go here. Currently there are none. */
@@ -389,9 +405,9 @@ psopen (const char *base, const char *which)
   if (!multi_file)
     return fopen (base, "w");
 
-  buf = malloc (strlen (base) + strlen (which) + 5);
+  buf = (char *)malloc (strlen (base) + strlen (which) + 5);
 
-  suff = strrchr (base, '.');
+  suff = (char *)strrchr (base, '.');
   if (suff)
     {
       strcpy (buf, base);
@@ -445,6 +461,9 @@ ps_hid_export_to_file (FILE * the_file, HID_Attr_Val * options)
   drillcopper = options[HA_drillcopper].int_value;
   legend = options[HA_legend].int_value;
 
+  if (f)
+    ps_start_file (f);
+
   if (fade_ratio < 0)
     fade_ratio = 0;
   if (fade_ratio > 1)
@@ -487,7 +506,6 @@ ps_hid_export_to_file (FILE * the_file, HID_Attr_Val * options)
       if (strcmp (layer->Name, "outline") == 0 ||
 	  strcmp (layer->Name, "route") == 0)
 	{
-	  printf("see outline layer\n");
 	  outline_layer = layer;
 	}
     }
@@ -567,7 +585,6 @@ ps_do_export (HID_Attr_Val * options)
 	  perror (filename);
 	  return;
 	}
-      ps_start_file (f);
     }
 
   hid_save_and_show_layer_ons (save_ons);
@@ -581,8 +598,6 @@ ps_do_export (HID_Attr_Val * options)
       fclose (f);
     }
 }
-
-extern void hid_parse_command_line (int *argc, char ***argv);
 
 static void
 ps_parse_arguments (int *argc, char ***argv)
@@ -851,7 +866,6 @@ ps_set_layer (const char *name, int group, int empty)
       && strcmp (name, "outline")
       && strcmp (name, "route"))
     {
-      printf("attempting to draw outlines on %s\n", name);
       DrawLayer (outline_layer, &region);
     }
 
@@ -916,7 +930,7 @@ ps_set_line_width (hidGC gc, int width)
 }
 
 static void
-ps_set_draw_xor (hidGC gc, int xor)
+ps_set_draw_xor (hidGC gc, int xor_)
 {
   ;
 }

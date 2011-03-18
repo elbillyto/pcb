@@ -364,7 +364,7 @@ AdjustStyle (int argc, char **argv, int x, int y)
       xms_mil = XmStringCreateLocalized ("mil");
 
       n = 0;
-      stdarg (XmNautoUnmanage, false);
+      stdarg (XmNautoUnmanage, False);
       stdarg (XmNtitle, "Route Styles");
       style_dialog = XmCreateFormDialog (mainwind, "style", args, n);
 
@@ -452,8 +452,7 @@ lesstif_insert_style_buttons (Widget menu)
 
   num_style_buttons++;
   s = num_style_buttons * sizeof (StyleButtons);
-  style_button_list =
-    (StyleButtons *) MyRealloc (style_button_list, s, __FUNCTION__);
+  style_button_list = (StyleButtons *) realloc (style_button_list, s);
   sb = style_button_list + num_style_buttons - 1;
 
   for (i = 0; i < NUM_STYLES; i++)

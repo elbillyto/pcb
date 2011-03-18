@@ -440,20 +440,19 @@ ChangeVia2ndSize (PinTypePtr Via)
     {
       AddObjectTo2ndSizeUndoList (VIA_TYPE, Via, Via, Via);
       EraseVia (Via);
+      RestoreToPolygon (PCB->Data, VIA_TYPE, Via, Via);
       Via->DrillingHole = value;
       if (TEST_FLAG (HOLEFLAG, Via))
 	{
-	  RestoreToPolygon (PCB->Data, VIA_TYPE, Via, Via);
 	  AddObjectToSizeUndoList (VIA_TYPE, Via, Via, Via);
 	  Via->Thickness = value;
-	  ClearFromPolygon (PCB->Data, VIA_TYPE, Via, Via);
 	}
+      ClearFromPolygon (PCB->Data, VIA_TYPE, Via, Via);
       DrawVia (Via, 0);
       return (Via);
     }
   return (NULL);
 }
-
 
 /* ---------------------------------------------------------------------------
  * changes the clearance size of a via 
@@ -629,15 +628,15 @@ ChangeElement2ndSize (ElementTypePtr Element)
 	changed = true;
 	AddObjectTo2ndSizeUndoList (PIN_TYPE, Element, pin, pin);
 	ErasePin (pin);
+	RestoreToPolygon (PCB->Data, PIN_TYPE, Element, pin);
 	pin->DrillingHole = value;
-	DrawPin (pin, 0);
 	if (TEST_FLAG (HOLEFLAG, pin))
 	  {
-	    RestoreToPolygon (PCB->Data, PIN_TYPE, Element, pin);
 	    AddObjectToSizeUndoList (PIN_TYPE, Element, pin, pin);
 	    pin->Thickness = value;
-	    ClearFromPolygon (PCB->Data, PIN_TYPE, Element, pin);
 	  }
+	ClearFromPolygon (PCB->Data, PIN_TYPE, Element, pin);
+	DrawPin (pin, 0);
       }
   }
   END_LOOP;
@@ -666,15 +665,15 @@ ChangePin2ndSize (ElementTypePtr Element, PinTypePtr Pin)
     {
       AddObjectTo2ndSizeUndoList (PIN_TYPE, Element, Pin, Pin);
       ErasePin (Pin);
+      RestoreToPolygon (PCB->Data, PIN_TYPE, Element, Pin);
       Pin->DrillingHole = value;
-      DrawPin (Pin, 0);
       if (TEST_FLAG (HOLEFLAG, Pin))
 	{
-	  RestoreToPolygon (PCB->Data, PIN_TYPE, Element, Pin);
 	  AddObjectToSizeUndoList (PIN_TYPE, Element, Pin, Pin);
 	  Pin->Thickness = value;
-	  ClearFromPolygon (PCB->Data, PIN_TYPE, Element, Pin);
 	}
+      ClearFromPolygon (PCB->Data, PIN_TYPE, Element, Pin);
+      DrawPin (Pin, 0);
       return (Pin);
     }
   return (NULL);
@@ -1034,8 +1033,6 @@ ChangeElementText (PCBType *pcb, DataType *data, ElementTypePtr Element, int whi
 static void *
 ChangeElementName (ElementTypePtr Element)
 {
-  char *old = ELEMENT_NAME (PCB, Element);
-
   if (TEST_FLAG (LOCKFLAG, &Element->Name[0]))
     return (NULL);
   if (NAME_INDEX (PCB) == NAMEONPCB_INDEX)
@@ -1081,6 +1078,7 @@ ChangeTextName (LayerTypePtr Layer, TextTypePtr Text)
 bool
 ChangeLayoutName (char *Name)
 {
+  free (PCB->Name);
   PCB->Name = Name;
   hid_action ("PCBChanged");
   return (true);
@@ -1108,6 +1106,7 @@ ChangeElementSide (ElementTypePtr Element, LocationType yoff)
 bool
 ChangeLayerName (LayerTypePtr Layer, char *Name)
 {
+  free (CURRENT->Name);
   CURRENT->Name = Name;
   hid_action ("LayersChanged");
   return (true);
@@ -2282,8 +2281,8 @@ QueryInputAndChangeObjectName (int Type, void *Ptr1, void *Ptr2, void *Ptr3)
     }
   if (name)
     {
-      /* XXX Memory leak!! */
-      char *old = ChangeObjectName (Type, Ptr1, Ptr2, Ptr3, name);
+      /* NB: ChangeObjectName takes ownership of the passed memory */
+      char *old = (char *)ChangeObjectName (Type, Ptr1, Ptr2, Ptr3, name);
       if (old != (char *) -1)
 	{
 	  AddObjectToChangeNameUndoList (Type, Ptr1, Ptr2, Ptr3, old);

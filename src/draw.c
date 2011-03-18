@@ -543,8 +543,13 @@ DrawEverything (BoxTypePtr drawn_area)
 	    if ((TEST_FLAG (ONSOLDERFLAG, pad) && side == SOLDER_LAYER)
 		|| (!TEST_FLAG (ONSOLDERFLAG, pad)
 		    && side == COMPONENT_LAYER))
-	      if (!TEST_FLAG (NOPASTEFLAG, pad))
-		DrawPadLowLevel (Output.fgGC, pad, false, false);
+	      if (!TEST_FLAG (NOPASTEFLAG, pad) && pad->Mask > 0)
+		{
+		  if (pad->Mask < pad->Thickness)
+		    DrawPadLowLevel (Output.fgGC, pad, true, true);
+		  else
+		    DrawPadLowLevel (Output.fgGC, pad, false, false);
+		}
 	  }
 	  ENDALL_LOOP;
 	}
@@ -672,7 +677,7 @@ static int
 clearPad_callback (const BoxType * b, void *cl)
 {
   PadTypePtr pad = (PadTypePtr) b;
-  if (!XOR (TEST_FLAG (ONSOLDERFLAG, pad), SWAP_IDENT))
+  if (!XOR (TEST_FLAG (ONSOLDERFLAG, pad), SWAP_IDENT) && pad->Mask)
     ClearPad (pad, true);
   return 1;
 }
@@ -1209,9 +1214,9 @@ DrawPinOrViaNameLowLevel (PinTypePtr Ptr)
   TextType text;
 
   if (!Ptr->Name || !Ptr->Name[0])
-    name = EMPTY (Ptr->Number);
+    name = (char *)EMPTY (Ptr->Number);
   else
-    name = EMPTY (TEST_FLAG (SHOWNUMBERFLAG, PCB) ? Ptr->Number : Ptr->Name);
+    name = (char *)EMPTY (TEST_FLAG (SHOWNUMBERFLAG, PCB) ? Ptr->Number : Ptr->Name);
 
   vert = TEST_FLAG (EDGE2FLAG, Ptr);
 
@@ -1425,9 +1430,9 @@ DrawPadNameLowLevel (PadTypePtr Pad)
   TextType text;
 
   if (!Pad->Name || !Pad->Name[0])
-    name = EMPTY (Pad->Number);
+    name = (char *)EMPTY (Pad->Number);
   else
-    name = EMPTY (TEST_FLAG (SHOWNUMBERFLAG, PCB) ? Pad->Number : Pad->Name);
+    name = (char *)EMPTY (TEST_FLAG (SHOWNUMBERFLAG, PCB) ? Pad->Number : Pad->Name);
 
   /* should text be vertical ? */
   vert = (Pad->Point1.X == Pad->Point2.X);
@@ -2292,7 +2297,7 @@ EraseObject (int type, void *lptr, void *ptr)
       break;
     case TEXT_TYPE:
     case ELEMENTNAME_TYPE:
-      EraseText (lptr, (TextTypePtr) ptr);
+      EraseText ((LayerTypePtr)lptr, (TextTypePtr) ptr);
       break;
     case POLYGON_TYPE:
       ErasePolygon ((PolygonTypePtr) ptr);
@@ -2396,7 +2401,7 @@ hid_expose_callback (HID * hid, BoxType * region, void *item)
   if (item)
     {
       doing_pinout = true;
-      DrawElement (item, 0);
+      DrawElement ((ElementTypePtr)item, 0);
       doing_pinout = false;
     }
   else

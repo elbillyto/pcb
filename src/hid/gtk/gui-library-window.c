@@ -63,6 +63,8 @@
 #include "data.h"
 #include "set.h"
 
+#include <gdk/gdkkeysyms.h>
+
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
@@ -154,7 +156,7 @@ ghid_library_window_create (GHidPort * out)
   if (library_window)
     return;
 
-  library_window = g_object_new (GHID_TYPE_LIBRARY_WINDOW, NULL);
+  library_window = (GtkWidget *)g_object_new (GHID_TYPE_LIBRARY_WINDOW, NULL);
 
   g_signal_connect (library_window,
                     "response",
@@ -304,6 +306,48 @@ tree_row_activated (GtkTreeView       *tree_view,
     gtk_tree_view_expand_row (tree_view, path, FALSE);
 }
 
+/*! \brief Handles CTRL-C keypress in the TreeView
+ *  \par Function Description
+ *  Keypress activation handler:
+ *  If CTRL-C is pressed, copy footprint name into the clipboard.
+ *
+ *  \param [in] tree_view The component treeview.
+ *  \param [in] event     The GdkEventKey with keypress info.
+ *  \param [in] user_data Not used.
+ *  \return TRUE if CTRL-C event was handled, FALSE otherwise.
+ */
+static gboolean
+tree_row_key_pressed (GtkTreeView *tree_view,
+                      GdkEventKey *event,
+                      gpointer     user_data)
+{
+  GtkTreeSelection *selection;
+  GtkTreeModel *model;
+  GtkTreeIter iter;
+  GtkClipboard *clipboard;
+  const gchar *compname;
+  guint default_mod_mask = gtk_accelerator_get_default_mod_mask();
+
+  /* Handle both lower- and uppercase `c' */
+  if (((event->state & default_mod_mask) != GDK_CONTROL_MASK)
+      || ((event->keyval != GDK_c) && (event->keyval != GDK_C)))
+    return FALSE;
+
+  selection = gtk_tree_view_get_selection (tree_view);
+  g_return_val_if_fail (selection != NULL, TRUE);
+
+  if (!gtk_tree_selection_get_selected (selection, &model, &iter))
+    return TRUE;
+
+  gtk_tree_model_get (model, &iter, MENU_NAME_COLUMN, &compname, -1);
+
+  clipboard = gtk_clipboard_get (GDK_SELECTION_CLIPBOARD);
+  g_return_val_if_fail (clipboard != NULL, TRUE);
+
+  gtk_clipboard_set_text (clipboard, compname, -1);
+
+  return TRUE;
+}
 
 /*! \brief Handles changes in the treeview selection.
  *  \par Function Description
@@ -606,6 +650,11 @@ create_lib_treeview (GhidLibraryWindow * library_window)
                     G_CALLBACK (tree_row_activated),
                     NULL);
 
+  g_signal_connect (libtreeview,
+                    "key-press-event",
+                    G_CALLBACK (tree_row_key_pressed),
+                    NULL);
+
   /* connect callback to selection */
   selection = gtk_tree_view_get_selection (GTK_TREE_VIEW (libtreeview));
   gtk_tree_selection_set_mode (selection, GTK_SELECTION_SINGLE);
@@ -782,7 +831,7 @@ library_window_constructor (GType type,
 					"xscale", 1.0,
 					"yscale", 1.0,
 					"xalign", 0.5, "yalign", 0.5, NULL));
-  preview = g_object_new (GHID_TYPE_PINOUT_PREVIEW,
+  preview = (GtkWidget *)g_object_new (GHID_TYPE_PINOUT_PREVIEW,
 			  /* GhidPinoutPreview */
 			  "element-data", NULL,
 			  /* GtkWidget */
@@ -831,7 +880,7 @@ library_window_class_init (GhidLibraryWindowClass * klass)
   gobject_class->constructor = library_window_constructor;
   gobject_class->finalize = library_window_finalize;
 
-  library_window_parent_class = g_type_class_peek_parent (klass);
+  library_window_parent_class = (GObjectClass *)g_type_class_peek_parent (klass);
 }
 
 
@@ -856,7 +905,7 @@ ghid_library_window_get_type ()
 
       library_window_type = g_type_register_static (GTK_TYPE_DIALOG,
 						    "GhidLibraryWindow",
-						    &library_window_info, 0);
+						    &library_window_info, (GTypeFlags)0);
     }
 
   return library_window_type;

@@ -119,6 +119,7 @@ a zoom in/out.
 #include "set.h"
 #include "undo.h"
 #include "vendor.h"
+#include "free_atexit.h"
 
 #include "gui-icons-mode-buttons.data"
 #include "gui-icons-misc.data"
@@ -263,7 +264,7 @@ ghid_check_unique_accel (const char *accelerator)
   if (amax >= n_list) 
     {
       n_list += 128;
-      if ( (accel_list = realloc (accel_list, n_list * sizeof (char *))) == NULL)
+      if ( (accel_list = (char **)realloc (accel_list, n_list * sizeof (char *))) == NULL)
 	{
 	  fprintf (stderr, "%s():  realloc failed\n", __FUNCTION__);
 	  exit (1);
@@ -303,9 +304,7 @@ note_toggle_flag (const char *actionname, MenuFlagType type, char *name)
   if (n_tflags >= max_tflags)
     {
       max_tflags += 20;
-      tflags =
-	MyRealloc (tflags, max_tflags * sizeof (ToggleFlagType),
-		   __FUNCTION__);
+      tflags = (ToggleFlagType *)realloc (tflags, max_tflags * sizeof (ToggleFlagType));
     }
   tflags[n_tflags].actionname = strdup (actionname);
   tflags[n_tflags].flagname = name;
@@ -662,6 +661,7 @@ ghid_menu_cb (GtkAction * action, gpointer data)
       ghid_invalidate_all ();
       RestoreCrosshair (TRUE);
       ghid_screen_update ();
+      ghid_window_set_name_label (PCB->Name);
       ghid_set_status_line_label ();
 #ifdef FIXME
       g_idle_add (ghid_idle_cb, NULL);
@@ -877,6 +877,7 @@ ghid_sync_with_new_layout (void)
   ghid_route_style_button_set_active (0);
   ghid_config_handle_units_changed ();
 
+  ghid_window_set_name_label (PCB->Name);
   ghid_set_status_line_label ();
 }
 
@@ -1026,7 +1027,7 @@ layer_process (gchar **color_string, char **text, int *set, int i)
       break;
     default:		/* layers */
       *color_string = PCB->Data->Layer[i].Color;
-      *text = UNKNOWN (PCB->Data->Layer[i].Name);
+      *text = (char *)UNKNOWN (PCB->Data->Layer[i].Name);
       *set = PCB->Data->Layer[i].On;
       break;
     }
@@ -1200,12 +1201,14 @@ make_top_menubar (GtkWidget * hbox, GHidPort * port)
 }
 
 
-/* Set the PCB name on a label or on the window title bar.
+/* Refreshes the window title bar and sets the PCB name to the
+ * window title bar or to a seperate label
  */
 void
 ghid_window_set_name_label (gchar * name)
 {
   gchar *str;
+  gchar *filename;
 
   /* FIXME -- should this happen?  It does... */
   /* This happens if we're calling an exporter from the command line */
@@ -1219,21 +1222,29 @@ ghid_window_set_name_label (gchar * name)
   if (!ghidgui->name_label)
     return;
 
+  if (!PCB->Filename  || !*PCB->Filename)
+    filename = g_strdup(_("Unsaved.pcb"));
+  else
+    filename = g_strdup(PCB->Filename);
+
   if (ghidgui->ghid_title_window)
     {
       gtk_widget_hide (ghidgui->label_hbox);
-      str = g_strdup_printf ("PCB:  %s", ghidgui->name_label_string);
-      gtk_window_set_title (GTK_WINDOW (gport->top_window), str);
+      str = g_strdup_printf ("%s%s (%s) - PCB", PCB->Changed ? "*": "",
+                             ghidgui->name_label_string, filename);
     }
   else
     {
-			gtk_widget_show (ghidgui->label_hbox);
+      gtk_widget_show (ghidgui->label_hbox);
       str = g_strdup_printf (" <b><big>%s</big></b> ",
-			     ghidgui->name_label_string);
+                             ghidgui->name_label_string);
       gtk_label_set_markup (GTK_LABEL (ghidgui->name_label), str);
-      gtk_window_set_title (GTK_WINDOW (gport->top_window), "PCB");
+      str = g_strdup_printf ("%s%s - PCB", PCB->Changed ? "*": "",
+                             filename);
     }
+  gtk_window_set_title (GTK_WINDOW (gport->top_window), str);
   g_free (str);
+  g_free (filename);
 }
 
 static void
@@ -1454,17 +1465,19 @@ layer_enable_button_cb (GtkWidget * widget, gpointer data)
 }
 
 static void
-layer_button_set_color (LayerButtonSet * lb, gchar * color_string)
+layer_button_set_color (LayerButtonSet * lb, gchar * color_string,
+                        bool set_prelight)
 {
   GdkColor color;
 
   if (!lb->layer_enable_ebox)
     return;
-  
+
   color.red = color.green = color.blue = 0;
   ghid_map_color_string (color_string, &color);
   gtk_widget_modify_bg (lb->layer_enable_ebox, GTK_STATE_ACTIVE, &color);
-  gtk_widget_modify_bg (lb->layer_enable_ebox, GTK_STATE_PRELIGHT, &color);
+  gtk_widget_modify_bg (lb->layer_enable_ebox, GTK_STATE_PRELIGHT,
+                        set_prelight ? &color : NULL);
 
   gtk_widget_modify_fg (lb->label, GTK_STATE_ACTIVE, &WhitePixel);
 }
@@ -1562,7 +1575,7 @@ make_layer_buttons (GtkWidget * vbox, GHidPort * port)
       lb->text = g_strdup (text);
       lb->label = label;
 
-      layer_button_set_color (lb, color_string);
+      layer_button_set_color (lb, color_string, active);
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), active);
 
       g_signal_connect (G_OBJECT (button), "toggled",
@@ -1594,11 +1607,13 @@ ghid_layer_buttons_color_update (void)
 
   for (i = 0; i < N_LAYER_BUTTONS; ++i)
     {
+      bool active;
+
       lb = &layer_buttons[i];
 
       layer_process (&color_string, NULL, NULL, i);
-
-      layer_button_set_color (lb, color_string);
+      active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (lb));
+      layer_button_set_color (lb, color_string, active);
     }
 }
 
@@ -1610,6 +1625,7 @@ ghid_layer_enable_buttons_update (void)
 {
   LayerButtonSet *lb;
   gchar *s;
+  gchar *color_string;
   gint i;
 
 #ifdef DEBUG_MENUS
@@ -1622,7 +1638,7 @@ ghid_layer_enable_buttons_update (void)
   for (i = 0; i < max_copper_layer; ++i)
     {
       lb = &layer_buttons[i];
-      s = UNKNOWN (PCB->Data->Layer[i].Name);
+      s = (gchar *)UNKNOWN (PCB->Data->Layer[i].Name);
       if (dup_string (&lb->text, s))
 	{
 	  layer_enable_button_set_label (lb->label, _(s));
@@ -1630,16 +1646,18 @@ ghid_layer_enable_buttons_update (void)
 	}
       if (Settings.verbose)
 	{
-	  gboolean active, new;
+	  gboolean active, newone;
 
 	  active =
 	    gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON
 					  (lb->layer_enable_button));
-	  new = PCB->Data->Layer[i].On;
-	  if (active != new)
+	  newone = PCB->Data->Layer[i].On;
+	  if (active != newone)
 	    printf ("ghid_layer_enable_buttons_update: active=%d new=%d\n",
-		    active, new);
+		    active, newone);
 	}
+      layer_process (&color_string, NULL, NULL, i);
+      layer_button_set_color (lb, color_string, PCB->Data->Layer[i].On);
       gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON
 				    (lb->layer_enable_button),
 				    PCB->Data->Layer[i].On);
@@ -2300,7 +2318,8 @@ ghid_build_pcb_top_window (void)
 			 | GDK_LEAVE_NOTIFY_MASK | GDK_ENTER_NOTIFY_MASK
 			 | GDK_BUTTON_RELEASE_MASK | GDK_BUTTON_PRESS_MASK
 			 | GDK_KEY_RELEASE_MASK | GDK_KEY_PRESS_MASK
-			 | GDK_FOCUS_CHANGE_MASK | GDK_POINTER_MOTION_MASK);
+			 | GDK_FOCUS_CHANGE_MASK | GDK_POINTER_MOTION_MASK
+			 | GDK_POINTER_MOTION_HINT_MASK);
 
   /*
    * This is required to get the drawing_area key-press-event.  Also the
@@ -2991,7 +3010,7 @@ ghid_append_action (const char * name, const char *stock_id,
 
   accelerator = ghid_check_unique_accel (accelerator);
 
-  if ( (new_entries = realloc (new_entries, 
+  if ( (new_entries = (GtkActionEntry *)realloc (new_entries, 
 			       (menuitem_cnt + 1) * sizeof (GtkActionEntry))) == NULL)
     {
       fprintf (stderr, "ghid_append_action():  realloc of new_entries failed\n");
@@ -2999,7 +3018,7 @@ ghid_append_action (const char * name, const char *stock_id,
     }
   
 
-  if ( (action_resources = realloc (action_resources,
+  if ( (action_resources = (Resource **)realloc (action_resources,
 				    (menuitem_cnt + 1) * sizeof (Resource *))) == NULL)
     {
       fprintf (stderr, "ghid_append_action():  realloc of action_resources failed\n");
@@ -3028,7 +3047,7 @@ ghid_append_toggle_action (const char * name, const char *stock_id,
 
   accelerator = ghid_check_unique_accel (accelerator);
 
-  if ( (new_toggle_entries = realloc (new_toggle_entries, 
+  if ( (new_toggle_entries = (GtkToggleActionEntry *)realloc (new_toggle_entries, 
 				      (tmenuitem_cnt + 1) * sizeof (GtkToggleActionEntry))) == NULL)
     {
       fprintf (stderr, "ghid_append_toggle_action():  realloc of new_toggle_entries failed\n");
@@ -3036,7 +3055,7 @@ ghid_append_toggle_action (const char * name, const char *stock_id,
     }
   
 
-  if ( (toggle_action_resources = realloc (toggle_action_resources,
+  if ( (toggle_action_resources = (Resource **)realloc (toggle_action_resources,
 				    (tmenuitem_cnt + 1) * sizeof (Resource *))) == NULL)
     {
       fprintf (stderr, "ghid_append_toggle_action():  realloc of toggle_action_resources failed\n");
@@ -3674,23 +3693,23 @@ ghid_ui_info_indent (int indent)
  */
 
 static void
-ghid_ui_info_append (const gchar * new)
+ghid_ui_info_append (const gchar * newone)
 {
   gchar *p;
 
   if (new_ui_info_sz == 0) 
     {
       new_ui_info_sz = 1024;
-      new_ui_info = (gchar *) calloc ( new_ui_info_sz, sizeof (gchar));
+      new_ui_info = (gchar *)leaky_calloc (new_ui_info_sz, sizeof (gchar));
     }
 
-  while (strlen (new_ui_info) + strlen (new) + 1 > new_ui_info_sz)
+  while (strlen (new_ui_info) + strlen (newone) + 1 > new_ui_info_sz)
     {
       size_t n;
       gchar * np;
 
       n = new_ui_info_sz + 1024;
-      if ( (np = realloc (new_ui_info, n)) == NULL)
+      if ((np = (gchar *)leaky_realloc (new_ui_info, n)) == NULL)
 	{
 	  fprintf (stderr, "ghid_ui_info_append():  realloc of size %ld failed\n",
 		   (long int) n);
@@ -3701,11 +3720,11 @@ ghid_ui_info_append (const gchar * new)
     }
 
   p = new_ui_info + strlen (new_ui_info) ;
-  while (*new != '\0')
+  while (*newone != '\0')
     {
-      *p = *new;
+      *p = *newone;
       p++;
-      new++;
+      newone++;
     }
   
   *p = '\0';
@@ -3835,7 +3854,7 @@ static const char adjuststyle_syntax[] =
 "AdjustStyle()\n";
 
 static const char adjuststyle_help[] =
-"Open the window which allows editing of the route styles";
+"Open the window which allows editing of the route styles.";
 
 /* %start-doc actions AdjustStyle
 
@@ -3864,7 +3883,7 @@ static const char editlayergroups_syntax[] =
 "EditLayerGroups()\n";
 
 static const char editlayergroups_help[] =
-"Open the preferences window which allows editing of the layer groups";
+"Open the preferences window which allows editing of the layer groups.";
 
 /* %start-doc actions EditLayerGroups
 

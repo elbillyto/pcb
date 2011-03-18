@@ -120,6 +120,7 @@ AC_DEFINE_UNQUOTED(PCB_PATH_DELIMETER,"$PCB_PATH_DELIMETER",[Search path separat
 
 dnl Checks for programs.
 AC_PROG_CC
+AC_PROG_CXX
 
 if test "x$WIN32" = "xyes" ; then
 	AC_CHECK_TOOL(WINDRES, windres, [no])
@@ -263,7 +264,7 @@ if test "x$GCC" = "xyes"; then
 AC_MSG_CHECKING([If the compiler accepts -rdynamic])
 old_LDFLAGS="$LDFLAGS"
 LDFLAGS="$LDFLAGS -rdynamic"
-AC_LINK_IFELSE([int main(){}],
+AC_LINK_IFELSE([AC_LANG_PROGRAM()],
 	[AC_MSG_RESULT([yes])],
 	[LDFLAGS="$old_LDFLAGS"
 	AC_MSG_RESULT([no])
@@ -649,8 +650,8 @@ AC_CHECK_FUNCS(strerror)
 AC_CHECK_FUNCS(regcomp re_comp)
 AC_CHECK_FUNCS(logf expf rint)
 AC_CHECK_FUNCS(vsnprintf)
-AC_CHECK_FUNCS(getpwuid gethostname getcwd)
-AC_CHECK_FUNCS(random)
+AC_CHECK_FUNCS(getpwuid getcwd)
+AC_CHECK_FUNCS(rand random)
 AC_CHECK_FUNCS(stat)
 
 AC_CHECK_FUNCS(mkdtemp)
@@ -661,6 +662,9 @@ AC_CHECK_FUNCS(popen)
 # for lrealpath.c
 AC_CHECK_FUNCS(realpath canonicalize_file_name)
 libiberty_NEED_DECLARATION(canonicalize_file_name)
+
+# for pcb_spawnvp in action.c on Windows
+AC_CHECK_FUNCS(_spawnvp)
 
 AC_HEADER_STDC
 AC_CHECK_HEADERS(limits.h locale.h string.h sys/types.h regex.h pwd.h)
@@ -712,21 +716,12 @@ for e in $HIDLIST; do
 		AC_MSG_ERROR([Cannot find pkg-config, make sure it is installed and in your PATH])
 	fi
 
-	PKG_CHECK_MODULES(GTK, gtk+-2.0 >= 2.4.0, , 
-		[AC_MSG_ERROR([Cannot find gtk+ >= 2.4.0, install it and rerun ./configure
+	PKG_CHECK_MODULES(GTK, gtk+-2.0 >= 2.12.0, ,
+		[AC_MSG_ERROR([Cannot find gtk+ >= 2.12.0, install it and rerun ./configure
 Please review the following errors:
 $GTK_PKG_ERRORS])]
 	)
 	GTK_VERSION=`$PKG_CONFIG gtk+-2.0 --modversion`
-	
-	# if we are building for gtk >= 2.8.0, we can use gdk_display_warp_pointer()
-	# otherwise we need XWarpPointer and we'll pull in the required headers with
-	# gdk/gdkx.h and we'll need to link with X11
-	if ! $PKG_CONFIG gtk+-2.0 --atleast-version=2.8.0 ; then
-		CPPFLAGS="$CFLAGS $GTK_CFLAGS"
-		AC_CHECK_HEADERS([gdk/gdkx.h])
-	fi
-
 	GLIB_VERSION=`$PKG_CONFIG glib-2.0 --modversion`
 	;;
 
@@ -1012,6 +1007,11 @@ AC_ARG_ENABLE([debug],
 AC_MSG_RESULT([$enable_debug])
 AM_CONDITIONAL(DEBUG_BUILD, test x$enable_debug = xyes)
 
+# ------------- mkdir required for win32 compatibility ------------
+# WIN32 mkdir takes only one argument, POSIX takes two.
+# #include "misc.h" where mkdir is required.
+m4_include([m4/m4_ax_func_mkdir.m4])
+AX_FUNC_MKDIR
 
 # ------------- Complete set of CFLAGS and LIBS -------------------
 
@@ -1022,7 +1022,7 @@ LIBS="$LIBS $XM_LIBS $DBUS_LIBS $X_LIBS $GLIB_LIBS $GTK_LIBS $DMALLOC_LIBS $GD_L
 # if we have gcc then add -Wall
 if test "x$GCC" = "xyes"; then
 	# see about adding some extra checks if the compiler takes them
-	for flag in -Wall -Wdeclaration-after-statement ; do
+	for flag in -Wall ; do
 		case " ${CFLAGS} " in
 			*\ ${flag}\ *)
 				# flag is already present
@@ -1041,6 +1041,50 @@ if test "x$GCC" = "xyes"; then
 		esac
 	done
 fi
+
+CXXFLAGS="$CFLAGS"
+
+# Now add C-specific flags
+if test "x$GCC" = "xyes"; then
+	# see about adding some extra checks if the compiler takes them
+	for flag in -Wdeclaration-after-statement ; do
+		case " ${CFLAGS} " in
+			*\ ${flag}\ *)
+				# flag is already present
+				;;
+			*)
+				AC_MSG_CHECKING([if the compiler accepts ${flag}])
+				ac_save_CFLAGS="$CFLAGS"
+				CFLAGS="$CFLAGS ${flag}"
+				AC_COMPILE_IFELSE([AC_LANG_PROGRAM()],
+					[AC_MSG_RESULT([yes])],
+					[AC_MSG_RESULT([no])
+					 CFLAGS="$ac_save_CFLAGS"
+					]
+				)
+				;;
+		esac
+	done
+fi
+
+# See if we are building gcc with C++.
+AC_ARG_ENABLE(build-with-cxx,
+[  --enable-build-with-cxx build with C++ compiler instead of C compiler],
+ENABLE_BUILD_WITH_CXX=$enableval,
+ENABLE_BUILD_WITH_CXX=no)
+
+case "$ENABLE_BUILD_WITH_CXX" in
+  yes)
+    CC_OR_CXX="$CXX"
+    CC_OR_CXX_FLAGS="$CXXFLAGS"
+    ;;
+  no)
+    CC_OR_CXX="$CC"
+    CC_OR_CXX_FLAGS="$CFLAGS"
+    ;;
+esac
+AC_SUBST(CC_OR_CXX)
+AC_SUBST(CC_OR_CXX_FLAGS)
 
 # font filename
 FONTFILENAME=${FONTFILENAME:-"default_font"}
@@ -1180,6 +1224,9 @@ AC_CONFIG_FILES(tests/Makefile)
 dnl win32 build scripts
 AC_CONFIG_FILES(win32/Makefile)
 
+dnl GTS 0.7.6 - http://gts.sourceforge.net/
+AC_CONFIG_FILES(gts/Makefile)
+
 AC_OUTPUT
 
 with_gui=`echo $with_gui`
@@ -1206,8 +1253,10 @@ AC_MSG_RESULT([
 
    Cross Compiling:          $cross_compiling
    CC:                       $CC
+   CXX:                      $CXX
    CPPFLAGS:                 $CPPFLAGS
    CFLAGS:                   $CFLAGS
+   CXXFLAGS:                 $CXXFLAGS
    LIBS:                     $LIBS
    PCB:                      $PCB
 

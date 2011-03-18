@@ -318,8 +318,8 @@ SavePCB (char *Filename)
        * first of all make a copy of the passed filename because
        * it might be identical to 'PCB->Filename'
        */
-      copy = MyStrdup (Filename, "SavePCB()");
-      SaveFree (PCB->Filename);
+      copy = strdup (Filename);
+      free (PCB->Filename);
       PCB->Filename = copy;
       SetChangedFlag (false);
     }
@@ -351,19 +351,22 @@ int
 LoadPCB (char *Filename)
 {
   PCBTypePtr newPCB = CreateNewPCB (false);
+  PCBTypePtr oldPCB;
   bool units_mm;
-  double elapsed;
 #ifdef DEBUG
+  double elapsed;
   clock_t start, end;
 
   start = clock ();
 #endif
 
+  oldPCB = PCB;
+  PCB = newPCB;
+
   /* new data isn't added to the undo list */
-  if (!ParsePCB (newPCB, Filename))
+  if (!ParsePCB (PCB, Filename))
     {
-      RemovePCB (PCB);
-      PCB = newPCB;
+      RemovePCB (oldPCB);
 
       CreateNewPCBPost (PCB, 0);
       ResetStackAndVisibility ();
@@ -390,7 +393,7 @@ LoadPCB (char *Filename)
 
       /* clear 'changed flag' */
       SetChangedFlag (false);
-      PCB->Filename = MyStrdup (Filename, "LoadPCB()");
+      PCB->Filename = strdup (Filename);
       /* just in case a bad file saved file is loaded */
 
       units_mm = (PCB->Grid != (int) PCB->Grid) ? true : false;
@@ -412,6 +415,7 @@ LoadPCB (char *Filename)
 
       return (0);
     }
+  PCB = oldPCB;
   hid_action ("PCBChanged");
 
   /* release unused memory */
@@ -436,7 +440,7 @@ PreLoadElementPCB ()
 
   yyFont = &yyPCB->Font;
   yyData = yyPCB->Data;
-  yyData->pcb = (void *)yyPCB;
+  yyData->pcb = yyPCB;
   yyData->LayerN = 0;
 }
 
@@ -487,44 +491,16 @@ WriteAttributeList (FILE * FP, AttributeListTypePtr list, char *prefix)
 
 /* ---------------------------------------------------------------------------
  * writes layout header information
- * date, UID and name of user
  */
 static void
 WritePCBInfoHeader (FILE * FP)
 {
-#ifdef HAVE_GETPWUID
-  struct passwd *pwentry;
-#endif
-
-#ifdef HAVE_GETHOSTNAME
-  static struct hostent *hostentry = NULL;
-  char hostname[256];
-#endif
-  time_t currenttime;
-
   /* write some useful comments */
-  currenttime = time (NULL);
   fprintf (FP, "# release: %s " VERSION "\n", Progname);
-  fprintf (FP, "# date:    %s", asctime (localtime (&currenttime)));
 
-#ifdef HAVE_GETPWUID
-  pwentry = getpwuid (getuid ());
-  fprintf (FP, "# user:    %s (%s)\n", pwentry->pw_name, pwentry->pw_gecos);
-#else
-  fprintf (FP, "# user:    Unknown\n");
-#endif
-
-#ifdef HAVE_GETHOSTNAME
-  if (gethostname (hostname, 255) != -1)
-    {
-      if (hostentry == NULL)
-	hostentry = gethostbyname (hostname);
-      fprintf (FP, "# host:    %s\n",
-	       hostentry ? hostentry->h_name : hostname);
-    }
-#else
-  fprintf (FP, "# host:    Unknown\n");
-#endif
+  /* avoid writing things like user name or date, as these cause merge
+   * conflicts in collaborative environments using version control systems
+   */
 }
 
 /* ---------------------------------------------------------------------------
@@ -552,7 +528,7 @@ WritePCBDataHeader (FILE * FP)
   fprintf (FP, "FileVersion[%i]\n", PCB_FILE_VERSION);
 
   fputs ("\nPCB[", FP);
-  PrintQuotedString (FP, EMPTY (PCB->Name));
+  PrintQuotedString (FP, (char *)EMPTY (PCB->Name));
   fprintf (FP, " %i %i]\n\n", (int) PCB->MaxWidth, (int) PCB->MaxHeight);
   fprintf (FP, "Grid[%s %i %i %i]\n",
 	   c_dtostr (PCB->Grid), (int) PCB->GridOffsetX,
@@ -635,7 +611,7 @@ WriteViaData (FILE * FP, DataTypePtr Data)
       fprintf (FP, "Via[%i %i %i %i %i %i ",
 	       via->X, via->Y,
 	       via->Thickness, via->Clearance, via->Mask, via->DrillingHole);
-      PrintQuotedString (FP, EMPTY (via->Name));
+      PrintQuotedString (FP, (char *)EMPTY (via->Name));
       fprintf (FP, " %s]\n", F2S (via, VIA_TYPE));
     }
 }
@@ -677,7 +653,7 @@ WritePCBNetlistData (FILE * FP)
 	  fprintf (FP, "\tNet(");
 	  PrintQuotedString(FP, &menu->Name[2]);
 	  fprintf (FP, " ");
-	  PrintQuotedString(FP, UNKNOWN (menu->Style));
+	  PrintQuotedString(FP, (char *)UNKNOWN (menu->Style));
 	  fprintf (FP, ")\n\t(\n");
 	  for (p = 0; p < menu->EntryN; p++)
 	    {
@@ -710,11 +686,11 @@ WriteElementData (FILE * FP, DataTypePtr Data)
        * both names of an element
        */
       fprintf (FP, "\nElement[%s ", F2S (element, ELEMENT_TYPE));
-      PrintQuotedString (FP, EMPTY (DESCRIPTION_NAME (element)));
+      PrintQuotedString (FP, (char *)EMPTY (DESCRIPTION_NAME (element)));
       fputc (' ', FP);
-      PrintQuotedString (FP, EMPTY (NAMEONPCB_NAME (element)));
+      PrintQuotedString (FP, (char *)EMPTY (NAMEONPCB_NAME (element)));
       fputc (' ', FP);
-      PrintQuotedString (FP, EMPTY (VALUE_NAME (element)));
+      PrintQuotedString (FP, (char *)EMPTY (VALUE_NAME (element)));
       fprintf (FP, " %i %i %i %i %i %i %s]\n(\n",
 	       (int) element->MarkX, (int) element->MarkY,
 	       (int) (DESCRIPTION_TEXT (element).X -
@@ -733,9 +709,9 @@ WriteElementData (FILE * FP, DataTypePtr Data)
 		   (int) (pin->Y - element->MarkY),
 		   (int) pin->Thickness, (int) pin->Clearance,
 		   (int) pin->Mask, (int) pin->DrillingHole);
-	  PrintQuotedString (FP, EMPTY (pin->Name));
+	  PrintQuotedString (FP, (char *)EMPTY (pin->Name));
 	  fprintf (FP, " ");
-	  PrintQuotedString (FP, EMPTY (pin->Number));
+	  PrintQuotedString (FP, (char *)EMPTY (pin->Number));
 	  fprintf (FP, " %s]\n", F2S (pin, PIN_TYPE));
 	}
       for (p = 0; p < element->PadN; p++)
@@ -748,9 +724,9 @@ WriteElementData (FILE * FP, DataTypePtr Data)
 		   (int) (pad->Point2.Y - element->MarkY),
 		   (int) pad->Thickness, (int) pad->Clearance,
 		   (int) pad->Mask);
-	  PrintQuotedString (FP, EMPTY (pad->Name));
+	  PrintQuotedString (FP, (char *)EMPTY (pad->Name));
 	  fprintf (FP, " ");
-	  PrintQuotedString (FP, EMPTY (pad->Number));
+	  PrintQuotedString (FP, (char *)EMPTY (pad->Number));
 	  fprintf (FP, " %s]\n", F2S (pad, PAD_TYPE));
 	}
       for (p = 0; p < element->LineN; p++)
@@ -794,7 +770,7 @@ WriteLayerData (FILE * FP, Cardinal Number, LayerTypePtr layer)
       (layer->Name && *layer->Name))
     {
       fprintf (FP, "Layer(%i ", (int) Number + 1);
-      PrintQuotedString (FP, EMPTY (layer->Name));
+      PrintQuotedString (FP, (char *)EMPTY (layer->Name));
       fputs (")\n(\n", FP);
       WriteAttributeList (FP, &layer->Attributes, "\t");
 
@@ -822,7 +798,7 @@ WriteLayerData (FILE * FP, Cardinal Number, LayerTypePtr layer)
 	  fprintf (FP, "\tText[%i %i %i %i ",
 		   (int) text->X, (int) text->Y,
 		   (int) text->Direction, (int) text->Scale);
-	  PrintQuotedString (FP, EMPTY (text->TextString));
+	  PrintQuotedString (FP, (char *)EMPTY (text->TextString));
 	  fprintf (FP, " %s]\n", F2S (text, TEXT_TYPE));
 	}
       for (n = 0; n < layer->PolygonN; n++)
@@ -1151,22 +1127,45 @@ LoadNewlibFootprintsFromDir(char *libpath, char *toppath)
   /* Cache old dir, then cd into subdir because stat is given relative file names. */
   memset (subdir, 0, sizeof subdir);
   memset (olddir, 0, sizeof olddir);
-  GetWorkingDirectory(olddir); 
-  strcpy (subdir, libpath);
-  chdir(subdir);
-  GetWorkingDirectory(subdir);  /* subdir is abs path */
+  if (GetWorkingDirectory (olddir) == NULL)
+    {
+      Message (_("LoadNewlibFootprintsFromDir: Could not determine initial working directory\n"));
+      return 0;
+    }
+
+  if (strcmp (libpath, "(local)") == 0)
+    strcpy (subdir, ".");
+  else
+    strcpy (subdir, libpath);
+
+  if (chdir (subdir))
+    {
+      ChdirErrorMessage (subdir);
+      return 0;
+    }
+
+  /* Determine subdir is abs path */
+  if (GetWorkingDirectory (subdir) == NULL)
+    {
+      Message (_("LoadNewlibFootprintsFromDir: Could not determine new working directory\n"));
+      if (chdir (olddir))
+        ChdirErrorMessage (olddir);
+      return 0;
+    }
 
   /* First try opening the directory specified by path */
   if ( (subdirobj = opendir (subdir)) == NULL )
-  {
+    {
       OpendirErrorMessage (subdir);
+      if (chdir (olddir))
+        ChdirErrorMessage (olddir);
       return 0;
-  }
+    }
 
   /* Get pointer to memory holding menu */
   menu = GetLibraryMenuMemory (&Library);
   /* Populate menuname and path vars */
-  menu->Name = MyStrdup (pcb_basename(subdir), "Newlib");
+  menu->Name = strdup (pcb_basename(subdir));
   menu->directory = strdup (pcb_basename(toppath));
 
   /* Now loop over files in this directory looking for files.
@@ -1204,7 +1203,7 @@ LoadNewlibFootprintsFromDir(char *libpath, char *toppath)
 	 * entry->ListEntry points to fp name itself.
 	 */
 	len = strlen(subdir) + strlen("/") + strlen(subdirentry->d_name) + 1;
-	entry->AllocatedMemory = MyCalloc (1, len, "ParseLibraryTree()");
+	entry->AllocatedMemory = (char *)calloc (1, len);
 	strcat (entry->AllocatedMemory, subdir);
 	strcat (entry->AllocatedMemory, PCB_DIR_SEPARATOR_S);
 
@@ -1221,7 +1220,8 @@ LoadNewlibFootprintsFromDir(char *libpath, char *toppath)
   }
   /* Done.  Clean up, cd back into old dir, and return */
   closedir (subdirobj);
-  chdir(olddir);
+  if (chdir (olddir))
+    ChdirErrorMessage (olddir);
   return n_footprints;
 }
 
@@ -1252,12 +1252,16 @@ ParseLibraryTree (void)
   /* Save the current working directory as an absolute path.
    * This fcn writes the abs path into the memory pointed to by the input arg.
    */
-  GetWorkingDirectory (working);
+  if (GetWorkingDirectory (working) == NULL)
+    {
+      Message (_("ParseLibraryTree: Could not determine initial working directory\n"));
+      return 0;
+    }
 
   /* Additional loop to allow for multiple 'newlib' style library directories 
    * called out in Settings.LibraryTree
    */
-  libpaths = MyStrdup (Settings.LibraryTree, "ParseLibraryTree");
+  libpaths = strdup (Settings.LibraryTree);
   for (p = strtok (libpaths, PCB_PATH_DELIMETER); p && *p; p = strtok (NULL, PCB_PATH_DELIMETER))
     {
       /* remove trailing path delimeter */
@@ -1266,14 +1270,28 @@ ParseLibraryTree (void)
       /* start out in the working directory in case the path is a
        * relative path 
        */
-      chdir (working);
+      if (chdir (working))
+        {
+          ChdirErrorMessage (working);
+          free (libpaths);
+          return 0;
+        }
 
       /*
        * Next change to the directory which is the top of the library tree
        * and extract its abs path.
        */
-      chdir (toppath);
-      GetWorkingDirectory (toppath);
+      if (chdir (toppath))
+        {
+          ChdirErrorMessage (toppath);
+          continue;
+        }
+
+      if (GetWorkingDirectory (toppath) == NULL)
+        {
+          Message (_("ParseLibraryTree: Could not determine new working directory\n"));
+          continue;
+        }
 
 #ifdef DEBUG
       printf("In ParseLibraryTree, looking for newlib footprints inside top level directory %s ... \n", 
@@ -1316,7 +1334,8 @@ ParseLibraryTree (void)
     }
 
   /* restore the original working directory */
-  chdir (working);
+  if (chdir (working))
+    ChdirErrorMessage (working);
 
 #ifdef DEBUG
   printf("Leaving ParseLibraryTree, found %d footprints.\n", n_footprints);
@@ -1343,7 +1362,7 @@ ReadLibraryContents (void)
   /*  First load the M4 stuff.  The variable Settings.LibraryPath
    *  points to it.
    */
-  MYFREE (command);
+  free (command);
   command = EvaluateFilename (Settings.LibraryContentsCommand,
 			      Settings.LibraryPath, Settings.LibraryFilename,
 			      NULL);
@@ -1383,8 +1402,7 @@ ReadLibraryContents (void)
       if (!strncmp (inputline, "TYPE=", 5))
 	{
 	  menu = GetLibraryMenuMemory (&Library);
-	  menu->Name = MyStrdup (UNKNOWN (&inputline[5]),
-				 "ReadLibraryDescription()");
+	  menu->Name = strdup (UNKNOWN (&inputline[5]));
 	  menu->directory = strdup (Settings.LibraryFilename);
 	}
       else
@@ -1393,13 +1411,11 @@ ReadLibraryContents (void)
 	  if (!menu)
 	    {
 	      menu = GetLibraryMenuMemory (&Library);
-	      menu->Name = MyStrdup (UNKNOWN ((char *) NULL),
-				     "ReadLibraryDescription()");
+	      menu->Name = strdup (UNKNOWN ((char *) NULL));
 	      menu->directory = strdup (Settings.LibraryFilename);
 	    }
 	  entry = GetLibraryEntryMemory (menu);
-	  entry->AllocatedMemory = MyStrdup (inputline,
-					     "ReadLibraryDescription()");
+	  entry->AllocatedMemory = strdup (inputline);
 
 	  /* now break the line into pieces separated by colons */
 	  if ((entry->Template = strtok (entry->AllocatedMemory, ":")) !=
@@ -1411,8 +1427,7 @@ ReadLibraryContents (void)
 	  /* create the list entry */
 	  len = strlen (EMPTY (entry->Value)) +
 	    strlen (EMPTY (entry->Description)) + 4;
-	  entry->ListEntry = MyCalloc (len, sizeof (char),
-				       "ReadLibraryDescription()");
+	  entry->ListEntry = (char *)calloc (len, sizeof (char));
 	  sprintf (entry->ListEntry,
 		   "%s, %s", EMPTY (entry->Value),
 		   EMPTY (entry->Description));
@@ -1471,7 +1486,7 @@ ReadNetlist (char *filename)
   else
     {
       used_popen = 1;
-      MYFREE (command);
+      free (command);
       command = EvaluateFilename (Settings.RatCommand,
 				  Settings.RatPath, filename, NULL);
 
@@ -1526,7 +1541,7 @@ ReadNetlist (char *filename)
 	  if (kind == 0)
 	    {
 	      menu = GetLibraryMenuMemory (&PCB->NetlistLib);
-	      menu->Name = MyStrdup (temp, "ReadNetlist()");
+	      menu->Name = strdup (temp);
 	      menu->flag = 1;
 	      kind++;
 	    }
@@ -1535,12 +1550,12 @@ ReadNetlist (char *filename)
 	      if (kind == 1 && strchr (temp, '-') == NULL)
 		{
 		  kind++;
-		  menu->Style = MyStrdup (temp, "ReadNetlist()");
+		  menu->Style = strdup (temp);
 		}
 	      else
 		{
 		  entry = GetLibraryEntryMemory (menu);
-		  entry->ListEntry = MyStrdup (temp, "ReadNetlist()");
+		  entry->ListEntry = strdup (temp);
 		}
 	    }
 	}

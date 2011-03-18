@@ -270,11 +270,15 @@ node_selection_changed_cb (GtkTreeSelection * selection, gpointer data)
 	    || Crosshair.Y < gport->view_y0 + margin
 	    || Crosshair.Y > gport->view_y0 + gport->view_height - margin
 	   )
-		{
-		x0 = Crosshair.X - gport->view_width / 2;
-		y0 = Crosshair.Y - gport->view_height / 2;
-		ghid_port_ranges_pan(x0, y0, FALSE);
-		}
+	  {
+
+	    x0 = SIDE_X (Crosshair.X) - gport->view_width / 2;
+	    y0 = SIDE_Y (Crosshair.Y) - gport->view_height / 2;
+	    gport->view_x0 = x0;
+	    gport->view_y0 = y0;
+	    ghid_pan_fixup ();
+	    gui->set_crosshair (Crosshair.X, Crosshair.Y, HID_SC_WARP_POINTER);
+	  }
 	ghid_screen_update();
 }
 
@@ -352,7 +356,7 @@ net_model_create (void)
         hash_string = g_strjoinv (NET_HIERARCHY_SEPARATOR, join_array);
         g_free (join_array);
 
-        row_ref = g_hash_table_lookup (prefix_hash, hash_string);
+        row_ref = (GtkTreeRowReference *)g_hash_table_lookup (prefix_hash, hash_string);
         g_free (hash_string);
 
         /* If we didn't find the path at this level, keep looping */
@@ -516,20 +520,17 @@ netlist_select_cb (GtkWidget * widget, gpointer data)
     node_selected_net = NULL;
 
   InitConnectionLookup ();
-  ResetFoundPinsViasAndPads (false);
-  ResetFoundLinesAndPolygons (false);
-  SaveUndoSerialNumber ();
+  ResetConnections (true);
 
   for (i = selected_net->EntryN, entry = selected_net->Entry; i; i--, entry++)
     if (SeekPad (entry, &conn, false))
       RatFindHook (conn.type, conn.ptr1, conn.ptr2, conn.ptr2, true, true);
-  RestoreUndoSerialNumber ();
+
   SelectConnection (select_flag);
-  ResetFoundPinsViasAndPads (false);
-  ResetFoundLinesAndPolygons (false);
+  ResetConnections (false);
   FreeConnectionLookupMemory ();
   IncrementUndoSerialNumber ();
-  ghid_invalidate_all ();
+  Draw ();
 }
 
 static void
@@ -816,7 +817,7 @@ static gboolean
 hunt_named_node (GtkTreeModel *model, GtkTreePath *path,
                  GtkTreeIter *iter, gpointer data)
 {
-  struct ggnfnn_task *task = data;
+  struct ggnfnn_task *task = (struct ggnfnn_task *)data;
   LibraryMenuType *net;
   LibraryEntryType *node;
   gchar *str;

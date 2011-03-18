@@ -1,10 +1,8 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
  *  PCB, interactive printed circuit board design
- *  Copyright (C) 1994,1995,1996 Thomas Nau
+ *  Copyright (C) 1994,1995,1996,2010 Thomas Nau
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -18,7 +16,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  *  Contact addresses for paper mail and Email:
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
@@ -104,11 +102,11 @@ dicer output is used for HIDs which cannot render things with holes
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 #define ROUND(x) ((long)(((x) >= 0 ? (x) + 0.5  : (x) - 0.5)))
 
 #define UNSUBTRACT_BLOAT 10
+#define SUBTRACT_PIN_VIA_BATCH_SIZE 100
+#define SUBTRACT_LINE_BATCH_SIZE 20
 
 /* ---------------------------------------------------------------------------
  * local prototypes
@@ -119,6 +117,11 @@ static double circleVerticies[] = {
   1.0, 0.0,
   0.98768834059513777, 0.15643446504023087,
 };
+/* adjustment to make the segments
+ * outline the circle rather than connect
+ * points on the circle
+ * 1 - cos(\alpha/2) < (\alpha/2)^2/2 */
+static double radius_adjustment = (M_PI/CIRC_SEGS)*(M_PI/CIRC_SEGS)/2;
 
 Cardinal
 polygon_point_idx (PolygonTypePtr polygon, PointTypePtr point)
@@ -190,7 +193,7 @@ prev_contour_point (PolygonTypePtr polygon, Cardinal point)
 static void
 add_noholes_polyarea (PLINE *pline, void *user_data)
 {
-  PolygonType *poly = user_data;
+  PolygonType *poly = (PolygonType *)user_data;
 
   /* Prepend the pline into the NoHoles linked list */
   pline->next = poly->NoHoles;
@@ -213,6 +216,7 @@ biggest (POLYAREA * p)
 {
   POLYAREA *n, *top = NULL;
   PLINE *pl;
+  rtree_t *tree;
   double big = -1;
   if (!p)
     return NULL;
@@ -246,8 +250,11 @@ biggest (POLYAREA * p)
   if (top == p)
     return p;
   pl = top->contours;
+  tree = top->contour_tree;
   top->contours = p->contours;
+  top->contour_tree = p->contour_tree;
   p->contours = pl;
+  p->contour_tree = tree;
   assert (pl);
   assert (p->f);
   assert (p->b);
@@ -394,11 +401,11 @@ frac_circle (PLINE * c, LocationType X, LocationType Y, Vector v, int range)
 
   poly_InclVertex (c->head.prev, poly_CreateNode (v));
   /* move vector to origin */
-  e1 = v[0] - X;
-  e2 = v[1] - Y;
+  e1 = (v[0] - X) * (1 + radius_adjustment);
+  e2 = (v[1] - Y) * (1 + radius_adjustment);
 
   /* NB: the caller adds the last vertex, hence the -1 */
-  range = CIRC_SEGS / range - 1;
+  range = range == 1 ? CIRC_SEGS-1 : (CIRC_SEGS / range) - 1;
   for (i = 0; i < range; i++)
     {
       /* rotate the vector */
@@ -473,6 +480,9 @@ ArcPolyNoIntersect (ArcType * a, BDimension thick)
   int i, segs;
   double ang, da, rx, ry;
   long half;
+  static const double delta_th = 0.02; /* polygon diverges from modelled arc
+					  no more than delta_th * thick */
+  double radius_adj;
 
   if (thick <= 0)
     return NULL;
@@ -486,9 +496,15 @@ ArcPolyNoIntersect (ArcType * a, BDimension thick)
   /* start with inner radius */
   rx = MAX (a->Width - half, 0);
   ry = MAX (a->Height - half, 0);
-  segs = a->Delta / ARC_ANGLE;
+  segs = 1;
+  if(thick > 0)
+    segs = MAX (segs, a->Delta * M_PI / 360
+		* sqrt(sqrt((double)rx*rx + (double)ry*ry)/delta_th/2/thick));
+  segs = MAX(segs, a->Delta / ARC_ANGLE);
+
   ang = a->StartAngle;
   da = (1.0 * a->Delta) / segs;
+  radius_adj = (M_PI*da/360)*(M_PI*da/360)/2;
   v[0] = a->X - rx * cos (ang * M180);
   v[1] = a->Y + ry * sin (ang * M180);
   if ((contour = poly_NewContour (v)) == NULL)
@@ -502,13 +518,13 @@ ArcPolyNoIntersect (ArcType * a, BDimension thick)
     }
   /* find last point */
   ang = a->StartAngle + a->Delta;
-  v[0] = a->X - rx * cos (ang * M180);
-  v[1] = a->Y + ry * sin (ang * M180);
+  v[0] = a->X - rx * cos (ang * M180) * (1 - radius_adj);
+  v[1] = a->Y + ry * sin (ang * M180) * (1 - radius_adj);
   /* add the round cap at the end */
   frac_circle (contour, ends->X2, ends->Y2, v, 2);
   /* and now do the outer arc (going backwards) */
-  rx = a->Width + half;
-  ry = a->Width + half;
+  rx = (a->Width + half) * (1+radius_adj);
+  ry = (a->Width + half) * (1+radius_adj);
   da = -da;
   for (i = 0; i < segs; i++)
     {
@@ -519,8 +535,8 @@ ArcPolyNoIntersect (ArcType * a, BDimension thick)
     }
   /* now add other round cap */
   ang = a->StartAngle;
-  v[0] = a->X - rx * cos (ang * M180);
-  v[1] = a->Y + ry * sin (ang * M180);
+  v[0] = a->X - rx * cos (ang * M180) * (1 - radius_adj);
+  v[1] = a->Y + ry * sin (ang * M180) * (1 - radius_adj);
   frac_circle (contour, ends->X1, ends->Y1, v, 2);
   /* now we have the whole contour */
   if (!(np = ContourToPoly (contour)))
@@ -860,8 +876,20 @@ struct cpInfo
   LayerType *layer;
   PolygonType *polygon;
   bool solder;
+  POLYAREA *accumulate;
+  int batch_size;
   jmp_buf env;
 };
+
+static void
+subtract_accumulated (struct cpInfo *info, PolygonTypePtr polygon)
+{
+  if (info->accumulate == NULL)
+    return;
+  Subtract (info->accumulate, polygon, true);
+  info->accumulate = NULL;
+  info->batch_size = 0;
+}
 
 static int
 pin_sub_callback (const BoxType * b, void *cl)
@@ -869,13 +897,39 @@ pin_sub_callback (const BoxType * b, void *cl)
   PinTypePtr pin = (PinTypePtr) b;
   struct cpInfo *info = (struct cpInfo *) cl;
   PolygonTypePtr polygon;
+  POLYAREA *np;
+  POLYAREA *merged;
+  Cardinal i;
 
   /* don't subtract the object that was put back! */
   if (b == info->other)
     return 0;
   polygon = info->polygon;
-  if (SubtractPin (info->data, pin, info->layer, polygon) < 0)
-    longjmp (info->env, 1);
+
+  if (pin->Clearance == 0)
+    return 0;
+  i = GetLayerNumber (info->data, info->layer);
+  if (TEST_THERM (i, pin))
+    {
+      np = ThermPoly ((PCBTypePtr) (info->data->pcb), pin, i);
+      if (!np)
+        return 1;
+    }
+  else
+    {
+      np = PinPoly (pin, pin->Thickness, pin->Clearance);
+      if (!np)
+        longjmp (info->env, 1);
+    }
+
+  poly_Boolean_free (info->accumulate, np, &merged, PBO_UNITE);
+  info->accumulate = merged;
+
+  info->batch_size ++;
+
+  if (info->batch_size == SUBTRACT_PIN_VIA_BATCH_SIZE)
+    subtract_accumulated (info, polygon);
+
   return 1;
 }
 
@@ -925,6 +979,8 @@ line_sub_callback (const BoxType * b, void *cl)
   LineTypePtr line = (LineTypePtr) b;
   struct cpInfo *info = (struct cpInfo *) cl;
   PolygonTypePtr polygon;
+  POLYAREA *np;
+  POLYAREA *merged;
 
   /* don't subtract the object that was put back! */
   if (b == info->other)
@@ -932,8 +988,17 @@ line_sub_callback (const BoxType * b, void *cl)
   if (!TEST_FLAG (CLEARLINEFLAG, line))
     return 0;
   polygon = info->polygon;
-  if (SubtractLine (line, polygon) < 0)
+
+  if (!(np = LinePoly (line, line->Thickness + line->Clearance)))
     longjmp (info->env, 1);
+
+  poly_Boolean_free (info->accumulate, np, &merged, PBO_UNITE);
+  info->accumulate = merged;
+  info->batch_size ++;
+
+  if (info->batch_size == SUBTRACT_LINE_BATCH_SIZE)
+    subtract_accumulated (info, polygon);
+
   return 1;
 }
 
@@ -992,21 +1057,26 @@ clearPoly (DataTypePtr Data, LayerTypePtr Layer, PolygonType * polygon,
 
   if (setjmp (info.env) == 0)
     {
-      r = r_search (Data->via_tree, &region, NULL, pin_sub_callback, &info);
-      r += r_search (Data->pin_tree, &region, NULL, pin_sub_callback, &info);
+      r = 0;
+      info.accumulate = NULL;
+      info.batch_size = 0;
+      if (info.solder || group == Group (Data, component_silk_layer))
+	r += r_search (Data->pad_tree, &region, NULL, pad_sub_callback, &info);
       GROUP_LOOP (Data, group);
       {
         r +=
           r_search (layer->line_tree, &region, NULL, line_sub_callback,
                     &info);
+        subtract_accumulated (&info, polygon);
         r +=
           r_search (layer->arc_tree, &region, NULL, arc_sub_callback, &info);
 	r +=
           r_search (layer->text_tree, &region, NULL, text_sub_callback, &info);
       }
       END_LOOP;
-      if (info.solder || group == Group (Data, component_silk_layer))
-	r += r_search (Data->pad_tree, &region, NULL, pad_sub_callback, &info);
+      r += r_search (Data->via_tree, &region, NULL, pin_sub_callback, &info);
+      r += r_search (Data->pin_tree, &region, NULL, pin_sub_callback, &info);
+      subtract_accumulated (&info, polygon);
     }
   polygon->NoHolesValid = 0;
   return r;
@@ -1513,7 +1583,7 @@ PlowsPolygon (DataType * Data, int type, void *ptr1, void *ptr2,
       if (!TEST_FLAG (CLEARLINEFLAG, (LineTypePtr) ptr2))
         return 0;
       /* silk doesn't plow */
-      if (GetLayerNumber (Data, ptr1) >= max_copper_layer)
+      if (GetLayerNumber (Data, (LayerTypePtr)ptr1) >= max_copper_layer)
         return 0;
       GROUP_LOOP (Data, GetLayerGroupNumberByNumber (GetLayerNumber (Data,
                                                                      ((LayerTypePtr) ptr1))));
@@ -1638,6 +1708,8 @@ r_NoHolesPolygonDicer (POLYAREA * pa,
   if (!pa->contours->next)                 /* no holes */
     {
       pa->contours = NULL; /* The callback now owns the contour */
+      /* Don't bother removing it from the POLYAREA's rtree
+         since we're going to free the POLYAREA below anyway */
       emit (p, user_data);
       poly_Free (&pa);
       return;
@@ -1747,28 +1819,28 @@ MorphPolygon (LayerTypePtr layer, PolygonTypePtr poly)
   do
     {
       VNODE *v;
-      PolygonTypePtr new;
+      PolygonTypePtr newone;
 
       if (p->contours->area > PCB->IsleArea)
         {
-          new = CreateNewPolygon (layer, flags);
-          if (!new)
+          newone = CreateNewPolygon (layer, flags);
+          if (!newone)
             return false;
           many = true;
           v = &p->contours->head;
-          CreateNewPointInPolygon (new, v->point[0], v->point[1]);
+          CreateNewPointInPolygon (newone, v->point[0], v->point[1]);
           for (v = v->next; v != &p->contours->head; v = v->next)
-            CreateNewPointInPolygon (new, v->point[0], v->point[1]);
-          new->BoundingBox.X1 = p->contours->xmin;
-          new->BoundingBox.X2 = p->contours->xmax + 1;
-          new->BoundingBox.Y1 = p->contours->ymin;
-          new->BoundingBox.Y2 = p->contours->ymax + 1;
-          AddObjectToCreateUndoList (POLYGON_TYPE, layer, new, new);
-          new->Clipped = p;
+            CreateNewPointInPolygon (newone, v->point[0], v->point[1]);
+          newone->BoundingBox.X1 = p->contours->xmin;
+          newone->BoundingBox.X2 = p->contours->xmax + 1;
+          newone->BoundingBox.Y1 = p->contours->ymin;
+          newone->BoundingBox.Y2 = p->contours->ymax + 1;
+          AddObjectToCreateUndoList (POLYGON_TYPE, layer, newone, newone);
+          newone->Clipped = p;
           p = p->f;             /* go to next pline */
-          new->Clipped->b = new->Clipped->f = new->Clipped;     /* unlink from others */
-          r_insert_entry (layer->polygon_tree, (BoxType *) new, 0);
-          DrawPolygon (layer, new, 0);
+          newone->Clipped->b = newone->Clipped->f = newone->Clipped;     /* unlink from others */
+          r_insert_entry (layer->polygon_tree, (BoxType *) newone, 0);
+          DrawPolygon (layer, newone, 0);
         }
       else
         {

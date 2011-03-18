@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -54,14 +52,7 @@
 
 #define TOOLTIP_UPDATE_DELAY 200
 
-RCSID ("$Id$");
-
 static gint x_pan_speed, y_pan_speed;
-
-/* Set to true if cursor is currently in viewport. This is a hack to prevent
- * Crosshair stack corruption due to unmatching window enter / leave events */
-gboolean cursor_in_viewport = false;
-
 void
 ghid_port_ranges_changed (void)
 {
@@ -214,8 +205,6 @@ ghid_port_ranges_zoom (gdouble zoom)
  * handles all events from PCB drawing area
  */
 
-static gint event_x, event_y;
-
 void
 ghid_get_coords (const char *msg, int *x, int *y)
 {
@@ -231,14 +220,13 @@ ghid_get_coords (const char *msg, int *x, int *y)
 gboolean
 ghid_note_event_location (GdkEventButton * ev)
 {
-  gint x, y;
+  gint event_x, event_y;
   gboolean moved;
 
   if (!ev)
     {
-      gdk_window_get_pointer (ghid_port.drawing_area->window, &x, &y, NULL);
-      event_x = x;
-      event_y = y;
+      gdk_window_get_pointer (ghid_port.drawing_area->window,
+                              &event_x, &event_y, NULL);
     }
   else
     {
@@ -259,7 +247,7 @@ ghid_note_event_location (GdkEventButton * ev)
   return moved;
 }
 
-static gboolean
+gboolean
 have_crosshair_attachments (void)
 {
   gboolean result = FALSE;
@@ -296,177 +284,6 @@ have_crosshair_attachments (void)
       break;
     }
   return result;
-}
-
-
-#define	VCW		16
-#define VCD		8
-
-static void
-draw_right_cross (GdkGC *xor_gc, gint x, gint y)
-{
-  gdk_draw_line (gport->drawing_area->window, xor_gc,
-		 x, 0, x, gport->height);
-  gdk_draw_line (gport->drawing_area->window, xor_gc,
-		 0, y, gport->width, y);
-}
-
-static void
-draw_slanted_cross (GdkGC *xor_gc, gint x, gint y)
-{
-  gint x0, y0, x1, y1;
-
-  x0 = x + (gport->height - y);
-  x0 = MAX(0, MIN (x0, gport->width));
-  x1 = x - y;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + (gport->width - x);
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - x;
-  y1 = MAX(0, MIN (y1, gport->height));
-  gdk_draw_line (gport->drawing_area->window, xor_gc,
-		 x0, y0, x1, y1);
-  x0 = x - (gport->height - y);
-  x0 = MAX(0, MIN (x0, gport->width));
-  x1 = x + y;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + x;
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - (gport->width - x);
-  y1 = MAX(0, MIN (y1, gport->height));
-  gdk_draw_line (gport->drawing_area->window, xor_gc,
-		 x0, y0, x1, y1);
-}
-
-static void
-draw_dozen_cross (GdkGC *xor_gc, gint x, gint y)
-{
-  gint x0, y0, x1, y1;
-  gdouble tan60 = sqrt (3);
-
-  x0 = x + (gport->height - y) / tan60;
-  x0 = MAX(0, MIN (x0, gport->width));
-  x1 = x - y / tan60;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + (gport->width - x) * tan60;
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - x * tan60;
-  y1 = MAX(0, MIN (y1, gport->height));
-  gdk_draw_line (gport->drawing_area->window, xor_gc,
-		 x0, y0, x1, y1);
-
-  x0 = x + (gport->height - y) * tan60;
-  x0 = MAX(0, MIN (x0, gport->width));
-  x1 = x - y * tan60;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + (gport->width - x) / tan60;
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - x / tan60;
-  y1 = MAX(0, MIN (y1, gport->height));
-  gdk_draw_line (gport->drawing_area->window, xor_gc,
-		 x0, y0, x1, y1);
-
-  x0 = x - (gport->height - y) / tan60;
-  x0 = MAX(0, MIN (x0, gport->width));
-  x1 = x + y / tan60;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + x * tan60;
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - (gport->width - x) * tan60;
-  y1 = MAX(0, MIN (y1, gport->height));
-  gdk_draw_line (gport->drawing_area->window, xor_gc,
-		 x0, y0, x1, y1);
-
-  x0 = x - (gport->height - y) * tan60;
-  x0 = MAX(0, MIN (x0, gport->width));
-  x1 = x + y * tan60;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + x / tan60;
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - (gport->width - x) / tan60;
-  y1 = MAX(0, MIN (y1, gport->height));
-  gdk_draw_line (gport->drawing_area->window, xor_gc,
-		 x0, y0, x1, y1);
-}
-
-static void
-draw_crosshair (GdkGC *xor_gc, gint x, gint y)
-{
-  static enum crosshair_shape prev = Basic_Crosshair_Shape;
-
-  draw_right_cross (xor_gc, x, y);
-  if (prev == Union_Jack_Crosshair_Shape)
-    draw_slanted_cross (xor_gc, x, y);
-  if (prev == Dozen_Crosshair_Shape)
-    draw_dozen_cross (xor_gc, x, y);
-  prev = Crosshair.shape;
-}
-
-void
-ghid_show_crosshair (gboolean show)
-{
-  gint x, y;
-  static gint x_prev = -1, y_prev = -1;
-  static gboolean draw_markers, draw_markers_prev = FALSE;
-  static GdkGC *xor_gc;
-  static GdkColor cross_color;
-
-  if (gport->x_crosshair < 0 || ghidgui->creating || !gport->has_entered)
-    return;
-
-  if (!xor_gc)
-    {
-      xor_gc = gdk_gc_new (ghid_port.drawing_area->window);
-      gdk_gc_copy (xor_gc, ghid_port.drawing_area->style->white_gc);
-      gdk_gc_set_function (xor_gc, GDK_XOR);
-      /* FIXME: when CrossColor changed from config */
-      ghid_map_color_string (Settings.CrossColor, &cross_color);
-    }
-  x = DRAW_X (gport->x_crosshair);
-  y = DRAW_Y (gport->y_crosshair);
-
-  gdk_gc_set_foreground (xor_gc, &cross_color);
-
-  if (x_prev >= 0)
-    {
-      draw_crosshair (xor_gc, x_prev, y_prev);
-      if (draw_markers_prev)
-	{
-	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
-			      0, y_prev - VCD, VCD, VCW);
-	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
-			      gport->width - VCD, y_prev - VCD, VCD, VCW);
-	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
-			      x_prev - VCD, 0, VCW, VCD);
-	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
-			      x_prev - VCD, gport->height - VCD, VCW, VCD);
-	}
-    }
-
-  if (x >= 0 && show)
-    {
-      draw_crosshair (xor_gc, x, y);
-      draw_markers = ghidgui->auto_pan_on && have_crosshair_attachments ();
-      if (draw_markers)
-	{
-	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
-			      0, y - VCD, VCD, VCW);
-	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
-			      gport->width - VCD, y - VCD, VCD, VCW);
-	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
-			      x - VCD, 0, VCW, VCD);
-	  gdk_draw_rectangle (gport->drawing_area->window, xor_gc, TRUE,
-			      x - VCD, gport->height - VCD, VCW, VCD);
-	}
-      x_prev = x;
-      y_prev = y;
-      draw_markers_prev = draw_markers;
-    }
-  else
-    {
-      x_prev = y_prev = -1;
-      draw_markers_prev = FALSE;
-    }
 }
 
 static gboolean
@@ -627,7 +444,6 @@ ghid_port_button_press_cb (GtkWidget * drawing_area,
 			   GdkEventButton * ev, GtkUIManager * ui)
 {
   ModifierKeysState mk;
-  gboolean drag;
   GdkModifierType state;
 
   /* Reject double and triple click events */
@@ -638,12 +454,12 @@ ghid_port_button_press_cb (GtkWidget * drawing_area,
   mk = ghid_modifier_keys_state (&state);
   ghid_show_crosshair (FALSE);
   HideCrosshair (TRUE);
-  drag = have_crosshair_attachments ();
 
   do_mouse_action(ev->button, mk);
 
   ghid_invalidate_all ();
   RestoreCrosshair (TRUE);
+  ghid_window_set_name_label (PCB->Name);
   ghid_set_status_line_label ();
   ghid_show_crosshair (TRUE);
   if (!gport->panning)
@@ -657,26 +473,22 @@ ghid_port_button_release_cb (GtkWidget * drawing_area,
 			     GdkEventButton * ev, GtkUIManager * ui)
 {
   ModifierKeysState mk;
-  gboolean drag;
   GdkModifierType state;
 
   ghid_note_event_location (ev);
   state = (GdkModifierType) (ev->state);
   mk = ghid_modifier_keys_state (&state);
 
-  drag = have_crosshair_attachments ();
-  if (drag)
-    HideCrosshair (TRUE);
+  HideCrosshair (TRUE);
 
   do_mouse_action(ev->button, mk + M_Release);
 
-  if (drag)
-    {
-      AdjustAttachedObjects ();
-      ghid_invalidate_all ();
-      RestoreCrosshair (TRUE);
-      ghid_screen_update ();
-    }
+  AdjustAttachedObjects ();
+  ghid_invalidate_all ();
+  RestoreCrosshair (TRUE);
+  ghid_screen_update ();
+
+  ghid_window_set_name_label (PCB->Name);
   ghid_set_status_line_label ();
   g_idle_add (ghid_idle_cb, NULL);
   return TRUE;
@@ -785,7 +597,7 @@ describe_location (LocationType X, LocationType Y)
     return NULL;
 
   if (type == PIN_TYPE || type == PAD_TYPE)
-    elename = UNKNOWN (NAMEONPCB_NAME ((ElementTypePtr) ptr1));
+    elename = (char *)UNKNOWN (NAMEONPCB_NAME ((ElementTypePtr) ptr1));
 
   pinname = ConnectionName (type, ptr1, ptr2);
 
@@ -878,16 +690,16 @@ queue_tooltip_update (GHidPort *out)
 
 gint
 ghid_port_window_motion_cb (GtkWidget * widget,
-			    GdkEventButton * ev, GHidPort * out)
+			    GdkEventMotion * ev, GHidPort * out)
 {
   gdouble dx, dy;
   static gint x_prev = -1, y_prev = -1;
   gboolean moved;
 
+  gdk_event_request_motions (ev);
+
   if (out->panning)
     {
-      if (gtk_events_pending ())
-	return FALSE;
       dx = gport->zoom * (x_prev - ev->x);
       dy = gport->zoom * (y_prev - ev->y);
       if (x_prev > 0)
@@ -897,7 +709,7 @@ ghid_port_window_motion_cb (GtkWidget * widget,
       return FALSE;
     }
   x_prev = y_prev = -1;
-  moved = ghid_note_event_location (ev);
+  moved = ghid_note_event_location ((GdkEventButton *)ev);
 
 #if ENABLE_TOOLTIPS
   queue_tooltip_update (out);
@@ -939,13 +751,7 @@ ghid_port_window_enter_cb (GtkWidget * widget,
     {
       ghid_screen_update ();
     }
-
-  if(! cursor_in_viewport)
-    {
-      RestoreCrosshair (TRUE);
-      cursor_in_viewport = TRUE;
-    }
-	  
+  CrosshairOn (TRUE);
   return FALSE;
 }
 
@@ -1035,12 +841,6 @@ ghid_port_window_leave_cb (GtkWidget * widget,
 	    }
 	  g_idle_add (ghid_pan_idle_cb, NULL);
 	}
-    }
-
-  if(cursor_in_viewport)
-    {
-      HideCrosshair (TRUE);
-      cursor_in_viewport = FALSE;
     }
 
   ghid_show_crosshair (FALSE);

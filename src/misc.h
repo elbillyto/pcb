@@ -74,7 +74,7 @@ BoxTypePtr GetArcEnds (ArcTypePtr);
 void ChangeArcAngles (LayerTypePtr, ArcTypePtr, long int, long int);
 char *UniqueElementName (DataTypePtr, char *);
 void AttachForCopy (LocationType, LocationType);
-float GetValue (char *, char *, bool *);
+float GetValue (const char *, const char *, bool *);
 int FileExists (const char *);
 char *Concat (const char *, ...);	/* end with NULL */
 
@@ -86,7 +86,7 @@ char *AttributeGetFromList (AttributeListType *list, char *name);
 /* Adds an attribute to the list.  If the attribute already exists,
    whether it's replaced or a second copy added depends on
    REPLACE.  Returns non-zero if an existing attribute was replaced.  */
-int AttributePutToList (AttributeListType *list, char *name, char *value, int replace);
+int AttributePutToList (AttributeListType *list, const char *name, const char *value, int replace);
 /* Simplistic version: Takes a pointer to an object, looks up attributes in it.  */
 #define AttributeGet(OBJ,name) AttributeGetFromList (&(OBJ->Attributes), name)
 /* Simplistic version: Takes a pointer to an object, sets attributes in it.  */
@@ -127,4 +127,27 @@ int ElementOrientation (ElementType *e);
 
 void NetlistChanged (int force_unfreeze);
 
+/*
+ * Check whether mkdir() is mkdir or _mkdir, and whether it takes one
+ * or two arguments.  WIN32 mkdir takes one argument and POSIX takes
+ * two.
+ */
+#if HAVE_MKDIR
+        #if MKDIR_TAKES_ONE_ARG
+         /* MinGW32 */
+#include <io.h> /* mkdir under MinGW only takes one argument */
+         #define MKDIR(a, b) mkdir(a)
+        #else
+         #define MKDIR(a, b) mkdir(a, b)
+        #endif
+#else
+        #if HAVE__MKDIR
+         /* plain Windows 32 */
+         #define MKDIR(a, b) _mkdir(a)
+        #else
+         #error "Don't know how to create a directory on this system."
+        #endif
 #endif
+
+#endif /* __MISC_INCLUDED__ */
+

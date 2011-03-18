@@ -135,7 +135,7 @@ Load (int argc, char **argv, int x, int y)
 
   n = 0;
   stdarg (XmNpattern, pattern);
-  stdarg (XmNmustMatch, true);
+  stdarg (XmNmustMatch, True);
   stdarg (XmNselectionLabelString, xms_load);
   XtSetValues (fsb, args, n);
 
@@ -188,7 +188,7 @@ LoadVendor (int argc, char **argv, int x, int y)
 
   n = 0;
   stdarg (XmNpattern, pattern);
-  stdarg (XmNmustMatch, true);
+  stdarg (XmNmustMatch, True);
   stdarg (XmNselectionLabelString, xms_loadv);
   XtSetValues (fsb, args, n);
 
@@ -255,7 +255,7 @@ Save (int argc, char **argv, int x, int y)
 
   n = 0;
   stdarg (XmNpattern, pattern);
-  stdarg (XmNmustMatch, false);
+  stdarg (XmNmustMatch, False);
   stdarg (XmNselectionLabelString, xms_save);
   XtSetValues (fsb, args, n);
 
@@ -325,7 +325,7 @@ lesstif_logv (const char *fmt, va_list ap)
       Widget clear_button, dismiss_button;
 
       n = 0;
-      stdarg (XmNautoUnmanage, false);
+      stdarg (XmNautoUnmanage, False);
       stdarg (XmNwidth, 600);
       stdarg (XmNheight, 200);
       stdarg (XmNtitle, "PCB Log");
@@ -349,9 +349,9 @@ lesstif_logv (const char *fmt, va_list ap)
 		     (XtCallbackProc) log_dismiss, 0);
 
       n = 0;
-      stdarg (XmNeditable, false);
+      stdarg (XmNeditable, False);
       stdarg (XmNeditMode, XmMULTI_LINE_EDIT);
-      stdarg (XmNcursorPositionVisible, true);
+      stdarg (XmNcursorPositionVisible, True);
       stdarg (XmNtopAttachment, XmATTACH_FORM);
       stdarg (XmNleftAttachment, XmATTACH_FORM);
       stdarg (XmNrightAttachment, XmATTACH_FORM);
@@ -474,7 +474,7 @@ lesstif_confirm_dialog (char *msg, ...)
   wait_for_dialog (confirm_dialog);
 
   n = 0;
-  stdarg (XmNdefaultPosition, false);
+  stdarg (XmNdefaultPosition, False);
   XtSetValues (confirm_dialog, args, n);
 
   return ok;
@@ -511,16 +511,16 @@ lesstif_report_dialog (char *title, char *msg)
 	return;
 
       n = 0;
-      stdarg (XmNautoUnmanage, false);
+      stdarg (XmNautoUnmanage, False);
       stdarg (XmNwidth, 600);
       stdarg (XmNheight, 200);
       stdarg (XmNtitle, title);
       report_form = XmCreateFormDialog (mainwind, "report", args, n);
 
       n = 0;
-      stdarg (XmNeditable, false);
+      stdarg (XmNeditable, False);
       stdarg (XmNeditMode, XmMULTI_LINE_EDIT);
-      stdarg (XmNcursorPositionVisible, false);
+      stdarg (XmNcursorPositionVisible, False);
       stdarg (XmNtopAttachment, XmATTACH_FORM);
       stdarg (XmNleftAttachment, XmATTACH_FORM);
       stdarg (XmNrightAttachment, XmATTACH_FORM);
@@ -544,7 +544,7 @@ lesstif_fileselect (const char *title, const char *descr,
 		    const char *history_tag, int flags)
 {
 
-  return lesstif_prompt_for ((char *)title, default_file);
+  return lesstif_prompt_for (title, default_file);
 }
 
 /* ------------------------------------------------------------ */
@@ -553,14 +553,14 @@ static Widget prompt_dialog = 0;
 static Widget prompt_label, prompt_text;
 
 char *
-lesstif_prompt_for (char *msg, char *default_string)
+lesstif_prompt_for (const char *msg, const char *default_string)
 {
   char *rv;
   XmString xs;
   if (prompt_dialog == 0)
     {
       n = 0;
-      stdarg (XmNautoUnmanage, false);
+      stdarg (XmNautoUnmanage, False);
       stdarg (XmNtitle, "PCB Prompt");
       prompt_dialog = XmCreateFormDialog (mainwind, "prompt", args, n);
 
@@ -578,7 +578,7 @@ lesstif_prompt_for (char *msg, char *default_string)
       stdarg (XmNbottomAttachment, XmATTACH_WIDGET);
       stdarg (XmNleftAttachment, XmATTACH_FORM);
       stdarg (XmNrightAttachment, XmATTACH_FORM);
-      stdarg (XmNeditable, true);
+      stdarg (XmNeditable, True);
       prompt_text = XmCreateText (prompt_dialog, "text", args, n);
       XtManageChild (prompt_text);
       XtAddCallback (prompt_text, XmNactivateCallback,
@@ -592,7 +592,7 @@ lesstif_prompt_for (char *msg, char *default_string)
   xs = XmStringCreateLocalized ((char *)msg);
   stdarg (XmNlabelString, xs);
   XtSetValues (prompt_label, args, n);
-  XmTextSetString (prompt_text, default_string);
+  XmTextSetString (prompt_text, (char *)default_string);
   XmTextSetCursorPosition (prompt_text, strlen (default_string));
   wait_for_dialog (prompt_dialog);
   rv = XmTextGetString (prompt_text);
@@ -752,20 +752,20 @@ lesstif_attribute_dialog (HID_Attribute * attrs,
 	  break;
 	case HID_String:
 	  stdarg (XmNcolumns, 40);
-	  stdarg (XmNresizeWidth, true);
+	  stdarg (XmNresizeWidth, True);
 	  stdarg (XmNvalue, results[i].str_value);
 	  wl[i] = XmCreateTextField (form, attrs[i].name, args, n);
 	  break;
 	case HID_Integer:
 	  stdarg (XmNcolumns, 13);
-	  stdarg (XmNresizeWidth, true);
+	  stdarg (XmNresizeWidth, True);
 	  sprintf (buf, "%d", results[i].int_value);
 	  stdarg (XmNvalue, buf);
 	  wl[i] = XmCreateTextField (form, attrs[i].name, args, n);
 	  break;
 	case HID_Real:
 	  stdarg (XmNcolumns, 16);
-	  stdarg (XmNresizeWidth, true);
+	  stdarg (XmNresizeWidth, True);
 	  sprintf (buf, "%g", results[i].real_value);
 	  stdarg (XmNvalue, buf);
 	  wl[i] = XmCreateTextField (form, attrs[i].name, args, n);
@@ -903,7 +903,7 @@ Open the netlist window.
 static int
 DoWindows (int argc, char **argv, int x, int y)
 {
-  char *a = argc == 1 ? argv[0] : "";
+  const char *a = argc == 1 ? argv[0] : "";
   if (strcmp (a, "1") == 0 || strcasecmp (a, "Layout") == 0)
     {
     }
@@ -1269,7 +1269,7 @@ AdjustSizes (int argc, char **argv, int x, int y)
       stdarg (XmNmarginHeight, 3);
       stdarg (XmNhorizontalSpacing, 3);
       stdarg (XmNverticalSpacing, 3);
-      stdarg (XmNautoUnmanage, false);
+      stdarg (XmNautoUnmanage, False);
       stdarg (XmNtitle, "Board Sizes");
       sizes_dialog = XmCreateFormDialog (mainwind, "sizes", args, n);
 
@@ -1356,10 +1356,10 @@ typedef struct {
 static LgResource lgr;
 
 static XtResource lg_resources[] = {
-  { "font", "Font", XtRFontStruct, sizeof(XFontStruct*), XtOffset(LgResource*, font), XtRString, "fixed" },
-  { "foreground", "Foreground", XtRPixel, sizeof(Pixel), XtOffset(LgResource*, fg), XtRString, "black" },
-  { "selectColor", "Foreground", XtRPixel, sizeof(Pixel), XtOffset(LgResource*, sel), XtRString, "blue" },
-  { "background", "Background", XtRPixel, sizeof(Pixel), XtOffset(LgResource*, bg), XtRString, "white" }
+  { "font", "Font", XtRFontStruct, sizeof(XFontStruct*), XtOffset(LgResource*, font), XtRString, (void *)"fixed" },
+  { "foreground", "Foreground", XtRPixel, sizeof(Pixel), XtOffset(LgResource*, fg), XtRString, (void *)"black" },
+  { "selectColor", "Foreground", XtRPixel, sizeof(Pixel), XtOffset(LgResource*, sel), XtRString, (void *)"blue" },
+  { "background", "Background", XtRPixel, sizeof(Pixel), XtOffset(LgResource*, bg), XtRString, (void *)"white" }
 };
 
 #if 0
@@ -1640,8 +1640,8 @@ EditLayerGroups (int argc, char **argv, int x, int y)
 	      stdarg (XmNbottomPosition, (i + 1) * MAX_LAYER);
 	      stdarg (XmNlabelString, XmStringCreateLocalized (" "));
 	      stdarg (XmNspacing, 0);
-	      stdarg (XmNvisibleWhenOff, true);
-	      stdarg (XmNfillOnSelect, true);
+	      stdarg (XmNvisibleWhenOff, True);
+	      stdarg (XmNfillOnSelect, True);
 	      stdarg (XmNshadowThickness, 0);
 	      stdarg (XmNmarginWidth, 0);
 	      stdarg (XmNmarginHeight, 0);
@@ -1791,17 +1791,17 @@ lesstif_attributes_need_rows (int new_max)
       XtManageChild (attr_row[attr_max_rows].del);
       XtAddCallback (attr_row[attr_max_rows].del, XmNactivateCallback,
 		     (XtCallbackProc) attributes_delete_callback,
-		     (XtPointer) attr_max_rows);
+		     (XtPointer) (size_t) attr_max_rows);
 
       n = 0;
-      stdarg (XmNresizeWidth, true);
+      stdarg (XmNresizeWidth, True);
       attr_row[attr_max_rows].w_name = XmCreateTextField (f_top, "name", args, n);
       XtManageChild (attr_row[attr_max_rows].w_name);
       XtAddCallback (attr_row[attr_max_rows].w_name, XmNvalueChangedCallback,
 		     (XtCallbackProc) fiddle_with_bb_layout, NULL);
 
       n = 0;
-      stdarg (XmNresizeWidth, true);
+      stdarg (XmNresizeWidth, True);
       attr_row[attr_max_rows].w_value = XmCreateTextField (f_top, "value", args, n);
       XtManageChild (attr_row[attr_max_rows].w_value);
       XtAddCallback (attr_row[attr_max_rows].w_value, XmNvalueChangedCallback,
@@ -1862,7 +1862,7 @@ attributes_delete_callback (Widget w, void *v, void *cbs)
   int i, n;
   Widget wn, wv;
 
-  n = (int) v;
+  n = (int) (size_t) v;
 
   wn = attr_row[n].w_name;
   wv = attr_row[n].w_value;
@@ -1897,7 +1897,7 @@ lesstif_attributes_dialog (char *owner, AttributeListType *attrs_list)
   if (attr_dialog == NULL)
     {
       n = 0;
-      stdarg (XmNautoUnmanage, false);
+      stdarg (XmNautoUnmanage, False);
       stdarg (XmNtitle, owner);
       stdarg (XmNwidth, 400);
       stdarg (XmNheight, 300);
@@ -2049,7 +2049,7 @@ ImportGUI (int argc, char **argv, int x, int y)
 
   n = 0;
   stdarg (XmNpattern, xms_sch);
-  stdarg (XmNmustMatch, true);
+  stdarg (XmNmustMatch, True);
   stdarg (XmNselectionLabelString, xms_import);
   XtSetValues (fsb, args, n);
 

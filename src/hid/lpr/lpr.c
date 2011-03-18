@@ -17,6 +17,7 @@
 #include "hid.h"
 #include "../hidint.h"
 #include "../ps/ps.h"
+#include "hid/common/hidinit.h"
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
@@ -91,13 +92,10 @@ lpr_do_export (HID_Attr_Val * options)
       return;
     }
 
-  ps_start_file (f);
   ps_hid_export_to_file (f, options);
 
   fclose (f);
 }
-
-extern void hid_parse_command_line (int *argc, char ***argv);
 
 static void
 lpr_parse_arguments (int *argc, char ***argv)
