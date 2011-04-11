@@ -58,14 +58,7 @@ ghid_port_ranges_changed (void)
 {
   GtkAdjustment *h_adj, *v_adj;
 
-  if (!ghidgui->combine_adjustments)
-    HideCrosshair (FALSE);
-  if (ghidgui->combine_adjustments)
-    {
-      ghidgui->combine_adjustments = FALSE;
-      return;
-    }
-
+  HideCrosshair ();
   ghidgui->need_restore_crosshair = TRUE;
 
   h_adj = gtk_range_get_adjustment (GTK_RANGE (ghidgui->h_range));
@@ -108,12 +101,13 @@ ghid_port_ranges_pan (gdouble x, gdouble y, gboolean relative)
   if (y1 > v_adj->upper - v_adj->page_size)
     y1 = v_adj->upper - v_adj->page_size;
 
-  if (x0 != x1 && y0 != y1)
-    ghidgui->combine_adjustments = TRUE;
-  if (x0 != x1)
-    gtk_range_set_value (GTK_RANGE (ghidgui->h_range), x1);
-  if (y0 != y1)
-    gtk_range_set_value (GTK_RANGE (ghidgui->v_range), y1);
+  ghidgui->adjustment_changed_holdoff = TRUE;
+  gtk_range_set_value (GTK_RANGE (ghidgui->h_range), x1);
+  gtk_range_set_value (GTK_RANGE (ghidgui->v_range), y1);
+  ghidgui->adjustment_changed_holdoff = FALSE;
+
+  if ((x0 != x1) || (y0 != y1))
+    ghid_port_ranges_changed();
 
   ghid_note_event_location (NULL);
   return ((x0 != x1) || (y0 != y1));
@@ -241,7 +235,7 @@ ghid_note_event_location (GdkEventButton * ev)
   if (moved)
     {
       AdjustAttachedObjects ();
-      RestoreCrosshair (false);
+      RestoreCrosshair ();
     }
   ghid_set_cursor_position_labels ();
   return moved;
@@ -311,10 +305,10 @@ ghid_port_key_release_cb (GtkWidget * drawing_area, GdkEventKey * kev,
   if (ghid_is_modifier_key_sym (ksym))
     ghid_note_event_location (NULL);
 
-  HideCrosshair (TRUE);
+  HideCrosshair ();
   AdjustAttachedObjects ();
   ghid_invalidate_all ();
-  RestoreCrosshair (TRUE);
+  RestoreCrosshair ();
   ghid_screen_update ();
   g_idle_add (ghid_idle_cb, NULL);
   return FALSE;
@@ -453,12 +447,12 @@ ghid_port_button_press_cb (GtkWidget * drawing_area,
   state = (GdkModifierType) (ev->state);
   mk = ghid_modifier_keys_state (&state);
   ghid_show_crosshair (FALSE);
-  HideCrosshair (TRUE);
+  HideCrosshair ();
 
   do_mouse_action(ev->button, mk);
 
   ghid_invalidate_all ();
-  RestoreCrosshair (TRUE);
+  RestoreCrosshair ();
   ghid_window_set_name_label (PCB->Name);
   ghid_set_status_line_label ();
   ghid_show_crosshair (TRUE);
@@ -479,13 +473,13 @@ ghid_port_button_release_cb (GtkWidget * drawing_area,
   state = (GdkModifierType) (ev->state);
   mk = ghid_modifier_keys_state (&state);
 
-  HideCrosshair (TRUE);
+  HideCrosshair ();
 
   do_mouse_action(ev->button, mk + M_Release);
 
   AdjustAttachedObjects ();
   ghid_invalidate_all ();
-  RestoreCrosshair (TRUE);
+  RestoreCrosshair ();
   ghid_screen_update ();
 
   ghid_window_set_name_label (PCB->Name);
@@ -502,7 +496,7 @@ ghid_port_drawing_area_configure_event_cb (GtkWidget * widget,
 {
   static gboolean first_time_done;
 
-  HideCrosshair (TRUE);
+  HideCrosshair ();
   gport->width = ev->width;
   gport->height = ev->height;
 
@@ -516,55 +510,30 @@ ghid_port_drawing_area_configure_event_cb (GtkWidget * widget,
   if (!first_time_done)
     {
       gport->colormap = gtk_widget_get_colormap (gport->top_window);
-      gport->bg_gc = gdk_gc_new (gport->drawable);
       if (gdk_color_parse (Settings.BackgroundColor, &gport->bg_color))
 	gdk_color_alloc (gport->colormap, &gport->bg_color);
       else
 	gdk_color_white (gport->colormap, &gport->bg_color);
-      gdk_gc_set_foreground (gport->bg_gc, &gport->bg_color);
 
-      gport->offlimits_gc = gdk_gc_new (gport->drawable);
       if (gdk_color_parse (Settings.OffLimitColor, &gport->offlimits_color))
 	gdk_color_alloc (gport->colormap, &gport->offlimits_color);
       else
 	gdk_color_white (gport->colormap, &gport->offlimits_color);
-      gdk_gc_set_foreground (gport->offlimits_gc, &gport->offlimits_color);
       first_time_done = TRUE;
+      ghid_drawing_area_configure_hook (out);
       PCBChanged (0, NULL, 0, 0);
     }
-  if (gport->mask)
+  else
     {
-      gdk_pixmap_unref (gport->mask);
-      gport->mask = gdk_pixmap_new (0, gport->width, gport->height, 1);
+      ghid_drawing_area_configure_hook (out);
     }
+
   ghid_port_ranges_scale (FALSE);
   ghid_invalidate_all ();
-  RestoreCrosshair (TRUE);
+  RestoreCrosshair ();
   return 0;
 }
 
-
-void
-ghid_screen_update (void)
-{
-
-  ghid_show_crosshair (FALSE);
-  gdk_draw_drawable (gport->drawing_area->window, gport->bg_gc, gport->pixmap,
-		     0, 0, 0, 0, gport->width, gport->height);
-  ghid_show_crosshair (TRUE);
-}
-
-gboolean
-ghid_port_drawing_area_expose_event_cb (GtkWidget * widget,
-					GdkEventExpose * ev, GHidPort * port)
-{
-  ghid_show_crosshair (FALSE);
-  gdk_draw_drawable (widget->window, port->bg_gc, port->pixmap,
-		     ev->area.x, ev->area.y, ev->area.x, ev->area.y,
-		     ev->area.width, ev->area.height);
-  ghid_show_crosshair (TRUE);
-  return FALSE;
-}
 
 #if GTK_CHECK_VERSION(2,12,0)
 # define ENABLE_TOOLTIPS 1
@@ -696,7 +665,12 @@ ghid_port_window_motion_cb (GtkWidget * widget,
   static gint x_prev = -1, y_prev = -1;
   gboolean moved;
 
+
   gdk_event_request_motions (ev);
+
+  if (!ghid_start_drawing (out))
+    return FALSE;
+
 
   if (out->panning)
     {
@@ -715,9 +689,12 @@ ghid_port_window_motion_cb (GtkWidget * widget,
   queue_tooltip_update (out);
 #endif
 
+  ghid_show_crosshair (FALSE);
   ghid_show_crosshair (TRUE);
   if (moved && have_crosshair_attachments ())
     ghid_draw_area_update (gport, NULL);
+
+  ghid_end_drawing (out);
   return FALSE;
 }
 
@@ -751,7 +728,7 @@ ghid_port_window_enter_cb (GtkWidget * widget,
     {
       ghid_screen_update ();
     }
-  CrosshairOn (TRUE);
+  CrosshairOn ();
   return FALSE;
 }
 

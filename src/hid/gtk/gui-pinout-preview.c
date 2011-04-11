@@ -150,66 +150,6 @@ pinout_set_data (GhidPinoutPreview * pinout, ElementType * element)
 }
 
 
-static gboolean
-ghid_pinout_preview_expose (GtkWidget * widget, GdkEventExpose * event)
-{
-  extern HID ghid_hid;
-  GhidPinoutPreview *pinout = GHID_PINOUT_PREVIEW (widget);
-  GdkDrawable *save_drawable;
-  double save_zoom;
-  int da_w, da_h;
-  int save_left, save_top;
-  int save_width, save_height;
-  int save_view_width, save_view_height;
-  double xz, yz;
-
-  save_zoom = gport->zoom;
-  save_width = gport->width;
-  save_height = gport->height;
-  save_left = gport->view_x0;
-  save_top = gport->view_y0;
-  save_view_width = gport->view_width;
-  save_view_height = gport->view_height;
-
-  /* Setup drawable and zoom factor for drawing routines
-   */
-  save_drawable = gport->drawable;
-
-  gdk_window_get_geometry (widget->window, 0, 0, &da_w, &da_h, 0);
-  xz = (double) pinout->x_max / da_w;
-  yz = (double) pinout->y_max / da_h;
-  if (xz > yz)
-    gport->zoom = xz;
-  else
-    gport->zoom = yz;
-
-  gport->drawable = widget->window;
-  gport->width = da_w;
-  gport->height = da_h;
-  gport->view_width = da_w * gport->zoom;
-  gport->view_height = da_h * gport->zoom;
-  gport->view_x0 = (pinout->x_max - gport->view_width) / 2;
-  gport->view_y0 = (pinout->y_max - gport->view_height) / 2;
-
-  /* clear background */
-  gdk_draw_rectangle (widget->window, gport->bg_gc, TRUE, 0, 0, da_w, da_h);
-
-  /* call the drawing routine */
-  hid_expose_callback (&ghid_hid, NULL, &pinout->element);
-
-  gport->drawable = save_drawable;
-  gport->zoom = save_zoom;
-  gport->width = save_width;
-  gport->height = save_height;
-  gport->view_x0 = save_left;
-  gport->view_y0 = save_top;
-  gport->view_width = save_view_width;
-  gport->view_height = save_view_height;
-
-  return FALSE;
-}
-
-
 enum
 {
   PROP_ELEMENT_DATA = 1,
@@ -217,6 +157,26 @@ enum
 
 
 static GObjectClass *ghid_pinout_preview_parent_class = NULL;
+
+
+/*! \brief GObject constructed
+ *
+ *  \par Function Description
+ *  Initialise the pinout preview object once it is constructed.
+ *  Chain up in case the parent class wants to do anything too.
+ *
+ *  \param [in] object  The pinout preview object
+ */
+static void
+ghid_pinout_preview_constructed (GObject *object)
+{
+  /* chain up to the parent class */
+  if (G_OBJECT_CLASS (ghid_pinout_preview_parent_class)->constructed != NULL)
+    G_OBJECT_CLASS (ghid_pinout_preview_parent_class)->constructed (object);
+
+  ghid_init_drawing_widget (GTK_WIDGET (object), gport);
+}
+
 
 
 /*! \brief GObject finalise handler
@@ -313,6 +273,7 @@ ghid_pinout_preview_class_init (GhidPinoutPreviewClass * klass)
   gobject_class->finalize = ghid_pinout_preview_finalize;
   gobject_class->set_property = ghid_pinout_preview_set_property;
   gobject_class->get_property = ghid_pinout_preview_get_property;
+  gobject_class->constructed = ghid_pinout_preview_constructed;
 
   gtk_widget_class->expose_event = ghid_pinout_preview_expose;
 

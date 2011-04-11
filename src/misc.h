@@ -44,6 +44,9 @@ void SetPadBoundingBox (PadTypePtr);
 void SetPolygonBoundingBox (PolygonTypePtr);
 void SetElementBoundingBox (DataTypePtr, ElementTypePtr, FontTypePtr);
 bool IsDataEmpty (DataTypePtr);
+bool IsLayerEmpty (LayerTypePtr);
+bool IsLayerNumEmpty (int);
+bool IsLayerGroupEmpty (int);
 BoxTypePtr GetDataBoundingBox (DataTypePtr);
 void CenterDisplay (LocationType, LocationType, bool);
 void SetFontInfo (FontTypePtr);
@@ -74,7 +77,7 @@ BoxTypePtr GetArcEnds (ArcTypePtr);
 void ChangeArcAngles (LayerTypePtr, ArcTypePtr, long int, long int);
 char *UniqueElementName (DataTypePtr, char *);
 void AttachForCopy (LocationType, LocationType);
-float GetValue (const char *, const char *, bool *);
+double GetValue (const char *, const char *, bool *);
 int FileExists (const char *);
 char *Concat (const char *, ...);	/* end with NULL */
 
@@ -145,9 +148,12 @@ void NetlistChanged (int force_unfreeze);
          /* plain Windows 32 */
          #define MKDIR(a, b) _mkdir(a)
         #else
-         #error "Don't know how to create a directory on this system."
+         #define MKDIR(a, b) pcb_mkdir(a, b)
+         #define MKDIR_IS_PCBMKDIR 1
+         int pcb_mkdir (const char *path, int mode);
         #endif
 #endif
+
 
 #endif /* __MISC_INCLUDED__ */
 

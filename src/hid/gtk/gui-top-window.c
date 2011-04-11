@@ -465,24 +465,18 @@ get_grid_value_index (gboolean allow_fail)
 static void
 h_adjustment_changed_cb (GtkAdjustment * adj, GhidGui * g)
 {
-  gdouble xval, yval;
-
   if (g->adjustment_changed_holdoff)
     return;
-  xval = gtk_adjustment_get_value (adj);
-  yval = gtk_adjustment_get_value (GTK_ADJUSTMENT (ghidgui->v_adjustment));
+
   ghid_port_ranges_changed ();
 }
 
 static void
 v_adjustment_changed_cb (GtkAdjustment * adj, GhidGui * g)
 {
-  gdouble xval, yval;
-
   if (g->adjustment_changed_holdoff)
     return;
-  yval = gtk_adjustment_get_value (adj);
-  xval = gtk_adjustment_get_value (GTK_ADJUSTMENT (ghidgui->h_adjustment));
+
   ghid_port_ranges_changed ();
 }
 
@@ -656,10 +650,10 @@ ghid_menu_cb (GtkAction * action, gpointer data)
    */
   if (ghidgui->toggle_holdoff == FALSE) 
     {
-      HideCrosshair (TRUE);
+      HideCrosshair ();
       AdjustAttachedObjects ();
       ghid_invalidate_all ();
-      RestoreCrosshair (TRUE);
+      RestoreCrosshair ();
       ghid_screen_update ();
       ghid_window_set_name_label (PCB->Name);
       ghid_set_status_line_label ();
@@ -2159,8 +2153,6 @@ destroy_chart_cb (GtkWidget * widget, GHidPort * port)
   gtk_main_quit ();
 }
 
-
-
 /* 
  * Create the top_window contents.  The config settings should be loaded
  * before this is called.
@@ -2313,6 +2305,7 @@ ghid_build_pcb_top_window (void)
   gtk_box_pack_start (GTK_BOX (hbox), viewport, TRUE, TRUE, 0);
 
   gport->drawing_area = gtk_drawing_area_new ();
+  ghid_init_drawing_widget (gport->drawing_area, gport);
 
   gtk_widget_add_events (gport->drawing_area, GDK_EXPOSURE_MASK
 			 | GDK_LEAVE_NOTIFY_MASK | GDK_ENTER_NOTIFY_MASK
@@ -2370,7 +2363,7 @@ ghid_build_pcb_top_window (void)
    */
 
   g_signal_connect (G_OBJECT (gport->drawing_area), "expose_event",
-		    G_CALLBACK (ghid_port_drawing_area_expose_event_cb),
+		    G_CALLBACK (ghid_drawing_area_expose_cb),
 		    port);
   g_signal_connect (G_OBJECT (gport->top_window), "configure_event",
 		    G_CALLBACK (top_window_configure_event_cb), port);
@@ -2404,10 +2397,6 @@ ghid_build_pcb_top_window (void)
   ghidgui->creating = FALSE;
 
   gtk_widget_show_all (gport->top_window);
-  gtk_widget_realize (vbox_main);
-  gtk_widget_realize (hbox_middle);
-  gtk_widget_realize (viewport);
-  gtk_widget_realize (gport->drawing_area);
   gdk_window_set_back_pixmap (gport->drawing_area->window, NULL, FALSE);
 
   ghid_route_style_temp_buttons_hide ();
@@ -2693,6 +2682,8 @@ ghid_parse_arguments (int *argc, char ***argv)
   gport->zoom = 300.0;
   pixel_slop = 300;
 
+  ghid_init_renderer (argc, argv, gport);
+
   ghid_config_files_read (argc, argv);
 
   Settings.AutoPlace = 0;
@@ -2721,7 +2712,6 @@ ghid_parse_arguments (int *argc, char ***argv)
   if (Settings.AutoPlace)
     gtk_widget_set_uposition (GTK_WIDGET (window), 10, 10);
 
-  gtk_widget_realize (gport->top_window);
   gtk_widget_show_all (gport->top_window);
   ghidgui->creating = TRUE;
 }

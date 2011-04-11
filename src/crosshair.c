@@ -85,7 +85,6 @@ static void XORDrawMoveOrCopyObject (void);
 static void XORDrawAttachedLine (LocationType, LocationType, LocationType,
 				 LocationType, BDimension);
 static void XORDrawAttachedArc (BDimension);
-static void DrawAttached (bool);
 
 /* ---------------------------------------------------------------------------
  * creates a tmp polygon with coordinates converted to screen system
@@ -567,7 +566,7 @@ XORDrawMoveOrCopyObject (void)
  * draws additional stuff that follows the crosshair
  */
 static void
-DrawAttached (bool BlockToo)
+DrawAttached (void)
 {
   BDimension s;
   switch (Settings.Mode)
@@ -673,7 +672,7 @@ DrawAttached (bool BlockToo)
 
   /* an attached box does not depend on a special mode */
   if (Crosshair.AttachedBox.State == STATE_SECOND ||
-      (BlockToo && Crosshair.AttachedBox.State == STATE_THIRD))
+      Crosshair.AttachedBox.State == STATE_THIRD)
     {
       LocationType x1, y1, x2, y2;
 
@@ -689,13 +688,13 @@ DrawAttached (bool BlockToo)
  * switches crosshair on
  */
 void
-CrosshairOn (bool BlockToo)
+CrosshairOn (void)
 {
   if (!Crosshair.On)
     {
       Crosshair.On = true;
-      DrawAttached (BlockToo);
-      DrawMark (true);
+      DrawAttached ();
+      DrawMark ();
     }
 }
 
@@ -703,32 +702,23 @@ CrosshairOn (bool BlockToo)
  * switches crosshair off
  */
 void
-CrosshairOff (bool BlockToo)
+CrosshairOff (void)
 {
   if (Crosshair.On)
     {
       Crosshair.On = false;
-      DrawAttached (BlockToo);
-      DrawMark (true);
+      DrawAttached ();
+      DrawMark ();
     }
 }
-
-/*
- * The parameter to HideCrosshair() and RestoreCrosshair() dictates whether 
- * the object you're dragging should be drawn or not.
- *
- * This argument is _not_ saved in the stack, so whether you have drawings
- * following the cursor around or not is dependant on the parameter passed 
- * LAST to either of these two functions.
- */
 
 /* ---------------------------------------------------------------------------
  * saves crosshair state (on/off) and hides him
  */
 void
-HideCrosshair (bool BlockToo)
+HideCrosshair ()
 {
-  /* fprintf(stderr, "HideCrosshair %d stack %d\n", BlockToo ? 1 : 0, CrosshairStackLocation); */
+  /* fprintf(stderr, "HideCrosshair stack %d\n", CrosshairStackLocation); */
   if (CrosshairStackLocation >= MAX_CROSSHAIRSTACK_DEPTH)
     {
       fprintf(stderr, "Error: CrosshairStackLocation overflow\n");
@@ -738,16 +728,16 @@ HideCrosshair (bool BlockToo)
   CrosshairStack[CrosshairStackLocation] = Crosshair.On;
   CrosshairStackLocation++;
 
-  CrosshairOff (BlockToo);
+  CrosshairOff ();
 }
 
 /* ---------------------------------------------------------------------------
  * restores last crosshair state
  */
 void
-RestoreCrosshair (bool BlockToo)
+RestoreCrosshair (void)
 {
-  /* fprintf(stderr, "RestoreCrosshair %d stack %d\n", BlockToo ? 1 : 0, CrosshairStackLocation); */
+  /* fprintf(stderr, "RestoreCrosshair stack %d\n", CrosshairStackLocation); */
   if (CrosshairStackLocation <= 0)
     {
       fprintf(stderr, "Error: CrosshairStackLocation underflow\n");
@@ -757,13 +747,15 @@ RestoreCrosshair (bool BlockToo)
   CrosshairStackLocation--;
 
   if (CrosshairStack[CrosshairStackLocation])
-    {
-      CrosshairOn (BlockToo);
-    }
+    CrosshairOn ();
   else
-    {
-      CrosshairOff (BlockToo);
-    }
+    CrosshairOff ();
+}
+
+static double
+square (double x)
+{
+  return x * x;
 }
 
 /* ---------------------------------------------------------------------------
@@ -774,7 +766,7 @@ FitCrosshairIntoGrid (LocationType X, LocationType Y)
 {
   LocationType x2, y2, x0, y0;
   void *ptr1, *ptr2, *ptr3;
-  float nearest, sq_dist;
+  double nearest, sq_dist;
   int ans;
 
   x0 = 0;
@@ -892,10 +884,10 @@ FitCrosshairIntoGrid (LocationType X, LocationType Y)
       px = (pad->Point1.X + pad->Point2.X) / 2;
       py = (pad->Point1.Y + pad->Point2.Y) / 2;
 
-      sq_dist = SQUARE (px - Crosshair.X) + SQUARE (py - Crosshair.Y);
+      sq_dist = square (px - Crosshair.X) + square (py - Crosshair.Y);
 
       if (!gui->shift_is_pressed() ||
-          SQUARE (x0 - Crosshair.X) + SQUARE (y0 - Crosshair.Y) > sq_dist)
+          square (x0 - Crosshair.X) + square (y0 - Crosshair.Y) > sq_dist)
         {
           x0 = px;
           y0 = py;
@@ -918,10 +910,10 @@ FitCrosshairIntoGrid (LocationType X, LocationType Y)
   if (ans)
     {
       PinTypePtr pin = (PinTypePtr) ptr2;
-      sq_dist = SQUARE (pin->X - Crosshair.X) + SQUARE (pin->Y - Crosshair.Y);
+      sq_dist = square (pin->X - Crosshair.X) + square (pin->Y - Crosshair.Y);
       if ((nearest == -1 || sq_dist < nearest) &&
           (!gui->shift_is_pressed() ||
-           SQUARE (x0 - Crosshair.X) + SQUARE (y0 - Crosshair.Y) > sq_dist))
+           square (x0 - Crosshair.X) + square (y0 - Crosshair.Y) > sq_dist))
         {
           x0 = pin->X;
           y0 = pin->Y;
@@ -946,10 +938,10 @@ FitCrosshairIntoGrid (LocationType X, LocationType Y)
   if (ans)
     {
       PinTypePtr pin = (PinTypePtr) ptr2;
-      sq_dist = SQUARE (pin->X - Crosshair.X) + SQUARE (pin->Y - Crosshair.Y);
+      sq_dist = square (pin->X - Crosshair.X) + square (pin->Y - Crosshair.Y);
       if ((nearest == -1 || sq_dist < nearest) &&
           (!gui->shift_is_pressed() ||
-           SQUARE (x0 - Crosshair.X) + SQUARE (y0 - Crosshair.Y) > sq_dist))
+           square (x0 - Crosshair.X) + square (y0 - Crosshair.Y) > sq_dist))
         {
           x0 = pin->X;
           y0 = pin->Y;
@@ -966,10 +958,10 @@ FitCrosshairIntoGrid (LocationType X, LocationType Y)
   if (ans)
     {
       PointTypePtr pnt = (PointTypePtr) ptr3;
-      sq_dist = SQUARE (pnt->X - Crosshair.X) + SQUARE (pnt->Y - Crosshair.Y);
+      sq_dist = square (pnt->X - Crosshair.X) + square (pnt->Y - Crosshair.Y);
       if ((nearest == -1 || sq_dist < nearest) &&
           (!gui->shift_is_pressed() ||
-           SQUARE (x0 - Crosshair.X) + SQUARE (y0 - Crosshair.Y) > sq_dist))
+           square (x0 - Crosshair.X) + square (y0 - Crosshair.Y) > sq_dist))
         {
           x0 = pnt->X;
           y0 = pnt->Y;
@@ -986,10 +978,10 @@ FitCrosshairIntoGrid (LocationType X, LocationType Y)
   if (ans)
     {
       PointTypePtr pnt = (PointTypePtr) ptr3;
-      sq_dist = SQUARE (pnt->X - Crosshair.X) + SQUARE (pnt->Y - Crosshair.Y);
+      sq_dist = square (pnt->X - Crosshair.X) + square (pnt->Y - Crosshair.Y);
       if ((nearest == -1 || sq_dist < nearest) &&
           (!gui->shift_is_pressed() ||
-           SQUARE (x0 - Crosshair.X) + SQUARE (y0 - Crosshair.Y) > sq_dist))
+           square (x0 - Crosshair.X) + square (y0 - Crosshair.Y) > sq_dist))
         {
           x0 = pnt->X;
           y0 = pnt->Y;
@@ -1007,9 +999,9 @@ FitCrosshairIntoGrid (LocationType X, LocationType Y)
   if (ans & ELEMENT_TYPE)
     {
       ElementTypePtr el = (ElementTypePtr) ptr1;
-      sq_dist = SQUARE (el->MarkX - Crosshair.X) + SQUARE (el->MarkY - Crosshair.Y);
+      sq_dist = square (el->MarkX - Crosshair.X) + square (el->MarkY - Crosshair.Y);
       if ((nearest == -1 || sq_dist < nearest) &&
-           SQUARE (x0 - Crosshair.X) + SQUARE (y0 - Crosshair.Y) > sq_dist)
+           square (x0 - Crosshair.X) + square (y0 - Crosshair.Y) > sq_dist)
         {
           x0 = el->MarkX;
           y0 = el->MarkY;
@@ -1069,7 +1061,7 @@ MoveCrosshairAbsolute (LocationType X, LocationType Y)
       x = z;
       z = Crosshair.Y;
       Crosshair.Y = y;
-      HideCrosshair (false);
+      HideCrosshair ();
       /* now move forward again */
       Crosshair.X = x;
       Crosshair.Y = z;
@@ -1099,9 +1091,9 @@ SetCrosshairRange (LocationType MinX, LocationType MinY, LocationType MaxX,
  * if argument is true, draw only if it is visible, otherwise draw it regardless
  */
 void
-DrawMark (bool ifvis)
+DrawMark (void)
 {
-  if (Marked.status || !ifvis)
+  if (Marked.status)
     {
       gui->draw_line (Crosshair.GC,
 		      Marked.X - MARK_SIZE,
@@ -1152,7 +1144,6 @@ InitCrosshair (void)
 void
 DestroyCrosshair (void)
 {
-  CrosshairOff (true);
   FreePolygonMemory (&Crosshair.AttachedPolygon);
   gui->destroy_gc (Crosshair.GC);
 }

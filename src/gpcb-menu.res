@@ -46,8 +46,8 @@ MainMenu =
 # File Menu
 #
   {"File"
-   {"Save layout" Save(Layout) tip="Saves current layout"}
-   {"Save layout as..." Save(LayoutAs) tip="Saves current layout into a new file"}
+   {"Save Layout" Save(Layout) tip="Saves current layout" m=S a={"Ctrl-S" "Ctrl<Key>s"}}
+   {"Save Layout As..." Save(LayoutAs) tip="Saves current layout into a new file" m=A a={"Shift Ctrl-S" "Shift Ctrl<Key>s"}}
    -
    {"Revert" Load(Revert,none) tip="Revert to the layout stored on disk"}
    -
@@ -68,7 +68,7 @@ MainMenu =
    {"Export layout..." Export()}
    {"Calibrate Printer..." PrintCalibrate()}
    -
-   {"Start new layout" New()}
+   {"Start New Layout" New() a={"Ctrl-N" "Ctrl<Key>n"}}
    -
    {"Preferences..." DoWindows(Preferences)}
    -
@@ -105,8 +105,6 @@ MainMenu =
     {"Element" Attributes(Element)}
    }
    -
-   {"Move to current layer" MoveToCurrentLayer(Object) a={"M" "<Key>m"}}
-   {"Move selected to current layer" MoveToCurrentLayer(Selected) a={"Shift-M" "Shift<Key>m"}}
    {"Route Styles" @routestyles
     -
     {"Edit..." AdjustStyle(0)}
@@ -133,12 +131,12 @@ MainMenu =
     { "50 mil"   checked=gridsize,5000 SetUnits(mil) SetValue(Grid,5000)}
     {"100 mil"   checked=gridsize,10000 SetUnits(mil) SetValue(Grid,10000)}
     -
-    {"0.01 mm" checked=gridsize,39 SetUnits(mm) SetValue(Grid,39.37007874)}
-    {"0.05 mm" checked=gridsize,197 SetUnits(mm) SetValue(Grid,196.85039370)}
-    {"0.1 mm"  checked=gridsize,394 SetUnits(mm) SetValue(Grid,393.70078740)}
-    {"0.25 mm" checked=gridsize,984 SetUnits(mm) SetValue(Grid,984.25197)}
-    {"0.5 mm"  checked=gridsize,1969 SetUnits(mm) SetValue(Grid,1968.503937)}
-    {"1 mm"    checked=gridsize,3937 SetUnits(mm) SetValue(Grid,3937.00787400)}
+    {"0.01 mm" checked=gridsize,39 SetUnits(mm) SetValue(Grid,0.01mm)}
+    {"0.05 mm" checked=gridsize,197 SetUnits(mm) SetValue(Grid,0.05mm)}
+    {"0.1 mm"  checked=gridsize,394 SetUnits(mm) SetValue(Grid,0.1mm)}
+    {"0.25 mm" checked=gridsize,984 SetUnits(mm) SetValue(Grid,0.25mm)}
+    {"0.5 mm"  checked=gridsize,1969 SetUnits(mm) SetValue(Grid,0.5mm)}
+    {"1 mm"    checked=gridsize,3937 SetUnits(mm) SetValue(Grid,1mm)}
     -
     {"Grid -5mil" SetValue(Grid,-5,mil) a={"Shift-G" "Shift<Key>g"}}
     {"Grid +5mil" SetValue(Grid,+5,mil) a={"G" "<Key>g"}}
@@ -251,6 +249,7 @@ MainMenu =
    {"Disperse selected elements" DisperseElements(Selected)}
    -
    {"Move selected elements to other side" Flip(SelectedElements) a={"Shift-B" "Shift<Key>b"}}
+   {"Move selected to current layer" MoveToCurrentLayer(Selected) a={"Shift-M" "Shift<Key>m"}}
    {"Remove selected objects" RemoveSelected() a={"Shift-Delete" "Shift<Key>Delete"}}
    {"Convert selection to element" Select(Convert)}
    -
@@ -420,6 +419,7 @@ MainMenu =
     {"Clear Selected -2 mil" a={"Shift-Ctrl-K" "Shift Ctrl<Key>k"} ChangeClearSize(SelectedObjects,-2,mil)}
     {"Line Tool size +5 mil" a={"L" "<Key>l"} SetValue(LineSize,+5,mil)}
     {"Line Tool size -5 mil" a={"Shift-L" "Shift<Key>l"} SetValue(LineSize,-5,mil)}
+    {"Move Object to current layer" a={"M" "<Key>m"} MoveToCurrentLayer(Object)}
     {"MarkCrosshair" a={"Ctrl-M" "Ctrl<Key>m"} MarkCrosshair()}
     {"Select shortest rat" a={"Shift-N" "Shift<Key>n"} AddRats(Close)}
     {"AddRats to selected pins" a={"Shift-O" "Shift<Key>o"}

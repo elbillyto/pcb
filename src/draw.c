@@ -186,13 +186,13 @@ UpdateAll (void)
 void
 Draw (void)
 {
-  HideCrosshair (true);
+  HideCrosshair ();
 
   /* clear and create event if not drawing to a pixmap
    */
   gui->invalidate_lr (Block.X1, Block.X2, Block.Y1, Block.Y2);
 
-  RestoreCrosshair (true);
+  RestoreCrosshair ();
 
   /* shrink the update block */
   Block.X1 = Block.Y1 = Block.X2 = Block.Y2 = 0;
@@ -733,6 +733,24 @@ DrawSilk (int new_swap, int layer, const BoxType * drawn_area)
   SWAP_IDENT = save_swap;
 }
 
+
+static void
+DrawMaskBoardArea (int mask_type, BoxType *screen)
+{
+  /* Skip the mask drawing if the GUI doesn't want this type */
+  if ((mask_type == HID_MASK_BEFORE && !gui->poly_before) ||
+      (mask_type == HID_MASK_AFTER  && !gui->poly_after))
+    return;
+
+  gui->use_mask (mask_type);
+  gui->set_color (Output.fgGC, PCB->MaskColor);
+  if (screen == NULL)
+    gui->fill_rect (Output.fgGC, 0, 0, PCB->MaxWidth, PCB->MaxHeight);
+  else
+    gui->fill_rect (Output.fgGC, screen->X1, screen->Y1,
+                                 screen->X2, screen->Y2);
+}
+
 /* ---------------------------------------------------------------------------
  * draws solder mask layer - this will cover nearly everything
  */
@@ -742,20 +760,13 @@ DrawMask (BoxType * screen)
   struct pin_info info;
   int thin = TEST_FLAG(THINDRAWFLAG, PCB) || TEST_FLAG(THINDRAWPOLYFLAG, PCB);
 
-  OutputType *out = &Output;
-
   info.arg = true;
 
   if (thin)
     gui->set_color (Output.pmGC, PCB->MaskColor);
   else
     {
-      if (gui->poly_before)
-	{
-	  gui->use_mask (HID_MASK_BEFORE);
-	  gui->set_color (out->fgGC, PCB->MaskColor);
-	  gui->fill_rect (out->fgGC, 0, 0, PCB->MaxWidth, PCB->MaxHeight);
-	}
+      DrawMaskBoardArea (HID_MASK_BEFORE, screen);
       gui->use_mask (HID_MASK_CLEAR);
     }
 
@@ -767,30 +778,9 @@ DrawMask (BoxType * screen)
     gui->set_color (Output.pmGC, "erase");
   else
     {
-      if (gui->poly_after)
-	{
-	  gui->use_mask (HID_MASK_AFTER);
-	  gui->set_color (out->fgGC, PCB->MaskColor);
-	  gui->fill_rect (out->fgGC, 0, 0, PCB->MaxWidth, PCB->MaxHeight);
-	}
+      DrawMaskBoardArea (HID_MASK_AFTER, screen);
       gui->use_mask (HID_MASK_OFF);
     }
-
-#if 0
-  /* Some fabs want the board outline on the solder mask layer.  If
-     you need this, change the '0' above to '1', and the code below
-     will copy the outline layer to the mask layers.  */
-  if (!gui->gui)
-    {
-      int i;
-      for (i=PCB->Data->LayerN; i>=0; i--)
-	{
-	  LayerTypePtr Layer = PCB->Data->Layer + i;
-	  if (strcmp (Layer->Name, "outline") == 0)
-	    DrawLayer (Layer, screen);
-	}
-    }
-#endif
 }
 
 static void
@@ -836,15 +826,18 @@ text_callback (const BoxType * b, void *cl)
  * draws one non-copper layer
  */
 void
-DrawLayer (LayerTypePtr Layer, const BoxType * screen)
+DrawLayerCommon (LayerTypePtr Layer, const BoxType * screen, bool clear_pins)
 {
   struct pin_info info;
 
   /* print the non-clearing polys */
   info.Layer = Layer;
-  info.arg = false;
+  info.arg = clear_pins;
   clip_box = screen;
   r_search (Layer->polygon_tree, screen, NULL, poly_callback, &info);
+
+  if (clear_pins && TEST_FLAG (CHECKPLANESFLAG, PCB))
+    return;
 
   /* draw all visible lines this layer */
   r_search (Layer->line_tree, screen, NULL, line_callback, Layer);
@@ -854,7 +847,28 @@ DrawLayer (LayerTypePtr Layer, const BoxType * screen)
 
   /* draw the layer text on screen */
   r_search (Layer->text_tree, screen, NULL, text_callback, Layer);
+
+  /* We should check for gui->gui here, but it's kinda cool seeing the
+     auto-outline magically disappear when you first add something to
+     the "outline" layer.  */
+  if (IsLayerEmpty (Layer)
+      && (strcmp (Layer->Name, "outline") == 0
+	  || strcmp (Layer->Name, "route") == 0))
+    {
+      gui->set_color (Output.fgGC, Layer->Color);
+      gui->set_line_width (Output.fgGC, PCB->minWid);
+      gui->draw_rect (Output.fgGC,
+		      0, 0,
+		      PCB->MaxWidth, PCB->MaxHeight);
+    }
+
   clip_box = NULL;
+}
+
+void
+DrawLayer (LayerTypePtr Layer, const BoxType * screen)
+{
+  DrawLayerCommon (Layer, screen, false);
 }
 
 /* ---------------------------------------------------------------------------
@@ -866,7 +880,6 @@ DrawLayerGroup (int group, const BoxType * screen)
 {
   int i, rv = 1;
   int layernum;
-  struct pin_info info;
   LayerTypePtr Layer;
   int n_entries = PCB->LayerGroups.Number[group];
   Cardinal *layers = PCB->LayerGroups.Entries[group];
@@ -880,30 +893,7 @@ DrawLayerGroup (int group, const BoxType * screen)
 	  strcmp (Layer->Name, "route") == 0)
 	rv = 0;
       if (layernum < max_copper_layer && Layer->On)
-	{
-	  /* draw all polygons on this layer */
-	  if (Layer->PolygonN)
-	    {
-	      info.Layer = Layer;
-	      info.arg = true;
-	      r_search (Layer->polygon_tree, screen, NULL, poly_callback,
-			&info);
-	      info.arg = false;
-	    }
-
-	  if (TEST_FLAG (CHECKPLANESFLAG, PCB))
-	    continue;
-
-	  /* draw all visible lines this layer */
-	  r_search (Layer->line_tree, screen, NULL, line_callback, Layer);
-
-	  /* draw the layer arcs on screen */
-	  r_search (Layer->arc_tree, screen, NULL, arc_callback, Layer);
-
-	  /* draw the layer text on screen */
-	  r_search (Layer->text_tree, screen, NULL, text_callback, Layer);
-
-	}
+	DrawLayerCommon (Layer, screen, true);
     }
   if (n_entries > 1)
     rv = 1;
@@ -1160,47 +1150,6 @@ ClearOnlyPin (PinTypePtr Pin, bool mask)
 	gui->fill_circle (Output.pmGC, Pin->X, Pin->Y, half);
     }
 }
-
-
-#if VERTICAL_TEXT
-/* vertical text handling provided by Martin Devera with fixes by harry eaton */
-
-/* draw vertical text; xywh is bounding, de is text's descend used for
-   positioning */
-static void
-DrawVText (int x, int y, int w, int h, char *str)
-{
-  GdkPixmap *pm;
-  GdkImage *im;
-  GdkGCValues values;
-  guint32 pixel;
-  int i, j;
-
-  if (!str || !*str)
-    return;
-
-  pm = gdk_pixmap_new (DrawingWindow, w, h, -1);
-
-  /* draw into pixmap */
-  gdk_draw_rectangle (pm, Output.bgGC, TRUE, 0, 0, w, h);
-
-  gui_draw_string_markup (DrawingWindow, Output.font_desc, Output.fgGC,
-			  0, 0, str);
-
-  im = gdk_drawable_get_image (pm, 0, 0, w, h);
-  gdk_gc_get_values (Output.fgGC, &values);
-
-  /* draw Transpose(im).  TODO: Pango should be doing vertical text soon */
-  for (i = 0; i < w; i++)
-    for (j = 0; j < h; j++)
-      {
-	pixel = gdk_image_get_pixel (im, i, j);
-	if (pixel == values.foreground.pixel)
-	  gdk_draw_point (DrawingWindow, Output.fgGC, x + j, y + w - i - 1);
-      }
-  g_object_unref (G_OBJECT (pm));
-}
-#endif
 
 /* ---------------------------------------------------------------------------
  * lowlevel drawing routine for pin and via names
@@ -2096,7 +2045,6 @@ DrawElementPinsAndPads (ElementTypePtr Element, int unused)
 void
 EraseVia (PinTypePtr Via)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPinOrViaLowLevel (Via, false);
   if (TEST_FLAG (DISPLAYNAMEFLAG, Via))
     DrawPinOrViaNameLowLevel (Via);
@@ -2108,7 +2056,6 @@ EraseVia (PinTypePtr Via)
 void
 EraseRat (RatTypePtr Rat)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   if (TEST_FLAG(VIAFLAG, Rat))
     {
       int w = Rat->Thickness;
@@ -2131,7 +2078,6 @@ EraseRat (RatTypePtr Rat)
 void
 EraseViaName (PinTypePtr Via)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPinOrViaNameLowLevel (Via);
 }
 
@@ -2141,7 +2087,6 @@ EraseViaName (PinTypePtr Via)
 void
 ErasePad (PadTypePtr Pad)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPadLowLevel (Output.fgGC, Pad, false, false);
   if (TEST_FLAG (DISPLAYNAMEFLAG, Pad))
     DrawPadNameLowLevel (Pad);
@@ -2153,7 +2098,6 @@ ErasePad (PadTypePtr Pad)
 void
 ErasePadName (PadTypePtr Pad)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPadNameLowLevel (Pad);
 }
 
@@ -2163,7 +2107,6 @@ ErasePadName (PadTypePtr Pad)
 void
 ErasePin (PinTypePtr Pin)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPinOrViaLowLevel (Pin, false);
   if (TEST_FLAG (DISPLAYNAMEFLAG, Pin))
     DrawPinOrViaNameLowLevel (Pin);
@@ -2175,7 +2118,6 @@ ErasePin (PinTypePtr Pin)
 void
 ErasePinName (PinTypePtr Pin)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPinOrViaNameLowLevel (Pin);
 }
 
@@ -2185,7 +2127,6 @@ ErasePinName (PinTypePtr Pin)
 void
 EraseLine (LineTypePtr Line)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawLineLowLevel (Line);
 }
 
@@ -2197,7 +2138,6 @@ EraseArc (ArcTypePtr Arc)
 {
   if (!Arc->Thickness)
     return;
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawArcLowLevel (Arc);
 }
 
@@ -2208,7 +2148,6 @@ void
 EraseText (LayerTypePtr Layer, TextTypePtr Text)
 {
   int min_silk_line;
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   if (Layer == & PCB->Data->SILKLAYER
       || Layer == & PCB->Data->BACKSILKLAYER)
     min_silk_line = PCB->minSlk;
@@ -2223,7 +2162,6 @@ EraseText (LayerTypePtr Layer, TextTypePtr Text)
 void
 ErasePolygon (PolygonTypePtr Polygon)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawPolygonLowLevel (Polygon);
 }
 
@@ -2233,8 +2171,6 @@ ErasePolygon (PolygonTypePtr Polygon)
 void
 EraseElement (ElementTypePtr Element)
 {
-  /* set color and draw lines, arcs, text and pins */
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   ELEMENTLINE_LOOP (Element);
   {
     DrawLineLowLevel (line);
@@ -2256,7 +2192,6 @@ EraseElement (ElementTypePtr Element)
 void
 EraseElementPinsAndPads (ElementTypePtr Element)
 {
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   PIN_LOOP (Element);
   {
     DrawPinOrViaLowLevel (pin, false);
@@ -2281,7 +2216,6 @@ EraseElementName (ElementTypePtr Element)
 {
   if (TEST_FLAG (HIDENAMEFLAG, Element))
     return;
-  gui->set_color (Output.fgGC, Settings.BackgroundColor);
   DrawTextLowLevel (&ELEMENT_TEXT (PCB, Element), PCB->minSlk);
 }
 

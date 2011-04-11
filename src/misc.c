@@ -107,7 +107,7 @@ static struct
 /* Get Value returns a numeric value passed from the string and sets the
  * bool variable absolute to false if it leads with a +/- character
  */
-float
+double
 GetValue (const char *val, const char *units, bool * absolute)
 {
   double value;
@@ -132,6 +132,9 @@ GetValue (const char *val, const char *units, bool * absolute)
     }
   if (!units && n > 0)
     units = val + n;
+
+  while (units && *units == ' ')
+    units ++;
     
   if (units && *units)
     {
@@ -562,6 +565,31 @@ FlagIsDataEmpty (int parm)
 /* FLAG(DataEmpty,FlagIsDataEmpty,0) */
 /* FLAG(DataNonEmpty,FlagIsDataEmpty,1) */
 
+bool
+IsLayerEmpty (LayerTypePtr layer)
+{
+  return (layer->LineN == 0
+	  && layer->TextN == 0
+	  && layer->PolygonN == 0
+	  && layer->ArcN == 0);
+}
+
+bool
+IsLayerNumEmpty (int num)
+{
+  return IsLayerEmpty (PCB->Data->Layer+num);
+}
+
+bool
+IsLayerGroupEmpty (int num)
+{
+  int i;
+  for (i=0; i<PCB->LayerGroups.Number[num]; i++)
+    if (!IsLayerNumEmpty (PCB->LayerGroups.Entries[num][i]))
+      return false;
+  return true;
+}
+
 /* ---------------------------------------------------------------------------
  * gets minimum and maximum coordinates
  * returns NULL if layout is empty
@@ -658,7 +686,7 @@ CenterDisplay (LocationType X, LocationType Y, bool Delta)
     {
       if (MoveCrosshairAbsolute (X, Y))
         {
-          RestoreCrosshair(false);
+          RestoreCrosshair ();
         }
     }
   gui->set_crosshair (Crosshair.X, Crosshair.Y, HID_SC_WARP_POINTER);
@@ -2180,6 +2208,20 @@ GetInfoString (void)
 #undef TAB
 
   return info.Data;
+}
+
+/* ---------------------------------------------------------------------------
+ * mkdir() implentation, mostly for plugins, which don't have our config.h.
+ */
+
+#ifdef MKDIR_IS_PCBMKDIR
+#error "Don't know how to create a directory on this system."
+#endif
+
+int
+pcb_mkdir (const char *path, int mode)
+{
+  return MKDIR (path, mode);
 }
 
 /* ---------------------------------------------------------------------------
