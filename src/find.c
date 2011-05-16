@@ -157,7 +157,7 @@ RCSID ("$Id$");
 #define	IS_PV_ON_PAD(PV,Pad) \
 	( IsPointInPad((PV)->X, (PV)->Y, MAX((PV)->Thickness/2 +Bloat,0), (Pad)))
 
-#define LENGTH_TO_HUMAN(value) (Settings.grid_units_mm ? ((value) / 100000.0 * 25.4) : ((value) / 100.0))
+#define LENGTH_TO_HUMAN(value) (Settings.grid_units_mm ? COORD_TO_MM(value) : COORD_TO_MIL(value))
 #define LENGTH_DIGITS (Settings.grid_units_mm ? 4 : 2)
 #define LENGTH_UNITS_STRING (Settings.grid_units_mm ? "mm" : "mils")
 
@@ -1935,15 +1935,14 @@ LookupLOConnectionsToArc (ArcTypePtr Arc, Cardinal LayerGroup)
   /* loop over all layers of the group */
   for (entry = 0; entry < PCB->LayerGroups.Number[LayerGroup]; entry++)
     {
-      Cardinal layer, i;
+      Cardinal layer;
+      GList *i;
 
       layer = PCB->LayerGroups.Entries[LayerGroup][entry];
 
       /* handle normal layers */
       if (layer < max_copper_layer)
         {
-          PolygonTypePtr polygon;
-
           info.layer = layer;
           /* add arcs */
           if (setjmp (info.env) == 0)
@@ -1959,12 +1958,14 @@ LookupLOConnectionsToArc (ArcTypePtr Arc, Cardinal LayerGroup)
             return true;
 
           /* now check all polygons */
-          i = 0;
-          polygon = PCB->Data->Layer[layer].Polygon;
-          for (; i < PCB->Data->Layer[layer].PolygonN; i++, polygon++)
-            if (!TEST_FLAG (TheFlag, polygon) && IsArcInPolygon (Arc, polygon)
-                && ADD_POLYGON_TO_LIST (layer, polygon))
-              return true;
+          for (i = PCB->Data->Layer[layer].Polygon;
+               i != NULL; i = g_list_next (i))
+            {
+              PolygonType *polygon = i->data;
+              if (!TEST_FLAG (TheFlag, polygon) && IsArcInPolygon (Arc, polygon)
+                  && ADD_POLYGON_TO_LIST (layer, polygon))
+                return true;
+            }
         }
       else
         {
@@ -2080,8 +2081,6 @@ LookupLOConnectionsToLine (LineTypePtr Line, Cardinal LayerGroup,
       /* handle normal layers */
       if (layer < max_copper_layer)
         {
-          PolygonTypePtr polygon;
-
           info.layer = layer;
           /* add lines */
           if (setjmp (info.env) == 0)
@@ -2098,13 +2097,16 @@ LookupLOConnectionsToLine (LineTypePtr Line, Cardinal LayerGroup,
           /* now check all polygons */
           if (PolysTo)
             {
-              Cardinal i = 0;
-              polygon = PCB->Data->Layer[layer].Polygon;
-              for (; i < PCB->Data->Layer[layer].PolygonN; i++, polygon++)
-                if (!TEST_FLAG
-                    (TheFlag, polygon) && IsLineInPolygon (Line, polygon)
-                    && ADD_POLYGON_TO_LIST (layer, polygon))
-                  return true;
+              GList *i;
+              for (i = PCB->Data->Layer[layer].Polygon;
+                   i != NULL; i = g_list_next (i))
+                {
+                  PolygonType *polygon = i->data;
+                  if (!TEST_FLAG
+                      (TheFlag, polygon) && IsLineInPolygon (Line, polygon)
+                      && ADD_POLYGON_TO_LIST (layer, polygon))
+                    return true;
+                }
             }
         }
       else
@@ -2162,7 +2164,6 @@ static bool
 LOTouchesLine (LineTypePtr Line, Cardinal LayerGroup)
 {
   Cardinal entry;
-  Cardinal i;
   struct lo_info info;
 
 
@@ -2179,7 +2180,7 @@ LOTouchesLine (LineTypePtr Line, Cardinal LayerGroup)
       /* handle normal layers */
       if (layer < max_copper_layer)
         {
-          PolygonTypePtr polygon;
+          GList *i;
 
           /* find the first line that touches coordinates */
 
@@ -2195,12 +2196,14 @@ LOTouchesLine (LineTypePtr Line, Cardinal LayerGroup)
             return (true);
 
           /* now check all polygons */
-          i = 0;
-          polygon = PCB->Data->Layer[layer].Polygon;
-          for (; i < PCB->Data->Layer[layer].PolygonN; i++, polygon++)
-            if (!TEST_FLAG (TheFlag, polygon)
-                && IsLineInPolygon (Line, polygon))
-              return (true);
+          for (i = PCB->Data->Layer[layer].Polygon;
+               i != NULL; i = g_list_next (i))
+            {
+              PolygonType *polygon = i->data;
+              if (!TEST_FLAG (TheFlag, polygon)
+                  && IsLineInPolygon (Line, polygon))
+                return (true);
+            }
         }
       else
         {
@@ -2571,23 +2574,25 @@ LookupLOConnectionsToPolygon (PolygonTypePtr Polygon, Cardinal LayerGroup)
 /* loop over all layers of the group */
   for (entry = 0; entry < PCB->LayerGroups.Number[LayerGroup]; entry++)
     {
-      Cardinal layer, i;
+      Cardinal layer;
 
       layer = PCB->LayerGroups.Entries[LayerGroup][entry];
 
       /* handle normal layers */
       if (layer < max_copper_layer)
         {
-          PolygonTypePtr polygon;
+          GList *i;
 
           /* check all polygons */
-
-          polygon = PCB->Data->Layer[layer].Polygon;
-          for (i = 0; i < PCB->Data->Layer[layer].PolygonN; i++, polygon++)
-            if (!TEST_FLAG (TheFlag, polygon)
-                && IsPolygonInPolygon (polygon, Polygon)
-                && ADD_POLYGON_TO_LIST (layer, polygon))
-              return true;
+          for (i = PCB->Data->Layer[layer].Polygon;
+               i != NULL; i = g_list_next (i))
+            {
+              PolygonType *polygon = i->data;
+              if (!TEST_FLAG (TheFlag, polygon)
+                  && IsPolygonInPolygon (polygon, Polygon)
+                  && ADD_POLYGON_TO_LIST (layer, polygon))
+                return true;
+            }
 
           info.layer = layer;
           /* check all lines */
@@ -2983,7 +2988,7 @@ PrintAndSelectUnusedPinsAndPadsOfElement (ElementTypePtr Element, FILE * FP)
                 CreateQuotedString (&oname, (char *)EMPTY (pin->Name));
                 fprintf (FP, "\t%s\n", oname.Data);
                 SET_FLAG (SELECTEDFLAG, pin);
-                DrawPin (pin, 0);
+                DrawPin (pin);
               }
 
             /* reset found objects for the next pin */
@@ -3027,7 +3032,7 @@ PrintAndSelectUnusedPinsAndPadsOfElement (ElementTypePtr Element, FILE * FP)
             CreateQuotedString (&oname, (char *)EMPTY (pad->Name));
             fprintf (FP, "\t%s\n", oname.Data);
             SET_FLAG (SELECTEDFLAG, pad);
-            DrawPad (pad, 0);
+            DrawPad (pad);
           }
 
         /* reset found objects for the next pin */
@@ -3156,20 +3161,20 @@ DrawNewConnections (void)
           /* draw all new lines */
           position = LineList[layer].DrawLocation;
           for (; position < LineList[layer].Number; position++)
-            DrawLine (LAYER_PTR (layer), LINELIST_ENTRY (layer, position), 0);
+            DrawLine (LAYER_PTR (layer), LINELIST_ENTRY (layer, position));
           LineList[layer].DrawLocation = LineList[layer].Number;
 
           /* draw all new arcs */
           position = ArcList[layer].DrawLocation;
           for (; position < ArcList[layer].Number; position++)
-            DrawArc (LAYER_PTR (layer), ARCLIST_ENTRY (layer, position), 0);
+            DrawArc (LAYER_PTR (layer), ARCLIST_ENTRY (layer, position));
           ArcList[layer].DrawLocation = ArcList[layer].Number;
 
           /* draw all new polygons */
           position = PolygonList[layer].DrawLocation;
           for (; position < PolygonList[layer].Number; position++)
             DrawPolygon
-              (LAYER_PTR (layer), POLYGONLIST_ENTRY (layer, position), 0);
+              (LAYER_PTR (layer), POLYGONLIST_ENTRY (layer, position));
           PolygonList[layer].DrawLocation = PolygonList[layer].Number;
         }
     }
@@ -3181,7 +3186,7 @@ DrawNewConnections (void)
         position = PadList[i].DrawLocation;
 
         for (; position < PadList[i].Number; position++)
-          DrawPad (PADLIST_ENTRY (i, position), 0);
+          DrawPad (PADLIST_ENTRY (i, position));
         PadList[i].DrawLocation = PadList[i].Number;
       }
 
@@ -3195,10 +3200,10 @@ DrawNewConnections (void)
       if (TEST_FLAG (PINFLAG, pv))
         {
           if (PCB->PinOn)
-            DrawPin (pv, 0);
+            DrawPin (pv);
         }
       else if (PCB->ViaOn)
-        DrawVia (pv, 0);
+        DrawVia (pv);
       PVList.DrawLocation++;
     }
   /* draw the new rat-lines */
@@ -3206,7 +3211,7 @@ DrawNewConnections (void)
     {
       position = RatList.DrawLocation;
       for (; position < RatList.Number; position++)
-        DrawRat (RATLIST_ENTRY (position), 0);
+        DrawRat (RATLIST_ENTRY (position));
       RatList.DrawLocation = RatList.Number;
     }
 }
@@ -3258,7 +3263,7 @@ LookupConnectionsToAllElements (FILE * FP)
     gui->beep ();
   ResetConnections (false);
   FreeConnectionLookupMemory ();
-  ClearAndRedrawOutput ();
+  Redraw ();
 }
 
 /*---------------------------------------------------------------------------
@@ -3453,7 +3458,7 @@ ResetFoundPinsViasAndPads (bool AndDraw)
           AddObjectToFlagUndoList (VIA_TYPE, via, via, via);
         CLEAR_FLAG (TheFlag, via);
         if (AndDraw)
-          DrawVia (via, 0);
+          DrawVia (via);
         change = true;
       }
   }
@@ -3468,7 +3473,7 @@ ResetFoundPinsViasAndPads (bool AndDraw)
             AddObjectToFlagUndoList (PIN_TYPE, element, pin, pin);
           CLEAR_FLAG (TheFlag, pin);
           if (AndDraw)
-            DrawPin (pin, 0);
+            DrawPin (pin);
           change = true;
         }
     }
@@ -3481,7 +3486,7 @@ ResetFoundPinsViasAndPads (bool AndDraw)
             AddObjectToFlagUndoList (PAD_TYPE, element, pad, pad);
           CLEAR_FLAG (TheFlag, pad);
           if (AndDraw)
-            DrawPad (pad, 0);
+            DrawPad (pad);
           change = true;
         }
     }
@@ -3509,7 +3514,7 @@ ResetFoundLinesAndPolygons (bool AndDraw)
           AddObjectToFlagUndoList (RATLINE_TYPE, line, line, line);
         CLEAR_FLAG (TheFlag, line);
         if (AndDraw)
-          DrawRat (line, 0);
+          DrawRat (line);
         change = true;
       }
   }
@@ -3522,7 +3527,7 @@ ResetFoundLinesAndPolygons (bool AndDraw)
           AddObjectToFlagUndoList (LINE_TYPE, layer, line, line);
         CLEAR_FLAG (TheFlag, line);
         if (AndDraw)
-          DrawLine (layer, line, 0);
+          DrawLine (layer, line);
         change = true;
       }
   }
@@ -3535,7 +3540,7 @@ ResetFoundLinesAndPolygons (bool AndDraw)
           AddObjectToFlagUndoList (ARC_TYPE, layer, arc, arc);
         CLEAR_FLAG (TheFlag, arc);
         if (AndDraw)
-          DrawArc (layer, arc, 0);
+          DrawArc (layer, arc);
         change = true;
       }
   }
@@ -3548,7 +3553,7 @@ ResetFoundLinesAndPolygons (bool AndDraw)
           AddObjectToFlagUndoList (POLYGON_TYPE, layer, polygon, polygon);
         CLEAR_FLAG (TheFlag, polygon);
         if (AndDraw)
-          DrawPolygon (layer, polygon, 0);
+          DrawPolygon (layer, polygon);
         change = true;
       }
   }
@@ -3858,8 +3863,8 @@ drc_callback (DataTypePtr data, LayerTypePtr layer, PolygonTypePtr polygon,
 doIsBad:
   AddObjectToFlagUndoList (POLYGON_TYPE, layer, polygon, polygon);
   SET_FLAG (FOUNDFLAG, polygon);
-  DrawPolygon (layer, polygon, 0);
-  DrawObject (type, ptr1, ptr2, 0);
+  DrawPolygon (layer, polygon);
+  DrawObject (type, ptr1, ptr2);
   drcerr_count++;
   LocateError (&x, &y);
   BuildObjectList (&object_count, &object_id_list, &object_type_list);
@@ -3985,7 +3990,7 @@ DRCAll (void)
           {
             AddObjectToFlagUndoList (LINE_TYPE, layer, line, line);
             SET_FLAG (TheFlag, line);
-            DrawLine (layer, line, 0);
+            DrawLine (layer, line);
             drcerr_count++;
             SetThing (LINE_TYPE, layer, line, line);
             LocateError (&x, &y);
@@ -4029,7 +4034,7 @@ DRCAll (void)
           {
             AddObjectToFlagUndoList (ARC_TYPE, layer, arc, arc);
             SET_FLAG (TheFlag, arc);
-            DrawArc (layer, arc, 0);
+            DrawArc (layer, arc);
             drcerr_count++;
             SetThing (ARC_TYPE, layer, arc, arc);
             LocateError (&x, &y);
@@ -4074,7 +4079,7 @@ DRCAll (void)
           {
             AddObjectToFlagUndoList (PIN_TYPE, element, pin, pin);
             SET_FLAG (TheFlag, pin);
-            DrawPin (pin, 0);
+            DrawPin (pin);
             drcerr_count++;
             SetThing (PIN_TYPE, element, pin, pin);
             LocateError (&x, &y);
@@ -4108,7 +4113,7 @@ DRCAll (void)
           {
             AddObjectToFlagUndoList (PIN_TYPE, element, pin, pin);
             SET_FLAG (TheFlag, pin);
-            DrawPin (pin, 0);
+            DrawPin (pin);
             drcerr_count++;
             SetThing (PIN_TYPE, element, pin, pin);
             LocateError (&x, &y);
@@ -4151,7 +4156,7 @@ DRCAll (void)
           {
             AddObjectToFlagUndoList (PAD_TYPE, element, pad, pad);
             SET_FLAG (TheFlag, pad);
-            DrawPad (pad, 0);
+            DrawPad (pad);
             drcerr_count++;
             SetThing (PAD_TYPE, element, pad, pad);
             LocateError (&x, &y);
@@ -4196,7 +4201,7 @@ DRCAll (void)
           {
             AddObjectToFlagUndoList (VIA_TYPE, via, via, via);
             SET_FLAG (TheFlag, via);
-            DrawVia (via, 0);
+            DrawVia (via);
             drcerr_count++;
             SetThing (VIA_TYPE, via, via, via);
             LocateError (&x, &y);
@@ -4230,7 +4235,7 @@ DRCAll (void)
           {
             AddObjectToFlagUndoList (VIA_TYPE, via, via, via);
             SET_FLAG (TheFlag, via);
-            DrawVia (via, 0);
+            DrawVia (via);
             drcerr_count++;
             SetThing (VIA_TYPE, via, via, via);
             LocateError (&x, &y);
@@ -4278,7 +4283,7 @@ DRCAll (void)
         if (line->Thickness < PCB->minSlk)
           {
             SET_FLAG (TheFlag, line);
-            DrawLine (layer, line, 0);
+            DrawLine (layer, line);
             drcerr_count++;
             SetThing (LINE_TYPE, layer, line, line);
             LocateError (&x, &y);
@@ -4332,7 +4337,7 @@ DRCAll (void)
             int buflen;
 
             SET_FLAG (TheFlag, element);
-            DrawElement (element, 0);
+            DrawElement (element);
             drcerr_count++;
             SetThing (ELEMENT_TYPE, element, element, element);
             LocateError (&x, &y);

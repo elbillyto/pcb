@@ -52,7 +52,7 @@
 RCSID ("$Id$");
 
 
-static gboolean
+static void
 pinout_zoom_fit (GhidPinoutPreview * pinout, gint zoom)
 {
   pinout->zoom = zoom;
@@ -69,19 +69,12 @@ pinout_zoom_fit (GhidPinoutPreview * pinout, gint zoom)
   pinout->h_pixels = (gint) (pinout->scale *
 			     (pinout->element.BoundingBox.Y2 -
 			      pinout->element.BoundingBox.Y1));
-
-  if (pinout->w_pixels > 3 * Output.Width / 4 ||
-      pinout->h_pixels > 3 * Output.Height / 4)
-    return FALSE;
-  return TRUE;
 }
 
 
 static void
 pinout_set_data (GhidPinoutPreview * pinout, ElementType * element)
 {
-  gint tx, ty, x_min = 0, y_min = 0;
-
   if (element == NULL)
     {
       FreeElementMemory (&pinout->element);
@@ -99,24 +92,12 @@ pinout_set_data (GhidPinoutPreview * pinout, ElementType * element)
   CopyElementLowLevel (NULL, &pinout->element, element, FALSE, 0, 0);
   PIN_LOOP (&pinout->element);
   {
-    tx = abs (pinout->element.Pin[0].X - pin->X);
-    ty = abs (pinout->element.Pin[0].Y - pin->Y);
-    if (x_min == 0 || (tx != 0 && tx < x_min))
-      x_min = tx;
-    if (y_min == 0 || (ty != 0 && ty < y_min))
-      y_min = ty;
     SET_FLAG (DISPLAYNAMEFLAG, pin);
   }
   END_LOOP;
 
   PAD_LOOP (&pinout->element);
   {
-    tx = abs (pinout->element.Pad[0].Point1.X - pad->Point1.X);
-    ty = abs (pinout->element.Pad[0].Point1.Y - pad->Point1.Y);
-    if (x_min == 0 || (tx != 0 && tx < x_min))
-      x_min = tx;
-    if (y_min == 0 || (ty != 0 && ty < y_min))
-      y_min = ty;
     SET_FLAG (DISPLAYNAMEFLAG, pad);
   }
   END_LOOP;
@@ -128,8 +109,7 @@ pinout_set_data (GhidPinoutPreview * pinout, ElementType * element)
 		       Settings.PinoutOffsetY -
 		       pinout->element.BoundingBox.Y1);
 
-  if (!pinout_zoom_fit (pinout, 2))
-    pinout_zoom_fit (pinout, 3);
+  pinout_zoom_fit (pinout, 3);
 
   ELEMENTLINE_LOOP (&pinout->element);
   {

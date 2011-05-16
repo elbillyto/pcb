@@ -102,7 +102,7 @@ unset_found_flags (int AndDraw)
       {
 	AddObjectToFlagUndoList (VIA_TYPE, via, via, via);
 	CLEAR_FLAG (flag, via);
-	DrawVia (via, 0);
+	DrawVia (via);
 	change = true;
       }
   }
@@ -115,7 +115,7 @@ unset_found_flags (int AndDraw)
 	{
 	  AddObjectToFlagUndoList (PIN_TYPE, element, pin, pin);
 	  CLEAR_FLAG (flag, pin);
-	  DrawPin (pin, 0);
+	  DrawPin (pin);
 	  change = true;
 	}
     }
@@ -126,7 +126,7 @@ unset_found_flags (int AndDraw)
 	{
 	  AddObjectToFlagUndoList (PAD_TYPE, element, pad, pad);
 	  CLEAR_FLAG (flag, pad);
-	  DrawPad (pad, 0);
+	  DrawPad (pad);
 	  change = true;
 	}
     }
@@ -139,7 +139,7 @@ unset_found_flags (int AndDraw)
       {
 	AddObjectToFlagUndoList (RATLINE_TYPE, line, line, line);
 	CLEAR_FLAG (flag, line);
-	DrawRat (line, 0);
+	DrawRat (line);
 	change = true;
       }
   }
@@ -150,7 +150,7 @@ unset_found_flags (int AndDraw)
       {
 	AddObjectToFlagUndoList (LINE_TYPE, layer, line, line);
 	CLEAR_FLAG (flag, line);
-	DrawLine (layer, line, 0);
+	DrawLine (layer, line);
 	change = true;
       }
   }
@@ -161,7 +161,7 @@ unset_found_flags (int AndDraw)
       {
 	AddObjectToFlagUndoList (ARC_TYPE, layer, arc, arc);
 	CLEAR_FLAG (flag, arc);
-	DrawArc (layer, arc, 0);
+	DrawArc (layer, arc);
 	change = true;
       }
   }
@@ -172,7 +172,7 @@ unset_found_flags (int AndDraw)
       {
 	AddObjectToFlagUndoList (POLYGON_TYPE, layer, polygon, polygon);
 	CLEAR_FLAG (flag, polygon);
-	DrawPolygon (layer, polygon, 0);
+	DrawPolygon (layer, polygon);
 	change = true;
       }
   }
@@ -238,7 +238,7 @@ selection_changed_cb (GtkTreeSelection *selection, gpointer user_data)
 	case POLYGON_TYPE:
 	  ChangeGroupVisibility (GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1), true, true);
 	}
-      DrawObject (object_type, ptr1, ptr2, 0);
+      DrawObject (object_type, ptr1, ptr2);
     }
   SetChangedFlag (true);
   IncrementUndoSerialNumber ();
@@ -961,9 +961,6 @@ ghid_drc_window_show (gboolean raise)
     gtk_widget_set_uposition (GTK_WIDGET (drc_window), 10, 10);
   gtk_widget_show_all (drc_window);
 }
-
-#define UNIT1(value) (Settings.grid_units_mm ? ((value) / 100000.0 * 25.4) : ((value) / 100.0))
-#define UNIT(value) UNIT1(value) , (Settings.grid_units_mm ? "mm" : "mils")
 
 void ghid_drc_window_append_violation (DrcViolationType *violation)
 {

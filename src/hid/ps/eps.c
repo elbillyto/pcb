@@ -16,6 +16,7 @@
 
 #include "hid.h"
 #include "../hidint.h"
+#include "hid/common/hidnogui.h"
 #include "hid/common/draw_helpers.h"
 #include "../ps/ps.h"
 #include "hid/common/hidinit.h"
@@ -42,8 +43,6 @@ static void eps_set_color (hidGC gc, const char *name);
 static void eps_set_line_cap (hidGC gc, EndCapStyle style);
 static void eps_set_line_width (hidGC gc, int width);
 static void eps_set_draw_xor (hidGC gc, int _xor);
-static void eps_set_draw_faded (hidGC gc, int faded);
-static void eps_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2);
 static void eps_draw_rect (hidGC gc, int x1, int y1, int x2, int y2);
 static void eps_draw_line (hidGC gc, int x1, int y1, int x2, int y2);
 static void eps_draw_arc (hidGC gc, int cx, int cy, int width, int height, int start_angle, int delta_angle);
@@ -54,60 +53,6 @@ static void eps_calibrate (double xval, double yval);
 static void eps_set_crosshair (int x, int y, int action);
 /*----------------------------------------------------------------------------*/
 
-static HID eps_hid = {
-  sizeof (HID),
-  "eps",
-  "Encapsulated Postscript",
-  0, 0, 1, 0, 1, 0,
-  eps_get_export_options,
-  eps_do_export,
-  eps_parse_arguments,
-  0 /* eps_invalidate_lr */ ,
-  0 /* eps_invalidate_all */ ,
-  eps_set_layer,
-  eps_make_gc,
-  eps_destroy_gc,
-  eps_use_mask,
-  eps_set_color,
-  eps_set_line_cap,
-  eps_set_line_width,
-  eps_set_draw_xor,
-  eps_set_draw_faded,
-  eps_set_line_cap_angle,
-  eps_draw_line,
-  eps_draw_arc,
-  eps_draw_rect,
-  eps_fill_circle,
-  eps_fill_polygon,
-  common_fill_pcb_polygon,
-  0 /* eps_thindraw_pcb_polygon */ ,
-  eps_fill_rect,
-  eps_calibrate,
-  0 /* eps_shift_is_pressed */ ,
-  0 /* eps_control_is_pressed */ ,
-  0 /* eps_mod1_is_pressed */ ,
-  0 /* eps_get_coords */ ,
-  eps_set_crosshair,
-  0 /* eps_add_timer */ ,
-  0 /* eps_stop_timer */ ,
-  0 /* eps_watch_file */ ,
-  0 /* eps_unwatch_file */ ,
-  0 /* eps_add_block_hook */ ,
-  0 /* eps_stop_block_hook */ ,
-  0 /* eps_log */ ,
-  0 /* eps_logv */ ,
-  0 /* eps_confirm_dialog */ ,
-  0 /* eps_close_confirm_dialog */ ,
-  0 /* eps_report_dialog */ ,
-  0 /* eps_prompt_for */ ,
-  0 /* eps_attribute_dialog */ ,
-  0 /* eps_show_item */ ,
-  0 /* eps_beep */ ,
-  0 /* eps_progress */ ,
-  0 /* eps_drc_gui */ ,
-  0 /* eps_edit_attributes */
-};
-
 typedef struct hid_gc_struct
 {
   EndCapStyle cap;
@@ -115,6 +60,8 @@ typedef struct hid_gc_struct
   int color;
   int erase;
 } hid_gc_struct;
+
+static HID eps_hid;
 
 static FILE *f = 0;
 static int linewidth = -1;
@@ -283,7 +230,7 @@ eps_hid_export_to_file (FILE * the_file, HID_Attr_Val * options)
 
   in_mono = options[HA_mono].int_value;
 
-#define pcb2em(x) (int)((x) / 100000.0 * 72.0 * options[HA_scale].real_value + 1)
+#define pcb2em(x) (int)(COORD_TO_INCH(x) * 72.0 * options[HA_scale].real_value + 1)
   fprintf (f, "%%%%BoundingBox: 0 0 %d %d\n",
 	   pcb2em (bounds->X2 - bounds->X1),
 	   pcb2em (bounds->Y2 - bounds->Y1));
@@ -539,18 +486,6 @@ eps_set_draw_xor (hidGC gc, int xor_)
 }
 
 static void
-eps_set_draw_faded (hidGC gc, int faded)
-{
-  ;
-}
-
-static void
-eps_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2)
-{
-  CRASH;
-}
-
-static void
 use_gc (hidGC gc)
 {
   if (linewidth != gc->width)
@@ -689,10 +624,39 @@ eps_set_crosshair (int x, int y, int action)
 {
 }
 
-
 void
 hid_eps_init ()
 {
-  apply_default_hid (&eps_hid, 0);
+  memset (&eps_hid, 0, sizeof (HID));
+
+  common_nogui_init (&eps_hid);
+  common_draw_helpers_init (&eps_hid);
+
+  eps_hid.struct_size         = sizeof (HID);
+  eps_hid.name                = "eps";
+  eps_hid.description         = "Encapsulated Postscript";
+  eps_hid.exporter            = 1;
+  eps_hid.poly_after          = 1;
+
+  eps_hid.get_export_options  = eps_get_export_options;
+  eps_hid.do_export           = eps_do_export;
+  eps_hid.parse_arguments     = eps_parse_arguments;
+  eps_hid.set_layer           = eps_set_layer;
+  eps_hid.make_gc             = eps_make_gc;
+  eps_hid.destroy_gc          = eps_destroy_gc;
+  eps_hid.use_mask            = eps_use_mask;
+  eps_hid.set_color           = eps_set_color;
+  eps_hid.set_line_cap        = eps_set_line_cap;
+  eps_hid.set_line_width      = eps_set_line_width;
+  eps_hid.set_draw_xor        = eps_set_draw_xor;
+  eps_hid.draw_line           = eps_draw_line;
+  eps_hid.draw_arc            = eps_draw_arc;
+  eps_hid.draw_rect           = eps_draw_rect;
+  eps_hid.fill_circle         = eps_fill_circle;
+  eps_hid.fill_polygon        = eps_fill_polygon;
+  eps_hid.fill_rect           = eps_fill_rect;
+  eps_hid.calibrate           = eps_calibrate;
+  eps_hid.set_crosshair       = eps_set_crosshair;
+
   hid_register_hid (&eps_hid);
 }

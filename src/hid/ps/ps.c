@@ -19,6 +19,7 @@
 
 #include "hid.h"
 #include "../hidint.h"
+#include "hid/common/hidnogui.h"
 #include "hid/common/draw_helpers.h"
 #include "../ps/ps.h"
 #include "../../print.h"
@@ -110,44 +111,44 @@ typedef struct
  * {A,B,C,D,E}-Size here are the ANSI sizes and not the architectural sizes.
  */
 
-#define MARGINX 50000
-#define MARGINY 50000
+#define MARGINX MIL_TO_COORD(500)
+#define MARGINY MIL_TO_COORD(500)
 
 static MediaType media_data[] = {
-  {"A0", 3311023, 4681102, MARGINX, MARGINY},
-  {"A1", 2338582, 3311023, MARGINX, MARGINY},
-  {"A2", 1653543, 2338582, MARGINX, MARGINY},
-  {"A3", 1169291, 1653543, MARGINX, MARGINY},
-  {"A4", 826771, 1169291, MARGINX, MARGINY},
-  {"A5", 582677, 826771, MARGINX, MARGINY},
-  {"A6", 413385, 582677, MARGINX, MARGINY},
-  {"A7", 291338, 413385, MARGINX, MARGINY},
-  {"A8", 204724, 291338, MARGINX, MARGINY},
-  {"A9", 145669, 204724, MARGINX, MARGINY},
-  {"A10", 102362, 145669, MARGINX, MARGINY},
-  {"B0", 3937007, 5566929, MARGINX, MARGINY},
-  {"B1", 2783464, 3937007, MARGINX, MARGINY},
-  {"B2", 1968503, 2783464, MARGINX, MARGINY},
-  {"B3", 1389763, 1968503, MARGINX, MARGINY},
-  {"B4", 984251, 1389763, MARGINX, MARGINY},
-  {"B5", 692913, 984251, MARGINX, MARGINY},
-  {"B6", 492125, 692913, MARGINX, MARGINY},
-  {"B7", 346456, 492125, MARGINX, MARGINY},
-  {"B8", 244094, 346456, MARGINX, MARGINY},
-  {"B9", 173228, 244094, MARGINX, MARGINY},
-  {"B10", 122047, 173228, MARGINX, MARGINY},
-  {"Letter", 850000, 1100000, MARGINX, MARGINY},
-  {"11x17", 1100000, 1700000, MARGINX, MARGINY},
-  {"Ledger", 1700000, 1100000, MARGINX, MARGINY},
-  {"Legal", 850000, 1400000, MARGINX, MARGINY},
-  {"Executive", 750000, 1000000, MARGINX, MARGINY},
-  {"A-size",  850000, 1100000, MARGINX, MARGINY},
-  {"B-size", 1100000, 1700000, MARGINX, MARGINY},
-  {"C-size", 1700000, 2200000, MARGINX, MARGINY},
-  {"D-size", 2200000, 3400000, MARGINX, MARGINY},
-  {"E-size", 3400000, 4400000, MARGINX, MARGINY},
-  {"US-Business_Card", 350000, 200000, 0, 0},
-  {"Intl-Business_Card", 337500, 212500, 0, 0}
+  {"A0", MM_TO_COORD(841), MM_TO_COORD(1189), MARGINX, MARGINY},
+  {"A1", MM_TO_COORD(594), MM_TO_COORD(841), MARGINX, MARGINY},
+  {"A2", MM_TO_COORD(420), MM_TO_COORD(594), MARGINX, MARGINY},
+  {"A3", MM_TO_COORD(297), MM_TO_COORD(420), MARGINX, MARGINY},
+  {"A4", MM_TO_COORD(210), MM_TO_COORD(297), MARGINX, MARGINY},
+  {"A5", MM_TO_COORD(148), MM_TO_COORD(210), MARGINX, MARGINY},
+  {"A6", MM_TO_COORD(105), MM_TO_COORD(148), MARGINX, MARGINY},
+  {"A7", MM_TO_COORD(74), MM_TO_COORD(105), MARGINX, MARGINY},
+  {"A8", MM_TO_COORD(52), MM_TO_COORD(74), MARGINX, MARGINY},
+  {"A9", MM_TO_COORD(37), MM_TO_COORD(52), MARGINX, MARGINY},
+  {"A10", MM_TO_COORD(26), MM_TO_COORD(37), MARGINX, MARGINY},
+  {"B0", MM_TO_COORD(1000), MM_TO_COORD(1414), MARGINX, MARGINY},
+  {"B1", MM_TO_COORD(707), MM_TO_COORD(1000), MARGINX, MARGINY},
+  {"B2", MM_TO_COORD(500), MM_TO_COORD(707), MARGINX, MARGINY},
+  {"B3", MM_TO_COORD(353), MM_TO_COORD(500), MARGINX, MARGINY},
+  {"B4", MM_TO_COORD(250), MM_TO_COORD(353), MARGINX, MARGINY},
+  {"B5", MM_TO_COORD(176), MM_TO_COORD(250), MARGINX, MARGINY},
+  {"B6", MM_TO_COORD(125), MM_TO_COORD(176), MARGINX, MARGINY},
+  {"B7", MM_TO_COORD(88), MM_TO_COORD(125), MARGINX, MARGINY},
+  {"B8", MM_TO_COORD(62), MM_TO_COORD(88), MARGINX, MARGINY},
+  {"B9", MM_TO_COORD(44), MM_TO_COORD(62), MARGINX, MARGINY},
+  {"B10", MM_TO_COORD(31), MM_TO_COORD(44), MARGINX, MARGINY},
+  {"Letter", INCH_TO_COORD(8.5), INCH_TO_COORD(11), MARGINX, MARGINY},
+  {"11x17", INCH_TO_COORD(11), INCH_TO_COORD(17), MARGINX, MARGINY},
+  {"Ledger", INCH_TO_COORD(17), INCH_TO_COORD(11), MARGINX, MARGINY},
+  {"Legal", INCH_TO_COORD(8.5), INCH_TO_COORD(14), MARGINX, MARGINY},
+  {"Executive", INCH_TO_COORD(7.5), INCH_TO_COORD(10), MARGINX, MARGINY},
+  {"A-size",  INCH_TO_COORD(8.5), INCH_TO_COORD(11), MARGINX, MARGINY},
+  {"B-size", INCH_TO_COORD(11), INCH_TO_COORD(17), MARGINX, MARGINY},
+  {"C-size", INCH_TO_COORD(17), INCH_TO_COORD(22), MARGINX, MARGINY},
+  {"D-size", INCH_TO_COORD(22), INCH_TO_COORD(34), MARGINX, MARGINY},
+  {"E-size", INCH_TO_COORD(34), INCH_TO_COORD(44), MARGINX, MARGINY},
+  {"US-Business_Card", INCH_TO_COORD(3.5), INCH_TO_COORD(2.0), 0, 0},
+  {"Intl-Business_Card", INCH_TO_COORD(3.375), INCH_TO_COORD(2.125), 0, 0}
 };
 
 #undef MARGINX
@@ -349,8 +350,8 @@ ps_start_file (FILE *f)
    */
   fprintf (f, "%%%%DocumentMedia: %s %g %g 0 \"\" \"\"\n",
 	   media_data[media].name,
-	   media_data[media].Width * 72.0 / 100000.0,
-	   media_data[media].Height * 72.0 / 100000.0);
+	   COORD_TO_INCH(media_data[media].Width) * 72.0,
+	   COORD_TO_INCH(media_data[media].Height) * 72.0);
   fprintf (f, "%%%%DocumentPaperSizes: %s\n",
 	   media_data[media].name);
 
@@ -615,8 +616,8 @@ corner (int x, int y, int dx, int dy)
   int len = (PCB->MaxWidth + PCB->MaxHeight) / 10;
   int len2 = (PCB->MaxWidth + PCB->MaxHeight) / 50;
 #else
-  int len = 200000;
-  int len2 = 20000;
+  int len = MIL_TO_COORD(2000);
+  int len2 = MIL_TO_COORD(200);
 #endif
   int thick = 0;
   /*
@@ -790,7 +791,7 @@ ps_set_layer (const char *name, int group, int empty)
        * If users don't want to make smaller boards, or use fewer drill
        * sizes, they can always ignore this sheet. */
       if (SL_TYPE (idx) == SL_FAB) {
-        int natural = (int) ((boffset - 0.5) * 100000) - PCB->MaxHeight / 2;
+        int natural = (int) ((boffset - 0.5) * INCH_TO_COORD(1)) - PCB->MaxHeight / 2;
 	int needed  = PrintFab_overhang();
         fprintf (f, "%% PrintFab overhang natural %d, needed %d\n", natural, needed);
 	if (needed > natural)
@@ -840,7 +841,7 @@ ps_set_layer (const char *name, int group, int empty)
       fprintf (f, "/a { gsave setlinewidth translate scale 0 0 1 5 3 roll arc stroke grestore} bind def\n");
       if (drill_helper)
 	fprintf (f,
-		 "/dh { gsave %d setlinewidth 0 gray %d 0 360 arc stroke grestore} bind def\n",
+		 "/dh { gsave %f setlinewidth 0 gray %f 0 360 arc stroke grestore} bind def\n",
 		 MIN_PINORVIAHOLE, MIN_PINORVIAHOLE * 3 / 2);
     }
 #if 0
@@ -936,12 +937,6 @@ static void
 ps_set_draw_faded (hidGC gc, int faded)
 {
   gc->faded = faded;
-}
-
-static void
-ps_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2)
-{
-  CRASH;
 }
 
 static void
@@ -1340,67 +1335,50 @@ ps_set_crosshair (int x, int y, int action)
 {
 }
 
-HID ps_hid = {
-  sizeof (HID),
-  "ps",
-  "Postscript export.",
-  0, 0, 1, 1, 0, 0,
-  ps_get_export_options,
-  ps_do_export,
-  ps_parse_arguments,
-  0 /* ps_invalidate_lr */ ,
-  0 /* ps_invalidate_all */ ,
-  ps_set_layer,
-  ps_make_gc,
-  ps_destroy_gc,
-  ps_use_mask,
-  ps_set_color,
-  ps_set_line_cap,
-  ps_set_line_width,
-  ps_set_draw_xor,
-  ps_set_draw_faded,
-  ps_set_line_cap_angle,
-  ps_draw_line,
-  ps_draw_arc,
-  ps_draw_rect,
-  ps_fill_circle,
-  ps_fill_polygon,
-  ps_fill_pcb_polygon,
-  0 /* ps_thindraw_pcb_polygon */,
-  ps_fill_rect,
-  ps_calibrate,
-  0 /* ps_shift_is_pressed */ ,
-  0 /* ps_control_is_pressed */ ,
-  0 /* ps_mod1_is_pressed */ ,
-  0 /* ps_get_coords */ ,
-  ps_set_crosshair,
-  0 /* ps_add_timer */ ,
-  0 /* ps_stop_timer */ ,
-  0 /* ps_watch_file */ ,
-  0 /* ps_unwatch_file */ ,
-  0 /* ps_add_block_hook */ ,
-  0 /* ps_stop_block_hook */ ,
-  0 /* ps_log */ ,
-  0 /* ps_logv */ ,
-  0 /* ps_confirm_dialog */ ,
-  0 /* ps_close_confirm_dialog */ ,
-  0 /* ps_report_dialog */ ,
-  0 /* ps_prompt_for */ ,
-  0 /* ps_fileselect */ ,
-  0 /* ps_attribute_dialog */ ,
-  0 /* ps_show_item */ ,
-  0 /* ps_beep */ ,
-  0 /* ps_progress */ ,
-  0 /* ps_drc_gui */ ,
-  0 /* ps_edit_attributes */
-};
-
 #include "dolists.h"
+
+HID ps_hid;
+
+void ps_ps_init (HID *hid)
+{
+  hid->get_export_options = ps_get_export_options;
+  hid->do_export          = ps_do_export;
+  hid->parse_arguments    = ps_parse_arguments;
+  hid->set_layer          = ps_set_layer;
+  hid->make_gc            = ps_make_gc;
+  hid->destroy_gc         = ps_destroy_gc;
+  hid->use_mask           = ps_use_mask;
+  hid->set_color          = ps_set_color;
+  hid->set_line_cap       = ps_set_line_cap;
+  hid->set_line_width     = ps_set_line_width;
+  hid->set_draw_xor       = ps_set_draw_xor;
+  hid->set_draw_faded     = ps_set_draw_faded;
+  hid->draw_line          = ps_draw_line;
+  hid->draw_arc           = ps_draw_arc;
+  hid->draw_rect          = ps_draw_rect;
+  hid->fill_circle        = ps_fill_circle;
+  hid->fill_polygon       = ps_fill_polygon;
+  hid->fill_pcb_polygon   = ps_fill_pcb_polygon;
+  hid->fill_rect          = ps_fill_rect;
+  hid->calibrate          = ps_calibrate;
+  hid->set_crosshair      = ps_set_crosshair;
+}
 
 void
 hid_ps_init ()
 {
-  apply_default_hid (&ps_hid, 0);
+  memset (&ps_hid, 0, sizeof (HID));
+
+  common_nogui_init (&ps_hid);
+  common_draw_helpers_init (&ps_hid);
+  ps_ps_init (&ps_hid);
+
+  ps_hid.struct_size        = sizeof (HID);
+  ps_hid.name               = "ps";
+  ps_hid.description        = "Postscript export.";
+  ps_hid.exporter           = 1;
+  ps_hid.poly_before        = 1;
+
   hid_register_hid (&ps_hid);
 
   hid_eps_init ();

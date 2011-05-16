@@ -549,14 +549,18 @@ FinishStroke (void)
 	    LocationType x = (StrokeBox.X1 + StrokeBox.X2) / 2;
 	    LocationType y = (StrokeBox.Y1 + StrokeBox.Y2) / 2;
 	    int z;
+	    /* XXX: PCB->MaxWidth and PCB->MaxHeight may be the wrong
+	     *      divisors below. The old code WAS broken, but this
+             *      replacement has not been tested for correctness.
+	     */
 	    z =
 	      1 +
-	      log (fabs (StrokeBox.X2 - StrokeBox.X1) / Output.Width) /
+	      log (fabs (StrokeBox.X2 - StrokeBox.X1) / PCB->MaxWidth) /
 	      log (2.0);
 	    z =
 	      MAX (z,
 		   1 +
-		   log (fabs (StrokeBox.Y2 - StrokeBox.Y1) / Output.Height) /
+		   log (fabs (StrokeBox.Y2 - StrokeBox.Y1) / PCB->MaxHeight) /
 		   log (2.0));
 	    SetZoom (z);
 
@@ -586,7 +590,7 @@ ClearWarnings ()
     if (TEST_FLAG (WARNFLAG, pin))
       {
 	CLEAR_FLAG (WARNFLAG, pin);
-	DrawPin (pin, 0);
+	DrawPin (pin);
       }
   }
   ENDALL_LOOP;
@@ -595,7 +599,7 @@ ClearWarnings ()
     if (TEST_FLAG (WARNFLAG, pad))
       {
 	CLEAR_FLAG (WARNFLAG, pad);
-	DrawPad (pad, 0);
+	DrawPad (pad);
       }
   }
   ENDALL_LOOP;
@@ -607,7 +611,7 @@ click_cb (hidval hv)
 {
   if (Note.Click)
     {
-      HideCrosshair ();
+      notify_crosshair_change (false);
       Note.Click = false;
       if (Note.Moving && !gui->shift_is_pressed ())
 	{
@@ -650,7 +654,7 @@ click_cb (hidval hv)
 	  Crosshair.AttachedBox.Point1.X = Note.X;
 	  Crosshair.AttachedBox.Point1.Y = Note.Y;
 	}
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
     }
 }
 
@@ -891,7 +895,7 @@ NotifyLine (void)
 	  type = SearchScreen (Crosshair.X, Crosshair.Y,
 			       PIN_TYPE | PAD_TYPE | VIA_TYPE, &ptr1, &ptr2,
 			       &ptr3);
-	  LookupConnection (Crosshair.X, Crosshair.Y, true, TO_PCB (1),
+	  LookupConnection (Crosshair.X, Crosshair.Y, true, 1,
 			    FOUNDFLAG);
 	}
       if (type == PIN_TYPE || type == VIA_TYPE)
@@ -945,7 +949,7 @@ NotifyLine (void)
 static void
 NotifyBlock (void)
 {
-  HideCrosshair ();
+  notify_crosshair_change (false);
   switch (Crosshair.AttachedBox.State)
     {
     case STATE_FIRST:		/* setup first point */
@@ -960,7 +964,7 @@ NotifyBlock (void)
       Crosshair.AttachedBox.State = STATE_THIRD;
       break;
     }
-  RestoreCrosshair ();
+  notify_crosshair_change (true);
 }
 
 
@@ -1034,7 +1038,7 @@ NotifyMode (void)
 	    if (gui->shift_is_pressed ())
 	      ChangeObjectThermal (VIA_TYPE, via, via, via, PCB->ThermStyle);
 	    IncrementUndoSerialNumber ();
-	    DrawVia (via, 0);
+	    DrawVia (via);
 	    Draw ();
 	  }
 	break;
@@ -1118,7 +1122,7 @@ NotifyMode (void)
 		  AddObjectToCreateUndoList (ARC_TYPE, CURRENT, arc, arc);
 		  IncrementUndoSerialNumber ();
 		  addedLines++;
-		  DrawArc (CURRENT, arc, 0);
+		  DrawArc (CURRENT, arc);
 		  Draw ();
 		  Crosshair.AttachedBox.State = STATE_THIRD;
 		}
@@ -1151,7 +1155,7 @@ NotifyMode (void)
 	    /* always re-draw it since I'm too lazy
 	     * to tell if a selected flag changed
 	     */
-	    DrawElement (element, 0);
+	    DrawElement (element);
 	    Draw ();
 	    hid_actionl ("Report", "Object", NULL);
 	  }
@@ -1164,7 +1168,7 @@ NotifyMode (void)
 	      {
 		/* this is not un-doable since LOCK isn't */
 		CLEAR_FLAG (SELECTEDFLAG, thing);
-		DrawObject (type, ptr1, ptr2, 0);
+		DrawObject (type, ptr1, ptr2);
 		Draw ();
 	      }
 	    hid_actionl ("Report", "Object", NULL);
@@ -1222,7 +1226,7 @@ NotifyMode (void)
 	      addedLines++;
 	      AddObjectToCreateUndoList (RATLINE_TYPE, line, line, line);
 	      IncrementUndoSerialNumber ();
-	      DrawRat (line, 0);
+	      DrawRat (line);
 	      Crosshair.AttachedLine.Point1.X =
 		Crosshair.AttachedLine.Point2.X;
 	      Crosshair.AttachedLine.Point1.Y =
@@ -1275,7 +1279,7 @@ NotifyMode (void)
 
 	      addedLines++;
 	      AddObjectToCreateUndoList (LINE_TYPE, CURRENT, line, line);
-	      DrawLine (CURRENT, line, 0);
+	      DrawLine (CURRENT, line);
 	      /* place a via if vias are visible, the layer is
 	         in a new group since the last line and there
 	         isn't a pin already here */
@@ -1296,7 +1300,7 @@ NotifyMode (void)
 				    NoFlags ())) != NULL)
 		{
 		  AddObjectToCreateUndoList (VIA_TYPE, via, via, via);
-		  DrawVia (via, 0);
+		  DrawVia (via);
 		}
 	      /* copy the coordinates */
 	      Crosshair.AttachedLine.Point1.X =
@@ -1327,7 +1331,7 @@ NotifyMode (void)
 	      addedLines++;
 	      AddObjectToCreateUndoList (LINE_TYPE, CURRENT, line, line);
 	      IncrementUndoSerialNumber ();
-	      DrawLine (CURRENT, line, 0);
+	      DrawLine (CURRENT, line);
 	      /* move to new start point */
 	      Crosshair.AttachedLine.Point1.X = Note.X;
 	      Crosshair.AttachedLine.Point1.Y = Note.Y;
@@ -1374,7 +1378,7 @@ NotifyMode (void)
 	      AddObjectToCreateUndoList (POLYGON_TYPE, CURRENT,
 					 polygon, polygon);
 	      IncrementUndoSerialNumber ();
-	      DrawPolygon (CURRENT, polygon, 0);
+	      DrawPolygon (CURRENT, polygon);
 	      Draw ();
 	    }
 
@@ -1403,7 +1407,7 @@ NotifyMode (void)
 		  {
 		    AddObjectToCreateUndoList (TEXT_TYPE, CURRENT, text, text);
 		    IncrementUndoSerialNumber ();
-		    DrawText (CURRENT, text, 0);
+		    DrawText (CURRENT, text);
 		    Draw ();
 		  }
 		}
@@ -1594,7 +1598,7 @@ NotifyMode (void)
 		    r_insert_entry (PCB->Data->name_tree[i],
 				    (BoxType *) & (e->Name[i]), 0);
 		    if (i == save_n)
-		      DrawElementName (e, 0);
+		      DrawElementName (e);
 		  }
 	      }
 	  }
@@ -1857,15 +1861,15 @@ ActionDRCheck (int argc, char **argv, int x, int y)
 
   if (gui->drc_gui == NULL || gui->drc_gui->log_drc_overview)
     {
-      Message (_("Rules are minspace %d.%02d, minoverlap %d.%d "
-		 "minwidth %d.%02d, minsilk %d.%02d\n"
-		 "min drill %d.%02d, min annular ring %d.%02d\n"),
-	       (PCB->Bloat + 1) / 100, (PCB->Bloat + 1) % 100,
-	       PCB->Shrink / 100, PCB->Shrink % 100,
-	       PCB->minWid / 100, PCB->minWid % 100,
-	       PCB->minSlk / 100, PCB->minSlk % 100,
-	       PCB->minDrill / 100, PCB->minDrill % 100,
-	       PCB->minRing / 100, PCB->minRing % 100);
+      Message (_("Rules are minspace %.2f, minoverlap %.2f "
+		 "minwidth %.2f, minsilk %.2f\n"
+		 "min drill %.2f, min annular ring %.2f\n"),
+	       COORD_TO_MIL(PCB->Bloat + 1),
+	       COORD_TO_MIL(PCB->Shrink),
+	       COORD_TO_MIL(PCB->minWid),
+	       COORD_TO_MIL(PCB->minSlk),
+	       COORD_TO_MIL(PCB->minDrill),
+	       COORD_TO_MIL(PCB->minRing));
     }
   count = DRCAll ();
   if (gui->drc_gui == NULL || gui->drc_gui->log_drc_overview)
@@ -2122,11 +2126,11 @@ ActionMovePointer (char *deltax, char *deltay)
   /* restore crosshair for erasure */
   Crosshair.X = x;
   Crosshair.Y = y;
-  HideCrosshair ();
+  notify_crosshair_change (false);
   MoveCrosshairRelative (TO_SCREEN_SIGN_X (dx), TO_SCREEN_SIGN_Y (dy));
   /* update object position and cursor location */
   AdjustAttachedObjects ();
-  RestoreCrosshair ();
+  notify_crosshair_change (true);
 }
 
 /* ---------------------------------------------------------------------------
@@ -2141,9 +2145,9 @@ EventMoveCrosshair (int ev_x, int ev_y)
 #ifdef HAVE_LIBSTROKE
   if (mid_stroke)
     {
-      StrokeBox.X2 = TO_PCB_X (ev_x);
-      StrokeBox.Y2 = TO_PCB_Y (ev_y);
-      stroke_record (Event->x, ev_y);
+      StrokeBox.X2 = ev_x;
+      StrokeBox.Y2 = ev_y;
+      stroke_record (ev_x, ev_y);
       return;
     }
 #endif /* HAVE_LIBSTROKE */
@@ -2152,10 +2156,9 @@ EventMoveCrosshair (int ev_x, int ev_y)
     {
       if (MoveCrosshairAbsolute (ev_x, ev_y))
 	{
-
 	  /* update object position and cursor location */
 	  AdjustAttachedObjects ();
-	  RestoreCrosshair ();
+	  notify_crosshair_change (true);
 	}
     }
   else
@@ -2394,7 +2397,7 @@ from.
 
 %end-doc */
 
-#define GAP 10000
+#define GAP MIL_TO_COORD(100)
 
 static int
 ActionDisperseElements (int argc, char **argv, int x, int y)
@@ -2496,7 +2499,7 @@ ActionDisperseElements (int argc, char **argv, int x, int y)
   /* done with our action so increment the undo # */
   IncrementUndoSerialNumber ();
 
-  ClearAndRedrawOutput ();
+  Redraw ();
   SetChangedFlag (true);
 
   return 0;
@@ -2678,22 +2681,11 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
       switch (id = GetFunctionID (function))
 	{
 
-	  /* redraw layout with clearing the background */
+	  /* redraw layout */
 	case F_ClearAndRedraw:
-	  gui->invalidate_all();
-	  break;
-
-	  /* redraw layout without clearing the background */
 	case F_Redraw:
-	  {
-	    BoxType area;
-	    area.X1 = 0;
-	    area.Y1 = 0;
-	    area.X2 = Output.Width;
-	    area.Y2 = Output.Height;
-	    RedrawOutput (&area);
-	    break;
-	  }
+	  Redraw ();
+	  break;
 
 	  /* change the displayed name of elements */
 	case F_Value:
@@ -2718,7 +2710,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	    }
 	  ELEMENT_LOOP (PCB->Data);
 	  {
-	    DrawElementName (element, 0);
+	    DrawElementName (element);
 	  }
 	  END_LOOP;
 	  Draw ();
@@ -2731,7 +2723,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  break;
 
 	case F_CycleClip:
-	  HideCrosshair ();
+	  notify_crosshair_change (false);
 	  if TEST_FLAG
 	    (ALLDIRECTIONFLAG, PCB)
 	    {
@@ -2741,27 +2733,27 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  else
 	    PCB->Clipping = (PCB->Clipping + 1) % 3;
 	  AdjustAttachedObjects ();
-	  RestoreCrosshair ();
+	  notify_crosshair_change (true);
 	  break;
 
 	case F_CycleCrosshair:
-	  HideCrosshair ();
+	  notify_crosshair_change (false);
 	  Crosshair.shape = CrosshairShapeIncrement(Crosshair.shape);
 	  if (Crosshair_Shapes_Number == Crosshair.shape)
 	    Crosshair.shape = Basic_Crosshair_Shape;
-	  RestoreCrosshair ();
+	  notify_crosshair_change (true);
 	  break;
 
 	case F_ToggleRubberBandMode:
-	  HideCrosshair ();
+	  notify_crosshair_change (false);
 	  TOGGLE_FLAG (RUBBERBANDFLAG, PCB);
-	  RestoreCrosshair ();
+	  notify_crosshair_change (true);
 	  break;
 
 	case F_ToggleStartDirection:
-	  HideCrosshair ();
+	  notify_crosshair_change (false);
 	  TOGGLE_FLAG (SWAPSTARTDIRFLAG, PCB);
-	  RestoreCrosshair ();
+	  notify_crosshair_change (true);
 	  break;
 
 	case F_ToggleUniqueNames:
@@ -2769,9 +2761,9 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  break;
 
 	case F_ToggleSnapPin:
-	  HideCrosshair ();
+	  notify_crosshair_change (false);
 	  TOGGLE_FLAG (SNAPPINFLAG, PCB);
-	  RestoreCrosshair ();
+	  notify_crosshair_change (true);
 	  break;
 
 	case F_ToggleLocalRef:
@@ -2780,12 +2772,12 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 
 	case F_ToggleThindraw:
 	  TOGGLE_FLAG (THINDRAWFLAG, PCB);
-	  ClearAndRedrawOutput ();
+	  Redraw ();
 	  break;
 
 	case F_ToggleThindrawPoly:
 	  TOGGLE_FLAG (THINDRAWPOLYFLAG, PCB);
-	  ClearAndRedrawOutput ();
+	  Redraw ();
 	  break;
 
 	case F_ToggleLockNames:
@@ -2800,7 +2792,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 
 	case F_ToggleHideNames:
 	  TOGGLE_FLAG (HIDENAMESFLAG, PCB);
-	  ClearAndRedrawOutput ();
+	  Redraw ();
 	  break;
 
 	case F_ToggleShowDRC:
@@ -2812,7 +2804,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  break;
 
 	case F_ToggleAutoDRC:
-	  HideCrosshair ();
+	  notify_crosshair_change (false);
 	  TOGGLE_FLAG (AUTODRCFLAG, PCB);
 	  if (TEST_FLAG (AUTODRCFLAG, PCB) && Settings.Mode == LINE_MODE)
 	    {
@@ -2826,12 +2818,12 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 				  Crosshair.AttachedLine.Point1.Y, true, 1,
 				  FOUNDFLAG);
 	    }
-	  RestoreCrosshair ();
+	  notify_crosshair_change (true);
 	  break;
 
 	case F_ToggleCheckPlanes:
 	  TOGGLE_FLAG (CHECKPLANESFLAG, PCB);
-	  ClearAndRedrawOutput ();
+	  Redraw ();
 	  break;
 
 	case F_ToggleOrthoMove:
@@ -2840,12 +2832,12 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 
 	case F_ToggleName:
 	  TOGGLE_FLAG (SHOWNUMBERFLAG, PCB);
-	  UpdateAll ();
+	  Redraw ();
 	  break;
 
 	case F_ToggleMask:
 	  TOGGLE_FLAG (SHOWMASKFLAG, PCB);
-	  UpdateAll ();
+	  Redraw ();
 	  break;
 
 	case F_ToggleClearLine:
@@ -2864,7 +2856,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	    oldGrid = PCB->Grid;
 	    PCB->Grid = 1.0;
 	    if (MoveCrosshairAbsolute (Crosshair.X, Crosshair.Y))
-	      RestoreCrosshair ();	/* was hidden by MoveCrosshairAbs */
+	      notify_crosshair_change (true);	/* first notify was in MoveCrosshairAbs */
 	    SetGrid (oldGrid, true);
 	  }
 	  break;
@@ -2872,7 +2864,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  /* toggle displaying of the grid */
 	case F_Grid:
 	  Settings.DrawGrid = !Settings.DrawGrid;
-	  UpdateAll ();
+	  Redraw ();
 	  break;
 
 	  /* display the pinout of an element */
@@ -2909,7 +2901,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 		  if (TEST_FLAG (DISPLAYNAMEFLAG, pin))
 		    ErasePinName (pin);
 		  else
-		    DrawPinName (pin, 0);
+		    DrawPinName (pin);
 		  AddObjectToFlagUndoList (PIN_TYPE, ptr1, pin, pin);
 		  TOGGLE_FLAG (DISPLAYNAMEFLAG, pin);
 		}
@@ -2919,7 +2911,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 		  if (TEST_FLAG (DISPLAYNAMEFLAG, pad))
 		    ErasePadName (pad);
 		  else
-		    DrawPadName (pad, 0);
+		    DrawPadName (pad);
 		  AddObjectToFlagUndoList (PAD_TYPE, ptr1, pad, pad);
 		  TOGGLE_FLAG (DISPLAYNAMEFLAG, pad);
 		}
@@ -2933,7 +2925,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 		if (TEST_FLAG (DISPLAYNAMEFLAG, (PinTypePtr) ptr2))
 		  ErasePinName ((PinTypePtr) ptr2);
 		else
-		  DrawPinName ((PinTypePtr) ptr2, 0);
+		  DrawPinName ((PinTypePtr) ptr2);
 		AddObjectToFlagUndoList (PIN_TYPE, ptr1, ptr2, ptr3);
 		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PinTypePtr) ptr2);
 		SetChangedFlag (true);
@@ -2945,7 +2937,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 		if (TEST_FLAG (DISPLAYNAMEFLAG, (PadTypePtr) ptr2))
 		  ErasePadName ((PadTypePtr) ptr2);
 		else
-		  DrawPadName ((PadTypePtr) ptr2, 0);
+		  DrawPadName ((PadTypePtr) ptr2);
 		AddObjectToFlagUndoList (PAD_TYPE, ptr1, ptr2, ptr3);
 		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PadTypePtr) ptr2);
 		SetChangedFlag (true);
@@ -2956,7 +2948,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 		if (TEST_FLAG (DISPLAYNAMEFLAG, (PinTypePtr) ptr2))
 		  EraseViaName ((PinTypePtr) ptr2);
 		else
-		  DrawViaName ((PinTypePtr) ptr2, 0);
+		  DrawViaName ((PinTypePtr) ptr2);
 		AddObjectToFlagUndoList (VIA_TYPE, ptr1, ptr2, ptr3);
 		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PinTypePtr) ptr2);
 		SetChangedFlag (true);
@@ -2981,7 +2973,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	      PCB->GridOffsetX = atoi (argv[1]);
 	      PCB->GridOffsetY = atoi (argv[2]);
 	      if (Settings.DrawGrid)
-		UpdateAll ();
+		Redraw ();
 	    }
 	  break;
 
@@ -3068,7 +3060,7 @@ ActionMode (int argc, char **argv, int x, int y)
     {
       Note.X = Crosshair.X;
       Note.Y = Crosshair.Y;
-      HideCrosshair ();
+      notify_crosshair_change (false);
       switch (GetFunctionID (function))
 	{
 	case F_Arc:
@@ -3264,7 +3256,7 @@ ActionMode (int argc, char **argv, int x, int y)
 	  SaveMode ();
 	  break;
 	}
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
       return 0;
     }
 
@@ -3833,7 +3825,7 @@ ActionAddRats (int argc, char **argv, int x, int y)
 	    {
 	      AddObjectToFlagUndoList (RATLINE_TYPE, shorty, shorty, shorty);
 	      SET_FLAG (SELECTEDFLAG, shorty);
-	      DrawRat (shorty, 0);
+	      DrawRat (shorty);
 	      Draw ();
 	      CenterDisplay ((shorty->Point2.X + shorty->Point1.X) / 2,
 			     (shorty->Point2.Y + shorty->Point1.Y) / 2,
@@ -4039,24 +4031,27 @@ ActionMarkCrosshair (int argc, char **argv, int x, int y)
     {
       if (Marked.status)
 	{
-	  DrawMark ();
+	  notify_mark_change (false);
 	  Marked.status = false;
+	  notify_mark_change (true);
 	}
       else
 	{
+	  notify_mark_change (false);
+	  Marked.status = false;
 	  Marked.status = true;
 	  Marked.X = Crosshair.X;
 	  Marked.Y = Crosshair.Y;
-	  DrawMark ();
+	  notify_mark_change (true);
 	}
     }
   else if (GetFunctionID (function) == F_Center)
     {
-      DrawMark ();
+      notify_mark_change (false);
       Marked.status = true;
       Marked.X = Crosshair.X;
       Marked.Y = Crosshair.Y;
-      DrawMark ();
+      notify_mark_change (true);
     }
   return 0;
 }
@@ -4772,7 +4767,7 @@ ActionToggleHideName (int argc, char **argv, int x, int y)
 		AddObjectToFlagUndoList (type, ptr1, ptr2, ptr3);
 		EraseElementName ((ElementTypePtr) ptr2);
 		TOGGLE_FLAG (HIDENAMEFLAG, (ElementTypePtr) ptr2);
-		DrawElementName ((ElementTypePtr) ptr2, 0);
+		DrawElementName ((ElementTypePtr) ptr2);
 		Draw ();
 		IncrementUndoSerialNumber ();
 	      }
@@ -4793,7 +4788,7 @@ ActionToggleHideName (int argc, char **argv, int x, int y)
 					   element, element);
 		  EraseElementName (element);
 		  TOGGLE_FLAG (HIDENAMEFLAG, element);
-		  DrawElementName (element, 0);
+		  DrawElementName (element);
 		  changed = true;
 		}
 	    }
@@ -5450,7 +5445,7 @@ ActionSelect (int argc, char **argv, int x, int y)
 			  Crosshair.AttachedBox.Point2.X);
 	    box.Y2 = MAX (Crosshair.AttachedBox.Point1.Y,
 			  Crosshair.AttachedBox.Point2.Y);
-	    HideCrosshair ();
+	    notify_crosshair_change (false);
 	    NotifyBlock ();
 	    if (Crosshair.AttachedBox.State == STATE_THIRD &&
 		SelectBlock (&box, true))
@@ -5458,7 +5453,7 @@ ActionSelect (int argc, char **argv, int x, int y)
 		SetChangedFlag (true);
 		Crosshair.AttachedBox.State = STATE_FIRST;
 	      }
-	    RestoreCrosshair ();
+	    notify_crosshair_change (true);
 	    break;
 	  }
 
@@ -5629,7 +5624,7 @@ ActionUnselect (int argc, char **argv, int x, int y)
 			  Crosshair.AttachedBox.Point2.X);
 	    box.Y2 = MAX (Crosshair.AttachedBox.Point1.Y,
 			  Crosshair.AttachedBox.Point2.Y);
-	    HideCrosshair ();
+	    notify_crosshair_change (false);
 	    NotifyBlock ();
 	    if (Crosshair.AttachedBox.State == STATE_THIRD &&
 		SelectBlock (&box, false))
@@ -5637,7 +5632,7 @@ ActionUnselect (int argc, char **argv, int x, int y)
 		SetChangedFlag (true);
 		Crosshair.AttachedBox.State = STATE_FIRST;
 	      }
-	    RestoreCrosshair ();
+	    notify_crosshair_change (true);
 	    break;
 	  }
 
@@ -5868,18 +5863,18 @@ ActionLoadFrom (int argc, char **argv, int x, int y)
 
   if (strcasecmp (function, "ElementToBuffer") == 0)
     {
-      HideCrosshair ();
+      notify_crosshair_change (false);
       if (LoadElementToBuffer (PASTEBUFFER, name, true))
 	SetMode (PASTEBUFFER_MODE);
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
     }
 
   else if (strcasecmp (function, "LayoutToBuffer") == 0)
     {
-      HideCrosshair ();
+      notify_crosshair_change (false);
       if (LoadLayoutToBuffer (PASTEBUFFER, name))
 	SetMode (PASTEBUFFER_MODE);
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
     }
 
   else if (strcasecmp (function, "Layout") == 0)
@@ -5936,7 +5931,7 @@ ActionNew (int argc, char **argv, int x, int y)
       if (!name)
         return 1;
 
-      HideCrosshair ();
+      notify_crosshair_change (false);
       /* do emergency saving
        * clear the old struct and allocate memory for the new one
        */
@@ -5955,10 +5950,10 @@ ActionNew (int argc, char **argv, int x, int y)
       CreateDefaultFont ();
       SetCrosshairRange (0, 0, PCB->MaxWidth, PCB->MaxHeight);
       CenterDisplay (PCB->MaxWidth / 2, PCB->MaxHeight / 2, false);
-      ClearAndRedrawOutput ();
+      Redraw ();
 
       hid_action ("PCBChanged");
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
       return 0;
     }
   return 1;
@@ -6045,7 +6040,7 @@ ActionPasteBuffer (int argc, char **argv, int x, int y)
   static char *default_file = NULL;
   int free_name = 0;
 
-  HideCrosshair ();
+  notify_crosshair_change (false);
   if (function)
     {
       switch (GetFunctionID (function))
@@ -6152,7 +6147,7 @@ ActionPasteBuffer (int argc, char **argv, int x, int y)
 	      }
 	    else
 	      {
-		RestoreCrosshair ();
+		notify_crosshair_change (true);
 		AFAIL (pastebuffer);
 	      }
 
@@ -6175,7 +6170,7 @@ ActionPasteBuffer (int argc, char **argv, int x, int y)
 	}
     }
 
-  RestoreCrosshair ();
+  notify_crosshair_change (true);
   return 0;
 }
 
@@ -6216,13 +6211,13 @@ ActionUndo (int argc, char **argv, int x, int y)
 	return 1;
       /* undo the last operation */
 
-      HideCrosshair ();
+      notify_crosshair_change (false);
       if ((Settings.Mode == POLYGON_MODE ||
            Settings.Mode == POLYGONHOLE_MODE) &&
           Crosshair.AttachedPolygon.PointN)
 	{
 	  GoToPreviousPoint ();
-	  RestoreCrosshair ();
+	  notify_crosshair_change (true);
 	  return 0;
 	}
       /* move anchor point if undoing during line creation */
@@ -6234,7 +6229,7 @@ ActionUndo (int argc, char **argv, int x, int y)
 		Undo (true);	/* undo the connection find */
 	      Crosshair.AttachedLine.State = STATE_FIRST;
 	      SetLocalRef (0, 0, false);
-	      RestoreCrosshair ();
+	      notify_crosshair_change (true);
 	      return 0;
 	    }
 	  if (Crosshair.AttachedLine.State == STATE_THIRD)
@@ -6262,7 +6257,7 @@ ActionUndo (int argc, char **argv, int x, int y)
 		    Crosshair.AttachedLine.Point1.X;
 		  Crosshair.AttachedLine.Point2.Y =
 		    Crosshair.AttachedLine.Point1.Y;
-		  RestoreCrosshair ();
+		  notify_crosshair_change (true);
 		  return 0;
 		}
 	      /* move to new anchor */
@@ -6284,7 +6279,7 @@ ActionUndo (int argc, char **argv, int x, int y)
 		    {
 		      /* undo loses FOUNDFLAG */
 		      SET_FLAG(FOUNDFLAG, ptr2);
-		      DrawLine (CURRENT, ptr2, 0);
+		      DrawLine (CURRENT, ptr2);
 		    }
 		  Crosshair.AttachedLine.Point1.X =
 		    Crosshair.AttachedLine.Point2.X = ptr2->Point2.X;
@@ -6309,7 +6304,7 @@ ActionUndo (int argc, char **argv, int x, int y)
 		  ptr2 = (LineTypePtr) ptrtmp;
 		  lastLayer = (LayerTypePtr) ptr1;
 		}
-	      RestoreCrosshair ();
+	      notify_crosshair_change (true);
 	      return 0;
 	    }
 	}
@@ -6318,7 +6313,7 @@ ActionUndo (int argc, char **argv, int x, int y)
 	  if (Crosshair.AttachedBox.State == STATE_SECOND)
 	    {
 	      Crosshair.AttachedBox.State = STATE_FIRST;
-	      RestoreCrosshair ();
+	      notify_crosshair_change (true);
 	      return 0;
 	    }
 	  if (Crosshair.AttachedBox.State == STATE_THIRD)
@@ -6353,7 +6348,7 @@ ActionUndo (int argc, char **argv, int x, int y)
 	  break;
 	}
     }
-  RestoreCrosshair ();
+  notify_crosshair_change (true);
   return 0;
 }
 
@@ -6386,14 +6381,14 @@ ActionRedo (int argc, char **argv, int x, int y)
        Crosshair.AttachedPolygon.PointN) ||
       Crosshair.AttachedLine.State == STATE_SECOND)
     return 1;
-  HideCrosshair ();
+  notify_crosshair_change (false);
   if (Redo (true))
     {
       SetChangedFlag (true);
       if (Settings.Mode == LINE_MODE &&
 	  Crosshair.AttachedLine.State != STATE_FIRST)
 	{
-	  LineTypePtr line = &CURRENT->Line[CURRENT->LineN - 1];
+	  LineType *line = g_list_last (CURRENT->Line)->data;
 	  Crosshair.AttachedLine.Point1.X =
 	    Crosshair.AttachedLine.Point2.X = line->Point2.X;
 	  Crosshair.AttachedLine.Point1.Y =
@@ -6401,7 +6396,7 @@ ActionRedo (int argc, char **argv, int x, int y)
 	  addedLines++;
 	}
     }
-  RestoreCrosshair ();
+  notify_crosshair_change (true);
   return 0;
 }
 
@@ -6435,7 +6430,7 @@ ActionPolygon (int argc, char **argv, int x, int y)
   char *function = ARG (0);
   if (function && Settings.Mode == POLYGON_MODE)
     {
-      HideCrosshair ();
+      notify_crosshair_change (false);
       switch (GetFunctionID (function))
 	{
 	  /* close open polygon if possible */
@@ -6448,7 +6443,7 @@ ActionPolygon (int argc, char **argv, int x, int y)
 	  GoToPreviousPoint ();
 	  break;
 	}
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
     }
   return 0;
 }
@@ -6612,24 +6607,24 @@ ActionSetSame (int argc, char **argv, int x, int y)
   switch (type)
     {
     case LINE_TYPE:
-      HideCrosshair ();
+      notify_crosshair_change (false);
       Settings.LineThickness = ((LineTypePtr) ptr2)->Thickness;
       Settings.Keepaway = ((LineTypePtr) ptr2)->Clearance / 2;
       layer = (LayerTypePtr) ptr1;
       if (Settings.Mode != LINE_MODE)
 	SetMode (LINE_MODE);
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
       hid_action ("RouteStylesChanged");
       break;
 
     case ARC_TYPE:
-      HideCrosshair ();
+      notify_crosshair_change (false);
       Settings.LineThickness = ((ArcTypePtr) ptr2)->Thickness;
       Settings.Keepaway = ((ArcTypePtr) ptr2)->Clearance / 2;
       layer = (LayerTypePtr) ptr1;
       if (Settings.Mode != ARC_MODE)
 	SetMode (ARC_MODE);
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
       hid_action ("RouteStylesChanged");
       break;
 
@@ -6638,13 +6633,13 @@ ActionSetSame (int argc, char **argv, int x, int y)
       break;
 
     case VIA_TYPE:
-      HideCrosshair ();
+      notify_crosshair_change (false);
       Settings.ViaThickness = ((PinTypePtr) ptr2)->Thickness;
       Settings.ViaDrillingHole = ((PinTypePtr) ptr2)->DrillingHole;
       Settings.Keepaway = ((PinTypePtr) ptr2)->Clearance / 2;
       if (Settings.Mode != VIA_MODE)
 	SetMode (VIA_MODE);
-      RestoreCrosshair ();
+      notify_crosshair_change (true);
       hid_action ("RouteStylesChanged");
       break;
 
@@ -6654,7 +6649,7 @@ ActionSetSame (int argc, char **argv, int x, int y)
   if (layer != CURRENT)
     {
       ChangeGroupVisibility (GetLayerNumber (PCB->Data, layer), true, true);
-      ClearAndRedrawOutput ();
+      Redraw ();
     }
   return 0;
 }
@@ -7141,7 +7136,7 @@ ActionElementList (int argc, char **argv, int x, int y)
 	return 1;
 
       er = ElementOrientation (e);
-      pe = & PASTEBUFFER->Data->Element[0];
+      pe = PASTEBUFFER->Data->Element->data;
       pr = ElementOrientation (pe);
 
       mx = e->MarkX;

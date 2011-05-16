@@ -55,14 +55,11 @@
 
   /* Go from from the grid units in use (millimeters or mils) to PCB units
      |  and back again.
-     |  PCB keeps values internally to 1/100000 inch (0.01 mils), but gui
+     |  PCB keeps values internally higher precision, but gui
      |  widgets (spin buttons, labels, etc) need mils or millimeters.
    */
-#define	FROM_PCB_UNITS(v)	(Settings.grid_units_mm ? \
-								((v) * 0.000254) : ((v) * 0.01))
-
-#define TO_PCB_UNITS(v)		(Settings.grid_units_mm ? \
-								((v) / 0.000254 + 0.5) : ((v) * 100.0 + 0.5))
+#define	FROM_PCB_UNITS(v)	(Settings.grid_units_mm ? COORD_TO_MM(v) : COORD_TO_MIL(v))
+#define	TO_PCB_UNITS(v)		(Settings.grid_units_mm ? MM_TO_COORD(v) : MIL_TO_COORD(v))
 
 extern int ghid_flip_x, ghid_flip_y;
 #define SIDE_X(x)   ((ghid_flip_x ? PCB->MaxWidth - (x) : (x)))
@@ -132,7 +129,7 @@ typedef struct
     small_label_markup,
     compact_horizontal,
     compact_vertical,
-    ghid_title_window, use_command_window, need_restore_crosshair, creating;
+    ghid_title_window, use_command_window, creating;
 
   gint n_mode_button_columns,
     top_window_width,
@@ -282,7 +279,6 @@ void ghid_port_ranges_zoom (gdouble zoom);
 gboolean ghid_port_ranges_pan (gdouble x, gdouble y, gboolean relative);
 void ghid_port_ranges_scale (gboolean emit_changed);
 void ghid_port_ranges_update_ranges (void);
-void ghid_screen_update (void);
 
 gboolean ghid_note_event_location (GdkEventButton * ev);
 gboolean have_crosshair_attachments (void);
@@ -474,7 +470,7 @@ void ghid_logv (const char *fmt, va_list args);
 /* gui-pinout-window.c */
 void ghid_pinout_window_show (GHidPort * out, ElementTypePtr Element);
 
-/* gtkhid-gdk.c */
+/* gtkhid-gdk.c AND gtkhid-gl.c */
 int ghid_set_layer (const char *name, int group, int empty);
 hidGC ghid_make_gc (void);
 void ghid_destroy_gc (hidGC);
@@ -483,8 +479,6 @@ void ghid_set_color (hidGC gc, const char *name);
 void ghid_set_line_cap (hidGC gc, EndCapStyle style);
 void ghid_set_line_width (hidGC gc, int width);
 void ghid_set_draw_xor (hidGC gc, int _xor);
-void ghid_set_draw_faded (hidGC gc, int faded);
-void ghid_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2);
 void ghid_draw_line (hidGC gc, int x1, int y1, int x2, int y2);
 void ghid_draw_arc (hidGC gc, int cx, int cy, int xradius, int yradius,
                     int start_angle, int delta_angle);
@@ -494,18 +488,21 @@ void ghid_fill_polygon (hidGC gc, int n_coords, int *x, int *y);
 void ghid_fill_rect (hidGC gc, int x1, int y1, int x2, int y2);
 void ghid_invalidate_lr (int left, int right, int top, int bottom);
 void ghid_invalidate_all ();
-void ghid_show_crosshair (gboolean show);
+void ghid_notify_crosshair_change (bool changes_complete);
+void ghid_notify_mark_change (bool changes_complete);
 void ghid_init_renderer (int *, char ***, GHidPort *);
 void ghid_init_drawing_widget (GtkWidget *widget, GHidPort *);
 void ghid_drawing_area_configure_hook (GHidPort *port);
-gboolean ghid_start_drawing (GHidPort *port);
-void ghid_end_drawing (GHidPort *port);
 void ghid_screen_update (void);
 gboolean ghid_drawing_area_expose_cb (GtkWidget *, GdkEventExpose *,
                                       GHidPort *);
+void ghid_port_drawing_realize_cb (GtkWidget *, gpointer);
 gboolean ghid_pinout_preview_expose (GtkWidget * widget, GdkEventExpose * ev);
 GdkPixmap *ghid_render_pixmap (int cx, int cy, double zoom,
                                int width, int height, int depth);
+HID *ghid_request_debug_draw (void);
+void ghid_flush_debug_draw (void);
+void ghid_finish_debug_draw (void);
 
 /* gtkhid-main.c */
 void ghid_pan_fixup (void);

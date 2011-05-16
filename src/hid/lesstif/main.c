@@ -28,6 +28,7 @@
 
 #include "hid.h"
 #include "../hidint.h"
+#include "hid/common/hidnogui.h"
 #include "hid/common/draw_helpers.h"
 #include "hid/common/hid_resource.h"
 #include "lesstif.h"
@@ -58,8 +59,7 @@ typedef struct hid_gc_struct
   char erase;
 } hid_gc_struct;
 
-extern HID lesstif_gui;
-extern HID lesstif_extents;
+static HID lesstif_hid;
 
 #define CRASH fprintf(stderr, "HID error: pcb called unimplemented GUI function %s\n", __FUNCTION__), abort()
 
@@ -140,6 +140,24 @@ static int view_left_x = 0, view_top_y = 0;
 static double view_zoom = 1000, prev_view_zoom = 1000;
 static int flip_x = 0, flip_y = 0;
 static int autofade = 0;
+static bool crosshair_on = true;
+
+static void
+ShowCrosshair (bool show)
+{
+  if (crosshair_on == show)
+    return;
+
+  notify_crosshair_change (false);
+  if (Marked.status)
+    notify_mark_change (false);
+
+  crosshair_on = show;
+
+  notify_crosshair_change (true);
+  if (Marked.status)
+    notify_mark_change (true);
+}
 
 static int
 flag_flipx (int x)
@@ -779,7 +797,7 @@ Benchmark (int argc, char **argv, int x, int y)
   do
     {
       XFillRectangle (display, pixmap, bg_gc, 0, 0, view_width, view_height);
-      hid_expose_callback (&lesstif_gui, &region, 0);
+      hid_expose_callback (&lesstif_hid, &region, 0);
       XSync (display, 0);
       time (&end);
       i++;
@@ -852,8 +870,20 @@ The values are percentages of the board size.  Thus, a move of
 static int
 CursorAction(int argc, char **argv, int x, int y)
 {
+  UnitList extra_units_x = {
+    { "grid",  PCB->Grid, 0 },
+    { "view",  Pz(view_width), UNIT_PERCENT },
+    { "board", PCB->MaxWidth, UNIT_PERCENT },
+    { "", 0, 0 }
+  };
+  UnitList extra_units_y = {
+    { "grid",  PCB->Grid, 0 },
+    { "view",  Pz(view_height), UNIT_PERCENT },
+    { "board", PCB->MaxHeight, UNIT_PERCENT },
+    { "", 0, 0 }
+  };
   int pan_warp = HID_SC_DO_NOTHING;
-  double dx, dy, xu, yu;
+  double dx, dy;
 
   if (argc != 4)
     AFAIL(cursor);
@@ -865,33 +895,14 @@ CursorAction(int argc, char **argv, int x, int y)
   else
     AFAIL(cursor);
 
-  dx = strtod (argv[1], 0);
+  dx = GetValueEx (argv[1], argv[3], NULL, extra_units_x, "mil");
   if (flip_x)
     dx = -dx;
-  dy = strtod (argv[2], 0);
+  dy = GetValueEx (argv[2], argv[3], NULL, extra_units_y, "mil");
   if (!flip_y)
     dy = -dy;
 
-  if (strncasecmp (argv[3], "mm", 2) == 0)
-    xu = yu = MM_TO_COOR;
-  else if (strncasecmp (argv[3], "mil", 3) == 0)
-    xu = yu = 100;
-  else if (strncasecmp (argv[3], "grid", 4) == 0)
-    xu = yu = PCB->Grid;
-  else if (strncasecmp (argv[3], "view", 4) == 0)
-    {
-      xu = Pz(view_width) / 100.0;
-      yu = Pz(view_height) / 100.0;
-    }
-  else if (strncasecmp (argv[3], "board", 4) == 0)
-    {
-      xu = PCB->MaxWidth / 100.0;
-      yu = PCB->MaxHeight / 100.0;
-    }
-  else
-    xu = yu = 100;
-
-  EventMoveCrosshair (Crosshair.X+(int)(dx*xu), Crosshair.Y+(int)(dy*yu));
+  EventMoveCrosshair (Crosshair.X + dx, Crosshair.Y + dy);
   gui->set_crosshair (Crosshair.X, Crosshair.Y, pan_warp);
 
   return 0;
@@ -1311,12 +1322,12 @@ mod_changed (XKeyEvent * e, int set)
       return;
     }
   in_move_event = 1;
-  HideCrosshair ();
+  notify_crosshair_change (false);
   if (panning)
     Pan (2, e->x, e->y);
   EventMoveCrosshair (Px (e->x), Py (e->y));
   AdjustAttachedObjects ();
-  RestoreCrosshair ();
+  notify_crosshair_change (true);
   in_move_event = 0;
 }
 
@@ -1352,7 +1363,7 @@ work_area_input (Widget w, XtPointer v, XEvent * e, Boolean * ctd)
 	}
         ignore_release = 0;
 
-        HideCrosshair ();
+        notify_crosshair_change (false);
         pressed_button = e->xbutton.button;
         mods = ((e->xbutton.state & ShiftMask) ? M_Shift : 0)
           + ((e->xbutton.state & ControlMask) ? M_Ctrl : 0)
@@ -1362,7 +1373,7 @@ work_area_input (Widget w, XtPointer v, XEvent * e, Boolean * ctd)
           + ((e->xbutton.state & Mod1Mask) ? M_Alt : 0);
 #endif
         do_mouse_action(e->xbutton.button, mods);
-        RestoreCrosshair ();
+        notify_crosshair_change (true);
         break;
       }
 
@@ -1372,7 +1383,7 @@ work_area_input (Widget w, XtPointer v, XEvent * e, Boolean * ctd)
         if (e->xbutton.button != pressed_button)
           return;
         lesstif_button_event (w, e);
-        HideCrosshair ();
+        notify_crosshair_change (false);
         pressed_button = 0;
         mods = ((e->xbutton.state & ShiftMask) ? M_Shift : 0)
           + ((e->xbutton.state & ControlMask) ? M_Ctrl : 0)
@@ -1383,7 +1394,7 @@ work_area_input (Widget w, XtPointer v, XEvent * e, Boolean * ctd)
 #endif
           + M_Release;
         do_mouse_action (e->xbutton.button, mods);
-        RestoreCrosshair ();
+        notify_crosshair_change (true);
         break;
       }
 
@@ -1414,7 +1425,7 @@ work_area_input (Widget w, XtPointer v, XEvent * e, Boolean * ctd)
 
     case LeaveNotify:
       crosshair_in_window = 0;
-      CrosshairOff ();
+      ShowCrosshair (false);
       need_idle_proc ();
       break;
 
@@ -1422,7 +1433,7 @@ work_area_input (Widget w, XtPointer v, XEvent * e, Boolean * ctd)
       crosshair_in_window = 1;
       in_move_event = 1;
       EventMoveCrosshair (Px (e->xcrossing.x), Py (e->xcrossing.y));
-      CrosshairOn ();
+      ShowCrosshair (true);
       in_move_event = 0;
       need_idle_proc ();
       break;
@@ -2299,16 +2310,16 @@ coords_to_widget (int x, int y, Widget w, int prev_state)
   if (Settings.grid_units_mm)
     {
       /* MM */
-      dx = PCB_TO_MM (x);
-      dy = PCB_TO_MM (y);
-      g = PCB_TO_MM (PCB->Grid);
+      dx = COORD_TO_MM (x);
+      dy = COORD_TO_MM (y);
+      g = COORD_TO_MM (PCB->Grid);
     }
   else
     {
       /* Mils */
-      dx = PCB_TO_MIL (x);
-      dy = PCB_TO_MIL (y);
-      g = PCB_TO_MIL (PCB->Grid);
+      dx = COORD_TO_MIL (x);
+      dy = COORD_TO_MIL (y);
+      g = COORD_TO_MIL (PCB->Grid);
     }
   if (x < 0 && prev_state >= 0)
     buf[0] = 0;
@@ -2359,9 +2370,9 @@ pcb2str (int pcbval)
 
   bufp = (bufp + 1) % 20;
   if (Settings.grid_units_mm)
-    d = PCB_TO_MM (pcbval);
+    d = COORD_TO_MM (pcbval);
   else
-    d = PCB_TO_MIL (pcbval);
+    d = COORD_TO_MIL (pcbval);
 
   if ((int) (d * 100 + 0.5) == (int) (d + 0.005) * 100)
     sprintf (buf[bufp], "%d", (int) d);
@@ -2434,7 +2445,6 @@ idle_proc (XtPointer dummy)
       int mx, my;
       BoxType region;
       lesstif_use_mask (0);
-      Crosshair.On = 0;
       pixmap = main_pixmap;
       mx = view_width;
       my = view_height;
@@ -2513,14 +2523,19 @@ idle_proc (XtPointer dummy)
 	    }
 	}
       DrawBackgroundImage();
-      hid_expose_callback (&lesstif_gui, &region, 0);
+      hid_expose_callback (&lesstif_hid, &region, 0);
       draw_grid ();
       lesstif_use_mask (0);
+      show_crosshair (0); /* To keep the drawn / not drawn info correct */
       XSetFunction (display, my_gc, GXcopy);
       XCopyArea (display, main_pixmap, window, my_gc, 0, 0, view_width,
 		 view_height, 0, 0);
       pixmap = window;
-      CrosshairOn ();
+      if (crosshair_on)
+        {
+          DrawAttached ();
+          DrawMark ();
+        }
       need_redraw = 0;
     }
 
@@ -2618,16 +2633,16 @@ idle_proc (XtPointer dummy)
 	  {
 	    if (Settings.grid_units_mm)
 	      {
-		g = PCB_TO_MM (old_grid);
-		x = PCB_TO_MM (old_gx);
-		y = PCB_TO_MM (old_gy);
+		g = COORD_TO_MM (old_grid);
+		x = COORD_TO_MM (old_gx);
+		y = COORD_TO_MM (old_gy);
 		u = "mm";
 	      }
 	    else
 	      {
-		g = PCB_TO_MIL (old_grid);
-		x = PCB_TO_MIL (old_gx);
-		y = PCB_TO_MIL (old_gy);
+		g = COORD_TO_MIL (old_grid);
+		x = COORD_TO_MIL (old_gx);
+		y = COORD_TO_MIL (old_gy);
 		u = "mil";
 	      }
 	    if (x || y)
@@ -2657,12 +2672,12 @@ idle_proc (XtPointer dummy)
 
 	if (Settings.grid_units_mm)
 	  {
-	    g = PCB_TO_MM (view_zoom);
+	    g = COORD_TO_MM (view_zoom);
 	    units = "mm";
 	  }
 	else
 	  {
-	    g = PCB_TO_MIL (view_zoom);
+	    g = COORD_TO_MIL (view_zoom);
 	    units = "mil";
 	  }
 	if ((int) (g * 100 + 0.5) == (int) (g + 0.005) * 100)
@@ -2879,6 +2894,72 @@ lesstif_invalidate_all (void)
   lesstif_invalidate_lr (0, PCB->MaxWidth, 0, PCB->MaxHeight);
 }
 
+static void
+lesstif_notify_crosshair_change (bool changes_complete)
+{
+  static int invalidate_depth = 0;
+  Pixmap save_pixmap;
+
+  if (changes_complete)
+    invalidate_depth --;
+
+  if (invalidate_depth < 0)
+    {
+      invalidate_depth = 0;
+      /* A mismatch of changes_complete == false and == true notifications
+       * is not expected to occur, but we will try to handle it gracefully.
+       * As we know the crosshair will have been shown already, we must
+       * repaint the entire view to be sure not to leave an artaefact.
+       */
+      need_idle_proc ();
+      return;
+    }
+
+  if (invalidate_depth == 0 && crosshair_on)
+    {
+      save_pixmap = pixmap;
+      pixmap = window;
+      DrawAttached ();
+      pixmap = save_pixmap;
+    }
+
+  if (!changes_complete)
+    invalidate_depth ++;
+}
+
+static void
+lesstif_notify_mark_change (bool changes_complete)
+{
+  static int invalidate_depth = 0;
+  Pixmap save_pixmap;
+
+  if (changes_complete)
+    invalidate_depth --;
+
+  if (invalidate_depth < 0)
+    {
+      invalidate_depth = 0;
+      /* A mismatch of changes_complete == false and == true notifications
+       * is not expected to occur, but we will try to handle it gracefully.
+       * As we know the mark will have been shown already, we must
+       * repaint the entire view to be sure not to leave an artaefact.
+       */
+      need_idle_proc ();
+      return;
+    }
+
+  if (invalidate_depth == 0 && crosshair_on)
+    {
+      save_pixmap = pixmap;
+      pixmap = window;
+      DrawMark ();
+      pixmap = save_pixmap;
+    }
+
+  if (!changes_complete)
+    invalidate_depth ++;
+}
+
 static int
 lesstif_set_layer (const char *name, int group, int empty)
 {
@@ -2940,7 +3021,7 @@ lesstif_make_gc (void)
 {
   hidGC rv = (hid_gc_struct *) malloc (sizeof (hid_gc_struct));
   memset (rv, 0, sizeof (hid_gc_struct));
-  rv->me_pointer = &lesstif_gui;
+  rv->me_pointer = &lesstif_hid;
   return rv;
 }
 
@@ -2953,24 +3034,6 @@ lesstif_destroy_gc (hidGC gc)
 static void
 lesstif_use_mask (int use_it)
 {
-  static Window old;
-
-  if (use_it == HID_FLUSH_DRAW_Q)
-    {
-      XFlush (display);
-      return;
-    }
-  else if (use_it == HID_LIVE_DRAWING)
-    {
-      old = pixmap;
-      pixmap = window;
-      return;
-    }
-  else if (use_it == HID_LIVE_DRAWING_OFF)
-    {
-      pixmap = old;
-      return;
-    }
   if ((TEST_FLAG (THINDRAWFLAG, PCB) || TEST_FLAG(THINDRAWPOLYFLAG, PCB)) &&
       !use_xrender)
     use_it = 0;
@@ -3085,7 +3148,7 @@ static void
 set_gc (hidGC gc)
 {
   int cap, join, width;
-  if (gc->me_pointer != &lesstif_gui)
+  if (gc->me_pointer != &lesstif_hid)
     {
       fprintf (stderr, "Fatal: GC from another HID passed to lesstif HID\n");
       abort ();
@@ -3161,18 +3224,6 @@ static void
 lesstif_set_draw_xor (hidGC gc, int xor_set)
 {
   gc->xor_set = xor_set;
-}
-
-static void
-lesstif_set_draw_faded (hidGC gc, int faded)
-{
-  /* We don't use this */
-}
-
-static void
-lesstif_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2)
-{
-  CRASH;
 }
 
 #define ISORT(a,b) if (a>b) { a^=b; b^=a; a^=b; }
@@ -3692,7 +3743,7 @@ pinout_callback (Widget da, PinoutData * pd,
   region.Y2 = PCB->MaxHeight;
 
   XFillRectangle (display, pixmap, bg_gc, 0, 0, pd->v_width, pd->v_height);
-  hid_expose_callback (&lesstif_gui, &region, pd->item);
+  hid_expose_callback (&lesstif_hid, &region, pd->item);
 
   pinout = 0;
   view_left_x = save_vx;
@@ -3790,80 +3841,232 @@ lesstif_beep (void)
   fflush (stdout);
 }
 
+
+static bool progress_cancelled = false;
+
+static void
+progress_cancel_callback (Widget w, void *v, void *cbs)
+{
+  progress_cancelled = true;
+}
+
+static Widget progress_dialog = 0;
+static Widget progress_cancel, progress_label;
+static Widget progress_scale;
+
+static void
+lesstif_progress_dialog (int so_far, int total, const char *msg)
+{
+  XmString xs;
+
+  if (mainwind == 0)
+    return;
+
+  if (progress_dialog == 0)
+    {
+      Atom close_atom;
+
+      n = 0;
+      stdarg (XmNdefaultButtonType, XmDIALOG_CANCEL_BUTTON);
+      stdarg (XmNtitle, "Progress");
+      stdarg (XmNdialogStyle, XmDIALOG_APPLICATION_MODAL);
+      stdarg (XmNdialogStyle, XmDIALOG_FULL_APPLICATION_MODAL);
+      progress_dialog = XmCreateInformationDialog (mainwind, "progress", args, n);
+      XtAddCallback (progress_dialog, XmNcancelCallback,
+                     (XtCallbackProc) progress_cancel_callback, NULL);
+
+      progress_cancel = XmMessageBoxGetChild (progress_dialog, XmDIALOG_CANCEL_BUTTON);
+      progress_label =  XmMessageBoxGetChild (progress_dialog, XmDIALOG_MESSAGE_LABEL);
+
+      XtUnmanageChild (XmMessageBoxGetChild (progress_dialog, XmDIALOG_OK_BUTTON));
+      XtUnmanageChild (XmMessageBoxGetChild (progress_dialog, XmDIALOG_HELP_BUTTON));
+
+      stdarg (XmNdefaultPosition, False);
+      XtSetValues (progress_dialog, args, n);
+
+      n = 0;
+      stdarg(XmNminimum, 0);
+      stdarg(XmNvalue, 0);
+      stdarg(XmNmaximum, total > 0 ? total : 1);
+      stdarg(XmNorientation, XmHORIZONTAL);
+      stdarg(XmNshowArrows, false);
+      progress_scale = XmCreateScrollBar (progress_dialog, "scale", args, n);
+      XtManageChild (progress_scale);
+
+      close_atom = XmInternAtom (display, "WM_DELETE_WINDOW", 0);
+      XmAddWMProtocolCallback (XtParent (progress_dialog), close_atom,
+			       (XtCallbackProc) progress_cancel_callback, 0);
+    }
+
+  n = 0;
+  stdarg(XmNvalue, 0);
+  stdarg(XmNsliderSize, (so_far <= total) ? (so_far < 0) ? 0 : so_far : total);
+  stdarg(XmNmaximum, total > 0 ? total : 1);
+  XtSetValues (progress_scale, args, n);
+
+  n = 0;
+  xs = XmStringCreateLocalized ((char *)msg);
+  stdarg (XmNmessageString, xs);
+  XtSetValues (progress_dialog, args, n);
+
+  return;
+}
+
+#define MIN_TIME_SEPARATION 0.1 /* seconds */
+
 static int
 lesstif_progress (int so_far, int total, const char *message)
 {
-  return 0;
+  static bool visible = false;
+  static bool started = false;
+  XEvent e;
+  struct timeval time;
+  double time_delta, time_now;
+  static double time_then = 0.0;
+  int retval = 0;
+
+  if (so_far == 0 && total == 0 && message == NULL)
+    {
+      XtUnmanageChild (progress_dialog);
+      visible = false;
+      started = false;
+      progress_cancelled = false;
+      return retval;
+    }
+
+  gettimeofday (&time, NULL);
+  time_now = time.tv_sec + time.tv_usec / 1000000.0;
+
+  time_delta = time_now - time_then;
+
+  if (started && time_delta < MIN_TIME_SEPARATION)
+    return retval;
+
+  /* Create or update the progress dialog */
+  lesstif_progress_dialog (so_far, total, message);
+
+  if (!started)
+    {
+      XtManageChild (progress_dialog);
+      started = true;
+    }
+
+  /* Dispatch pending events */
+  while (XtAppPending (app_context))
+    {
+      XtAppNextEvent (app_context, &e);
+      XtDispatchEvent (&e);
+    }
+  idle_proc (NULL);
+
+  /* If rendering takes a while, make sure the core has enough time to
+     do work.  */
+  gettimeofday (&time, NULL);
+  time_then = time.tv_sec + time.tv_usec / 1000000.0;
+
+  return progress_cancelled;
 }
 
-HID lesstif_gui = {
-  sizeof (HID),
-  "lesstif",
-  "LessTif - a Motif clone for X/Unix",
-  1,				/* gui */
-  0,				/* printer */
-  0,				/* exporter */
-  1,				/* poly before */
-  0,				/* poly after */
-  0,				/* poly dicer */
+static HID *
+lesstif_request_debug_draw (void)
+{
+  /* Send drawing to the backing pixmap */
+  pixmap = main_pixmap;
+  return &lesstif_hid;
+}
 
-  lesstif_get_export_options,
-  lesstif_do_export,
-  lesstif_parse_arguments,
-  lesstif_invalidate_lr,
-  lesstif_invalidate_all,
-  lesstif_set_layer,
-  lesstif_make_gc,
-  lesstif_destroy_gc,
-  lesstif_use_mask,
-  lesstif_set_color,
-  lesstif_set_line_cap,
-  lesstif_set_line_width,
-  lesstif_set_draw_xor,
-  lesstif_set_draw_faded,
-  lesstif_set_line_cap_angle,
-  lesstif_draw_line,
-  lesstif_draw_arc,
-  lesstif_draw_rect,
-  lesstif_fill_circle,
-  lesstif_fill_polygon,
-  common_fill_pcb_polygon,
-  common_thindraw_pcb_polygon,
-  lesstif_fill_rect,
+static void
+lesstif_flush_debug_draw (void)
+{
+  /* Copy the backing pixmap to the display and redraw any attached objects */
+  XSetFunction (display, my_gc, GXcopy);
+  XCopyArea (display, main_pixmap, window, my_gc, 0, 0, view_width,
+             view_height, 0, 0);
+  pixmap = window;
+  if (crosshair_on)
+    {
+      DrawAttached ();
+      DrawMark ();
+    }
+  pixmap = main_pixmap;
+}
 
-  lesstif_calibrate,
-  lesstif_shift_is_pressed,
-  lesstif_control_is_pressed,
-  lesstif_mod1_is_pressed,
-  lesstif_get_coords,
-  lesstif_set_crosshair,
-  lesstif_add_timer,
-  lesstif_stop_timer,
-  lesstif_watch_file,
-  lesstif_unwatch_file,
-  lesstif_add_block_hook,
-  lesstif_stop_block_hook,
-
-  lesstif_log,
-  lesstif_logv,
-  lesstif_confirm_dialog,
-  lesstif_close_confirm_dialog,
-  lesstif_report_dialog,
-  lesstif_prompt_for,
-  lesstif_fileselect,
-  lesstif_attribute_dialog,
-  lesstif_show_item,
-  lesstif_beep,
-  lesstif_progress,
-  0, /* lesstif_drc_gui */
-  lesstif_attributes_dialog
-};
+static void
+lesstif_finish_debug_draw (void)
+{
+  lesstif_flush_debug_draw ();
+  /* No special tear down requirements
+   */
+}
 
 #include "dolists.h"
 
 void
 hid_lesstif_init ()
 {
-  hid_register_hid (&lesstif_gui);
+  memset (&lesstif_hid, 0, sizeof (HID));
+
+  common_nogui_init (&lesstif_hid);
+  common_draw_helpers_init (&lesstif_hid);
+
+  lesstif_hid.struct_size             = sizeof (HID);
+  lesstif_hid.name                    = "lesstif";
+  lesstif_hid.description             = "LessTif - a Motif clone for X/Unix";
+  lesstif_hid.gui                     = 1;
+  lesstif_hid.poly_before             = 1;
+
+  lesstif_hid.get_export_options      = lesstif_get_export_options;
+  lesstif_hid.do_export               = lesstif_do_export;
+  lesstif_hid.parse_arguments         = lesstif_parse_arguments;
+  lesstif_hid.invalidate_lr           = lesstif_invalidate_lr;
+  lesstif_hid.invalidate_all          = lesstif_invalidate_all;
+  lesstif_hid.notify_crosshair_change = lesstif_notify_crosshair_change;
+  lesstif_hid.notify_mark_change      = lesstif_notify_mark_change;
+  lesstif_hid.set_layer               = lesstif_set_layer;
+  lesstif_hid.make_gc                 = lesstif_make_gc;
+  lesstif_hid.destroy_gc              = lesstif_destroy_gc;
+  lesstif_hid.use_mask                = lesstif_use_mask;
+  lesstif_hid.set_color               = lesstif_set_color;
+  lesstif_hid.set_line_cap            = lesstif_set_line_cap;
+  lesstif_hid.set_line_width          = lesstif_set_line_width;
+  lesstif_hid.set_draw_xor            = lesstif_set_draw_xor;
+  lesstif_hid.draw_line               = lesstif_draw_line;
+  lesstif_hid.draw_arc                = lesstif_draw_arc;
+  lesstif_hid.draw_rect               = lesstif_draw_rect;
+  lesstif_hid.fill_circle             = lesstif_fill_circle;
+  lesstif_hid.fill_polygon            = lesstif_fill_polygon;
+  lesstif_hid.fill_rect               = lesstif_fill_rect;
+
+  lesstif_hid.calibrate               = lesstif_calibrate;
+  lesstif_hid.shift_is_pressed        = lesstif_shift_is_pressed;
+  lesstif_hid.control_is_pressed      = lesstif_control_is_pressed;
+  lesstif_hid.mod1_is_pressed         = lesstif_mod1_is_pressed;
+  lesstif_hid.get_coords              = lesstif_get_coords;
+  lesstif_hid.set_crosshair           = lesstif_set_crosshair;
+  lesstif_hid.add_timer               = lesstif_add_timer;
+  lesstif_hid.stop_timer              = lesstif_stop_timer;
+  lesstif_hid.watch_file              = lesstif_watch_file;
+  lesstif_hid.unwatch_file            = lesstif_unwatch_file;
+  lesstif_hid.add_block_hook          = lesstif_add_block_hook;
+  lesstif_hid.stop_block_hook         = lesstif_stop_block_hook;
+
+  lesstif_hid.log                     = lesstif_log;
+  lesstif_hid.logv                    = lesstif_logv;
+  lesstif_hid.confirm_dialog          = lesstif_confirm_dialog;
+  lesstif_hid.close_confirm_dialog    = lesstif_close_confirm_dialog;
+  lesstif_hid.report_dialog           = lesstif_report_dialog;
+  lesstif_hid.prompt_for              = lesstif_prompt_for;
+  lesstif_hid.fileselect              = lesstif_fileselect;
+  lesstif_hid.attribute_dialog        = lesstif_attribute_dialog;
+  lesstif_hid.show_item               = lesstif_show_item;
+  lesstif_hid.beep                    = lesstif_beep;
+  lesstif_hid.progress                = lesstif_progress;
+  lesstif_hid.edit_attributes         = lesstif_attributes_dialog;
+
+  lesstif_hid.request_debug_draw      = lesstif_request_debug_draw;
+  lesstif_hid.flush_debug_draw        = lesstif_flush_debug_draw;
+  lesstif_hid.finish_debug_draw       = lesstif_finish_debug_draw;
+
+  hid_register_hid (&lesstif_hid);
 #include "lesstif_lists.h"
 }

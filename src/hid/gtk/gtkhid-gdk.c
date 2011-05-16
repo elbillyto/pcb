@@ -10,6 +10,7 @@
 #include "clip.h"
 #include "../hidint.h"
 #include "gui.h"
+#include "hid/common/draw_helpers.h"
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
@@ -34,6 +35,10 @@ typedef struct render_priv {
   GdkGC *mask_gc;
   GdkGC *u_gc;
   GdkGC *grid_gc;
+  bool clip;
+  GdkRectangle clip_rect;
+  int attached_invalidate_depth;
+  int mark_invalidate_depth;
 } render_priv;
 
 
@@ -46,7 +51,6 @@ typedef struct hid_gc_struct
   gint width;
   gint cap, join;
   gchar xor_mask;
-  gchar erase;
   gint mask_seq;
 }
 hid_gc_struct;
@@ -117,6 +121,18 @@ ghid_make_gc (void)
 }
 
 static void
+set_clip (render_priv *priv, GdkGC *gc)
+{
+  if (gc == NULL)
+    return;
+
+  if (priv->clip)
+    gdk_gc_set_clip_rectangle (gc, &priv->clip_rect);
+  else
+    gdk_gc_set_clip_mask (gc, NULL);
+}
+
+static void
 ghid_draw_grid (void)
 {
   static GdkPoint *points = 0;
@@ -141,6 +157,8 @@ ghid_draw_grid (void)
       priv->grid_gc = gdk_gc_new (gport->drawable);
       gdk_gc_set_function (priv->grid_gc, GDK_XOR);
       gdk_gc_set_foreground (priv->grid_gc, &gport->grid_color);
+      gdk_gc_set_clip_origin (priv->grid_gc, 0, 0);
+      set_clip (priv, priv->grid_gc);
     }
   x1 = GRIDFIT_X (SIDE_X (gport->view_x0), PCB->Grid);
   y1 = GRIDFIT_Y (SIDE_Y (gport->view_y0), PCB->Grid);
@@ -237,26 +255,8 @@ void
 ghid_use_mask (int use_it)
 {
   static int mask_seq_id = 0;
-  static GdkDrawable *old;
   GdkColor color;
   render_priv *priv = gport->render_priv;
-
-  if (use_it == HID_FLUSH_DRAW_Q)
-    {
-      gdk_flush ();
-      return;
-    }
-  else if (use_it == HID_LIVE_DRAWING)
-    {
-      old = gport->drawable;
-      gport->drawable = gport->drawing_area->window;
-      return;
-    }
-  else if (use_it == HID_LIVE_DRAWING_OFF)
-    {
-      gport->drawable = old;
-      return;
-    }
 
   if (!gport->pixmap)
     return;
@@ -281,6 +281,8 @@ ghid_use_mask (int use_it)
       if (!priv->mask_gc)
 	{
 	  priv->mask_gc = gdk_gc_new (gport->drawable);
+	  gdk_gc_set_clip_origin (priv->mask_gc, 0, 0);
+	  set_clip (priv, priv->mask_gc);
 	}
       color.pixel = 1;
       gdk_gc_set_foreground (priv->mask_gc, &color);
@@ -378,12 +380,10 @@ ghid_set_color (hidGC gc, const char *name)
   if (strcmp (name, "erase") == 0)
     {
       gdk_gc_set_foreground (gc->gc, &gport->bg_color);
-      gc->erase = 1;
     }
   else if (strcmp (name, "drill") == 0)
     {
       gdk_gc_set_foreground (gc->gc, &gport->offlimits_color);
-      gc->erase = 0;
     }
   else
     {
@@ -422,8 +422,6 @@ ghid_set_color (hidGC gc, const char *name)
 	{
 	  gdk_gc_set_foreground (gc->gc, &cc->color);
 	}
-
-      gc->erase = 0;
     }
 }
 
@@ -473,18 +471,6 @@ ghid_set_draw_xor (hidGC gc, int xor_mask)
   ghid_set_color (gc, gc->colorname);
 }
 
-void
-ghid_set_draw_faded (hidGC gc, int faded)
-{
-  printf ("ghid_set_draw_faded(%p,%d) -- not implemented\n", gc, faded);
-}
-
-void
-ghid_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2)
-{
-  printf ("ghid_set_line_cap_angle() -- not implemented\n");
-}
-
 static int
 use_gc (hidGC gc)
 {
@@ -505,13 +491,14 @@ use_gc (hidGC gc)
       ghid_set_line_width (gc, gc->width);
       ghid_set_line_cap (gc, (EndCapStyle)gc->cap);
       ghid_set_draw_xor (gc, gc->xor_mask);
+      gdk_gc_set_clip_origin (gc->gc, 0, 0);
     }
   if (gc->mask_seq != mask_seq)
     {
       if (mask_seq)
 	gdk_gc_set_clip_mask (gc->gc, gport->mask);
       else
-	gdk_gc_set_clip_mask (gc->gc, NULL);
+	set_clip (priv, gc->gc);
       gc->mask_seq = mask_seq;
     }
   priv->u_gc = WHICH_GC (gc);
@@ -703,14 +690,8 @@ ghid_fill_rect (hidGC gc, int x1, int y1, int x2, int y2)
 		      x1, y1, x2 - x1 + 1, y2 - y1 + 1);
 }
 
-void
-ghid_invalidate_lr (int left, int right, int top, int bottom)
-{
-  ghid_invalidate_all ();
-}
-
-void
-ghid_invalidate_all ()
+static void
+redraw_region (GdkRectangle *rect)
 {
   int eleft, eright, etop, ebottom;
   BoxType region;
@@ -719,10 +700,33 @@ ghid_invalidate_all ()
   if (!gport->pixmap)
     return;
 
-  region.X1 = MIN(Px(0), Px(gport->width + 1));
-  region.Y1 = MIN(Py(0), Py(gport->height + 1));
-  region.X2 = MAX(Px(0), Px(gport->width + 1));
-  region.Y2 = MAX(Py(0), Py(gport->height + 1));
+  if (rect != NULL)
+    {
+      priv->clip_rect = *rect;
+      priv->clip = true;
+    }
+  else
+    {
+      priv->clip_rect.x = 0;
+      priv->clip_rect.y = 0;
+      priv->clip_rect.width = gport->width;
+      priv->clip_rect.height = gport->height;
+      priv->clip = false;
+    }
+
+  set_clip (priv, priv->bg_gc);
+  set_clip (priv, priv->offlimits_gc);
+  set_clip (priv, priv->mask_gc);
+  set_clip (priv, priv->grid_gc);
+
+  region.X1 = MIN(Px(priv->clip_rect.x),
+                  Px(priv->clip_rect.x + priv->clip_rect.width + 1));
+  region.Y1 = MIN(Py(priv->clip_rect.y),
+                  Py(priv->clip_rect.y + priv->clip_rect.height + 1));
+  region.X2 = MAX(Px(priv->clip_rect.x),
+                  Px(priv->clip_rect.x + priv->clip_rect.width + 1));
+  region.Y2 = MAX(Py(priv->clip_rect.y),
+                  Py(priv->clip_rect.y + priv->clip_rect.height + 1));
 
   eleft = Vx (0);
   eright = Vx (PCB->MaxWidth);
@@ -743,37 +747,156 @@ ghid_invalidate_all ()
 
   if (eleft > 0)
     gdk_draw_rectangle (gport->drawable, priv->offlimits_gc,
-			1, 0, 0, eleft, gport->height);
+                        1, 0, 0, eleft, gport->height);
   else
     eleft = 0;
   if (eright < gport->width)
     gdk_draw_rectangle (gport->drawable, priv->offlimits_gc,
-			1, eright, 0, gport->width - eright, gport->height);
+                        1, eright, 0, gport->width - eright, gport->height);
   else
     eright = gport->width;
   if (etop > 0)
     gdk_draw_rectangle (gport->drawable, priv->offlimits_gc,
-			1, eleft, 0, eright - eleft + 1, etop);
+                        1, eleft, 0, eright - eleft + 1, etop);
   else
     etop = 0;
   if (ebottom < gport->height)
     gdk_draw_rectangle (gport->drawable, priv->offlimits_gc,
-			1, eleft, ebottom, eright - eleft + 1,
-			gport->height - ebottom);
+                        1, eleft, ebottom, eright - eleft + 1,
+                        gport->height - ebottom);
   else
     ebottom = gport->height;
 
   gdk_draw_rectangle (gport->drawable, priv->bg_gc, 1,
-		      eleft, etop, eright - eleft + 1, ebottom - etop + 1);
+                      eleft, etop, eright - eleft + 1, ebottom - etop + 1);
 
   ghid_draw_bg_image();
 
   hid_expose_callback (&ghid_hid, &region, 0);
   ghid_draw_grid ();
-  if (ghidgui->need_restore_crosshair)
-    RestoreCrosshair ();
-  ghidgui->need_restore_crosshair = FALSE;
+
+  /* In some cases we are called with the crosshair still off */
+  if (priv->attached_invalidate_depth == 0)
+    DrawAttached ();
+
+  /* In some cases we are called with the mark still off */
+  if (priv->mark_invalidate_depth == 0)
+    DrawMark ();
+
+  priv->clip = false;
+
+  /* Rest the clip for bg_gc, as it is used outside this function */
+  gdk_gc_set_clip_mask (priv->bg_gc, NULL);
+}
+
+void
+ghid_invalidate_lr (int left, int right, int top, int bottom)
+{
+  int dleft, dright, dtop, dbottom;
+  int minx, maxx, miny, maxy;
+  GdkRectangle rect;
+
+  dleft = Vx (left);
+  dright = Vx (right);
+  dtop = Vy (top);
+  dbottom = Vy (bottom);
+
+  minx = MIN (dleft, dright);
+  maxx = MAX (dleft, dright);
+  miny = MIN (dtop, dbottom);
+  maxy = MAX (dtop, dbottom);
+
+  rect.x = minx;
+  rect.y = miny;
+  rect.width = maxx - minx;
+  rect.height = maxy - miny;
+
+  redraw_region (&rect);
   ghid_screen_update ();
+}
+
+
+void
+ghid_invalidate_all ()
+{
+  redraw_region (NULL);
+  ghid_screen_update ();
+}
+
+void
+ghid_notify_crosshair_change (bool changes_complete)
+{
+  render_priv *priv = gport->render_priv;
+
+  /* We sometimes get called before the GUI is up */
+  if (gport->drawing_area == NULL)
+    return;
+
+  if (changes_complete)
+    priv->attached_invalidate_depth --;
+
+  if (priv->attached_invalidate_depth < 0)
+    {
+      priv->attached_invalidate_depth = 0;
+      /* A mismatch of changes_complete == false and == true notifications
+       * is not expected to occur, but we will try to handle it gracefully.
+       * As we know the crosshair will have been shown already, we must
+       * repaint the entire view to be sure not to leave an artaefact.
+       */
+      ghid_invalidate_all ();
+      return;
+    }
+
+  if (priv->attached_invalidate_depth == 0)
+    DrawAttached ();
+
+  if (!changes_complete)
+    {
+      priv->attached_invalidate_depth ++;
+    }
+  else if (gport->drawing_area != NULL)
+    {
+      /* Queue a GTK expose when changes are complete */
+      ghid_draw_area_update (gport, NULL);
+    }
+}
+
+void
+ghid_notify_mark_change (bool changes_complete)
+{
+  render_priv *priv = gport->render_priv;
+
+  /* We sometimes get called before the GUI is up */
+  if (gport->drawing_area == NULL)
+    return;
+
+  if (changes_complete)
+    priv->mark_invalidate_depth --;
+
+  if (priv->mark_invalidate_depth < 0)
+    {
+      priv->mark_invalidate_depth = 0;
+      /* A mismatch of changes_complete == false and == true notifications
+       * is not expected to occur, but we will try to handle it gracefully.
+       * As we know the mark will have been shown already, we must
+       * repaint the entire view to be sure not to leave an artaefact.
+       */
+      ghid_invalidate_all ();
+      return;
+    }
+
+  if (priv->mark_invalidate_depth == 0)
+    DrawMark ();
+
+  if (!changes_complete)
+    {
+      priv->mark_invalidate_depth ++;
+    }
+  else if (gport->drawing_area != NULL)
+    {
+      /* Queue a GTK expose when changes are complete */
+      ghid_draw_area_update (gport, NULL);
+    }
 }
 
 static void
@@ -872,9 +995,10 @@ draw_crosshair (GdkGC *xor_gc, gint x, gint y)
 #define VCW 16
 #define VCD 8
 
-void
-ghid_show_crosshair (gboolean paint_new_location)
+static void
+show_crosshair (gboolean paint_new_location)
 {
+  render_priv *priv = gport->render_priv;
   gint x, y;
   static gint x_prev = -1, y_prev = -1;
   static gboolean draw_markers, draw_markers_prev = FALSE;
@@ -889,6 +1013,8 @@ ghid_show_crosshair (gboolean paint_new_location)
       xor_gc = gdk_gc_new (ghid_port.drawing_area->window);
       gdk_gc_copy (xor_gc, ghid_port.drawing_area->style->white_gc);
       gdk_gc_set_function (xor_gc, GDK_XOR);
+      gdk_gc_set_clip_origin (xor_gc, 0, 0);
+      set_clip (priv, xor_gc);
       /* FIXME: when CrossColor changed from config */
       ghid_map_color_string (Settings.CrossColor, &cross_color);
     }
@@ -961,9 +1087,11 @@ ghid_drawing_area_configure_hook (GHidPort *port)
     {
       priv->bg_gc = gdk_gc_new (port->drawable);
       gdk_gc_set_foreground (priv->bg_gc, &port->bg_color);
+      gdk_gc_set_clip_origin (priv->bg_gc, 0, 0);
 
       priv->offlimits_gc = gdk_gc_new (port->drawable);
       gdk_gc_set_foreground (priv->offlimits_gc, &port->offlimits_color);
+      gdk_gc_set_clip_origin (priv->offlimits_gc, 0, 0);
       done_once = 1;
     }
 
@@ -974,17 +1102,6 @@ ghid_drawing_area_configure_hook (GHidPort *port)
     }
 }
 
-gboolean
-ghid_start_drawing (GHidPort *port)
-{
-  return TRUE;
-}
-
-void
-ghid_end_drawing (GHidPort *port)
-{
-}
-
 void
 ghid_screen_update (void)
 {
@@ -992,7 +1109,7 @@ ghid_screen_update (void)
 
   gdk_draw_drawable (gport->drawing_area->window, priv->bg_gc, gport->pixmap,
 		     0, 0, 0, 0, gport->width, gport->height);
-  ghid_show_crosshair (TRUE);
+  show_crosshair (TRUE);
 }
 
 gboolean
@@ -1005,8 +1122,13 @@ ghid_drawing_area_expose_cb (GtkWidget *widget,
   gdk_draw_drawable (widget->window, priv->bg_gc, port->pixmap,
                     ev->area.x, ev->area.y, ev->area.x, ev->area.y,
                     ev->area.width, ev->area.height);
-  ghid_show_crosshair (TRUE);
+  show_crosshair (TRUE);
   return FALSE;
+}
+
+void
+ghid_port_drawing_realize_cb (GtkWidget *widget, gpointer data)
+{
 }
 
 gboolean
@@ -1162,4 +1284,27 @@ ghid_render_pixmap (int cx, int cy, double zoom, int width, int height, int dept
   gport->view_height = save_view_height;
 
   return pixmap;
+}
+
+HID *
+ghid_request_debug_draw (void)
+{
+  /* No special setup requirements, drawing goes into
+   * the backing pixmap. */
+  return &ghid_hid;
+}
+
+void
+ghid_flush_debug_draw (void)
+{
+  ghid_screen_update ();
+  gdk_flush ();
+}
+
+void
+ghid_finish_debug_draw (void)
+{
+  ghid_flush_debug_draw ();
+  /* No special tear down requirements
+   */
 }

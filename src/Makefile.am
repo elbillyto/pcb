@@ -5,7 +5,7 @@
 SUBDIRS=	icons
 
 CC = @CC_OR_CXX@
-CFLAGS = @CC_OR_CXX_FLAGS@
+AM_CFLAGS = @CC_OR_CXX_FLAGS@
 
 pcbtreedir=	@PCBTREEDIR@
 pcblibdir=	@PCBLIBDIR@
@@ -28,7 +28,7 @@ bin_PROGRAMS=	pcb
 if DEBUG_BUILD
 # don't disable assert()
 else
-AM_CFLAGS = -DNDEBUG
+AM_CFLAGS += -DNDEBUG
 endif
 
 PCB_SRCS = \
@@ -150,6 +150,7 @@ PCB_SRCS = \
 	hid/common/hidinit.c \
 	hid/common/hidinit.h \
 	hid/common/hidnogui.c \
+	hid/common/hidnogui.h \
 	hid/common/extents.c \
 	hid/common/draw_helpers.c \
 	hid/common/draw_helpers.h \
@@ -157,12 +158,22 @@ PCB_SRCS = \
 	hid/common/hid_resource.h \
 	hid/hidint.h 
 
-EXTRA_pcb_SOURCES = ${DBUS_SRCS} toporouter.c toporouter.h
+EXTRA_pcb_SOURCES = ${DBUS_SRCS} ${GL_SRCS} toporouter.c toporouter.h
 DBUS_SRCS= \
 	dbus-pcbmain.c \
 	dbus-pcbmain.h \
 	dbus.h \
 	dbus.c
+
+LIBGTK_GDK_SRCS= \
+	hid/gtk/gtkhid-gdk.c
+
+LIBGTK_GL_SRCS= \
+	hid/gtk/gtkhid-gl.c
+
+GL_SRCS= \
+	hid/common/hidgl.c \
+	hid/common/hidgl.h
 
 BUILT_SOURCES = \
 	core_lists.h \
@@ -250,7 +261,6 @@ LIBGTK_SRCS = \
 	dolists.h \
 	hid/hidint.h \
 	hid/gtk/gtkhid-main.c \
-	hid/gtk/gtkhid-gdk.c \
 	hid/gtk/gtkhid.h \
 	hid/gtk/gui.h \
 	hid/gtk/gui-command-window.c \
@@ -292,6 +302,14 @@ dbus-introspect.h : dbus.xml Makefile
 PCB_SRCS+=	${DBUS_SRCS}
 BUILT_SOURCES+=	dbus-introspect.h
 
+endif
+
+# If we are building with GL support, we need some extra files
+if USE_GL
+PCB_SRCS+=	${GL_SRCS}
+LIBGTK_SRCS+=	${LIBGTK_GL_SRCS}
+else
+LIBGTK_SRCS+=	${LIBGTK_GDK_SRCS}
 endif
 
 # If we are building on win32, then compile in some icons for the
@@ -406,8 +424,7 @@ libnelma_a_CPPFLAGS = -I./hid/nelma
 LIBNELMA_SRCS = \
 	dolists.h \
 	hid/hidint.h \
-	hid/nelma/nelma.c \
-	hid/nelma/nelma.h 
+	hid/nelma/nelma.c
 libnelma_a_SOURCES = ${LIBNELMA_SRCS} hid/nelma/nelma_lists.h
 
 hid/nelma/nelma_lists.h : ${LIBNELMA_SRCS} Makefile

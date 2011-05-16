@@ -7965,7 +7965,7 @@ toporouter (int argc, char **argv, int x, int y)
   AddAllRats (false, NULL);
   RestoreUndoSerialNumber ();
   IncrementUndoSerialNumber ();
-  ClearAndRedrawOutput ();
+  Redraw ();
 
   return 0;
 }
@@ -7987,8 +7987,11 @@ escape (int argc, char **argv, int x, int y)
       PinTypePtr via;
       LineTypePtr line;
 
-      pitch = sqrt( pow(abs(element->Pad[0].Point1.X - element->Pad[1].Point1.X), 2) + 
-        pow(abs(element->Pad[0].Point1.Y - element->Pad[1].Point1.Y), 2) );
+      PadType *pad0 = element->Pad->data;
+      PadType *pad1 = g_list_next (element->Pad)->data;
+
+      pitch = sqrt (pow (abs (pad0->Point1.X - pad1->Point1.X), 2) +
+                    pow (abs (pad0->Point1.Y - pad1->Point1.Y), 2) );
       length = sqrt(pow(pitch,2) + pow(pitch,2)) / 2.;
 
       dx = length * sin(M_PI/4.);
@@ -8040,14 +8043,14 @@ escape (int argc, char **argv, int x, int y)
         AddObjectToCreateUndoList (VIA_TYPE, via, via, via);
 //        if (gui->shift_is_pressed ())
 //          ChangeObjectThermal (VIA_TYPE, via, via, via, PCB->ThermStyle);
-        DrawVia (via, 0);
+        DrawVia (via);
         if((line = CreateDrawnLineOnLayer (CURRENT, pad->Point1.X + 1., pad->Point1.Y + 1., viax + 1., viay + 1.,
                 Settings.LineThickness, 2 * Settings.Keepaway,
                 NoFlags())))        
         {
 
           AddObjectToCreateUndoList (LINE_TYPE, CURRENT, line, line);
-          DrawLine (CURRENT, line, 0);
+          DrawLine (CURRENT, line);
 
         }
       

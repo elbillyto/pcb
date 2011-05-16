@@ -123,56 +123,56 @@ static bool
 FindPad (char *ElementName, char *PinNum, ConnectionType * conn, bool Same)
 {
   ElementTypePtr element;
-  Cardinal i;
+  GList *i;
 
-  if ((element = SearchElementByName (PCB->Data, ElementName)) != NULL)
+  if ((element = SearchElementByName (PCB->Data, ElementName)) == NULL)
+    return false;
+
+  for (i = element->Pad; i != NULL; i = g_list_next (i))
     {
-      for (i = 0; i < element->PadN; i++)
-	if (NSTRCMP (PinNum, element->Pad[i].Number) == 0 && (!Same
-							      ||
-							      !TEST_FLAG
-							      (DRCFLAG,
-							       &element->
-							       Pad[i])))
-	  {
-	    conn->type = PAD_TYPE;
-	    conn->ptr2 = &element->Pad[i];
-	    conn->group =
-	      TEST_FLAG (ONSOLDERFLAG, &element->Pad[i]) ? SLayer : CLayer;
-	    if (TEST_FLAG (EDGE2FLAG, &element->Pad[i]))
-	      {
-		conn->X = element->Pad[i].Point2.X;
-		conn->Y = element->Pad[i].Point2.Y;
-	      }
-	    else
-	      {
-		conn->X = element->Pad[i].Point1.X;
-		conn->Y = element->Pad[i].Point1.Y;
-	      }
-	    break;
-	  }
-      if (i == element->PadN)
-	{
-	  for (i = 0; i < element->PinN; i++)
-	    if (!TEST_FLAG (HOLEFLAG, &element->Pin[i]) &&
-		element->Pin[i].Number &&
-		NSTRCMP (PinNum, element->Pin[i].Number) == 0 &&
-		(!Same || !TEST_FLAG (DRCFLAG, &element->Pin[i])))
-	      {
-		conn->type = PIN_TYPE;
-		conn->ptr2 = &element->Pin[i];
-		conn->group = SLayer;	/* any layer will do */
-		conn->X = element->Pin[i].X;
-		conn->Y = element->Pin[i].Y;
-		break;
-	      }
-	  if (i == element->PinN)
-	    return (false);
-	}
-      conn->ptr1 = element;
-      return (true);
+      PadType *pad = i->data;
+
+      if (NSTRCMP (PinNum, pad->Number) == 0 &&
+          (!Same || !TEST_FLAG (DRCFLAG, pad)))
+        {
+          conn->type = PAD_TYPE;
+          conn->ptr1 = element;
+          conn->ptr2 = pad;
+          conn->group = TEST_FLAG (ONSOLDERFLAG, pad) ? SLayer : CLayer;
+
+          if (TEST_FLAG (EDGE2FLAG, pad))
+            {
+              conn->X = pad->Point2.X;
+              conn->Y = pad->Point2.Y;
+            }
+          else
+            {
+              conn->X = pad->Point1.X;
+              conn->Y = pad->Point1.Y;
+            }
+          return true;
+        }
     }
-  return (false);
+
+  for (i = element->Pin; i != NULL; i = g_list_next (i))
+    {
+      PinType *pin = i->data;
+
+      if (!TEST_FLAG (HOLEFLAG, pin) &&
+          pin->Number && NSTRCMP (PinNum, pin->Number) == 0 &&
+          (!Same || !TEST_FLAG (DRCFLAG, pin)))
+        {
+          conn->type = PIN_TYPE;
+          conn->ptr1 = element;
+          conn->ptr2 = pin;
+          conn->group = SLayer;        /* any layer will do */
+          conn->X = pin->X;
+          conn->Y = pin->Y;
+          return true;
+        }
+    }
+
+  return false;
 }
 
 /*--------------------------------------------------------------------------
@@ -699,7 +699,7 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) (register ConnectionTypePtr
 		  if (distance == 0)
 		    SET_FLAG (VIAFLAG, line);
 		  AddObjectToCreateUndoList (RATLINE_TYPE, line, line, line);
-		  DrawRat (line, 0);
+		  DrawRat (line);
 		  changed = true;
 		}
 	    }

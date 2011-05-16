@@ -53,6 +53,7 @@
 #include "hid.h"
 #include "../hidint.h"
 #include <gd.h>
+#include "hid/common/hidnogui.h"
 #include "hid/common/draw_helpers.h"
 #include "gcode.h"
 #include "bitmap.h"
@@ -68,7 +69,7 @@
 #endif
 
 #define CRASH fprintf(stderr, "HID error: pcb called unimplemented GCODE function %s.\n", __FUNCTION__); abort()
-#define pcb_unit 100000.0	/* pcb internal units per inch */
+#define pcb_unit (INCH_TO_COORD(1)) /* pcb internal units per inch */
 struct color_struct
 {
   /* the descriptor used by the gd library */
@@ -182,7 +183,7 @@ REGISTER_ATTRIBUTES (gcode_attribute_list)
 
 /* *** Utility funcions **************************************************** */
 
-/* convert from default PCB units (1/100 mil) to gcode units */
+/* convert from default PCB units to gcode units */
      static int pcb_to_gcode (int pcb)
 {
   int gcode;
@@ -446,7 +447,7 @@ gcode_do_export (HID_Attr_Val * options)
   gcode_cutdepth = options[HA_cutdepth].real_value * scale;
   gcode_drilldepth = options[HA_drilldepth].real_value * scale;
   gcode_safeZ = options[HA_safeZ].real_value * scale;
-  gcode_toolradius = options[HA_toolradius].real_value * scale * pcb_unit;	/* in PCB units (1/100 mil) */
+  gcode_toolradius = options[HA_toolradius].real_value * scale * pcb_unit;	/* in PCB units */
   if (metric)
     gcode_toolradius *= 1 / 25.4;
   gcode_choose_groups ();
@@ -741,12 +742,6 @@ gcode_set_draw_faded (hidGC gc, int faded)
 }
 
 static void
-gcode_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2)
-{
-  CRASH;
-}
-
-static void
 use_gc (hidGC gc)
 {
   int need_brush = 0;
@@ -1028,71 +1023,45 @@ gcode_set_crosshair (int x, int y, int a)
 
 /* *** Miscellaneous ******************************************************* */
 
-HID gcode_hid = {
-  sizeof (HID),
-  "gcode",
-  "G-CODE export.",
-  0,				/* gui */
-  0,				/* printer */
-  1,				/* exporter */
-  1,				/* poly before */
-  0,				/* poly after */
-  0,				/* poly dicer */
-  gcode_get_export_options,
-  gcode_do_export,
-  gcode_parse_arguments,
-  0 /* gcode_invalidate_lr */ ,
-  0 /* gcode_invalidate_all */ ,
-  gcode_set_layer,
-  gcode_make_gc,
-  gcode_destroy_gc,
-  gcode_use_mask,
-  gcode_set_color,
-  gcode_set_line_cap,
-  gcode_set_line_width,
-  gcode_set_draw_xor,
-  gcode_set_draw_faded,
-  gcode_set_line_cap_angle,
-  gcode_draw_line,
-  gcode_draw_arc,
-  gcode_draw_rect,
-  gcode_fill_circle,
-  gcode_fill_polygon,
-  common_fill_pcb_polygon,
-  0 /* nelma_thindraw_pcb_polygon */ ,
-  gcode_fill_rect,
-  gcode_calibrate,
-  0 /* gcode_shift_is_pressed */ ,
-  0 /* gcode_control_is_pressed */ ,
-  0 /* gcode_mod1_is_pressed */ ,
-  0 /* gcode_get_coords */ ,
-  gcode_set_crosshair,
-  0 /* gcode_add_timer */ ,
-  0 /* gcode_stop_timer */ ,
-  0 /* gcode_watch_file */ ,
-  0 /* gcode_unwatch_file */ ,
-  0 /* gcode_add_block_hook */ ,
-  0 /* gcode_stop_block_hook */ ,
-  0 /* gcode_log */ ,
-  0 /* gcode_logv */ ,
-  0 /* gcode_confirm_dialog */ ,
-  0 /* gcode_close_confirm_dialog */ ,
-  0 /* gcode_report_dialog */ ,
-  0 /* gcode_prompt_for */ ,
-  0 /* gcode_fileselect */ ,
-  0 /* gcode_attribute_dialog */ ,
-  0 /* gcode_show_item */ ,
-  0 /* gcode_beep */ ,
-  0 /* gcode_progress */ ,
-  0				/* gcode_drc_gui */
-};
-
 #include "dolists.h"
+
+HID gcode_hid;
 
 void
 hid_gcode_init ()
 {
-  apply_default_hid (&gcode_hid, 0);
+  memset (&gcode_hid, 0, sizeof (HID));
+
+  common_nogui_init (&gcode_hid);
+  common_draw_helpers_init (&gcode_hid);
+
+  gcode_hid.struct_size         = sizeof (HID);
+  gcode_hid.name                = "gcode";
+  gcode_hid.description         = "G-CODE export.";
+  gcode_hid.exporter            = 1;
+  gcode_hid.poly_before         = 1;
+
+  gcode_hid.get_export_options  = gcode_get_export_options;
+  gcode_hid.do_export           = gcode_do_export;
+  gcode_hid.parse_arguments     = gcode_parse_arguments;
+  gcode_hid.set_layer           = gcode_set_layer;
+  gcode_hid.make_gc             = gcode_make_gc;
+  gcode_hid.destroy_gc          = gcode_destroy_gc;
+  gcode_hid.use_mask            = gcode_use_mask;
+  gcode_hid.set_color           = gcode_set_color;
+  gcode_hid.set_line_cap        = gcode_set_line_cap;
+  gcode_hid.set_line_width      = gcode_set_line_width;
+  gcode_hid.set_draw_xor        = gcode_set_draw_xor;
+  gcode_hid.set_draw_faded      = gcode_set_draw_faded;
+  gcode_hid.draw_line           = gcode_draw_line;
+  gcode_hid.draw_arc            = gcode_draw_arc;
+  gcode_hid.draw_rect           = gcode_draw_rect;
+  gcode_hid.fill_circle         = gcode_fill_circle;
+  gcode_hid.fill_polygon        = gcode_fill_polygon;
+  gcode_hid.fill_rect           = gcode_fill_rect;
+  gcode_hid.calibrate           = gcode_calibrate;
+  gcode_hid.set_crosshair       = gcode_set_crosshair;
+
   hid_register_hid (&gcode_hid);
 
 #include "gcode_lists.h"

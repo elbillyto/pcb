@@ -29,6 +29,7 @@
 
 #include "hid.h"
 #include "../hidint.h"
+#include "hid/common/hidnogui.h"
 #include "hid/common/draw_helpers.h"
 #include "hid/common/hidinit.h"
 
@@ -55,8 +56,6 @@ static void gerber_set_color (hidGC gc, const char *name);
 static void gerber_set_line_cap (hidGC gc, EndCapStyle style);
 static void gerber_set_line_width (hidGC gc, int width);
 static void gerber_set_draw_xor (hidGC gc, int _xor);
-static void gerber_set_draw_faded (hidGC gc, int faded);
-static void gerber_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2);
 static void gerber_draw_line (hidGC gc, int x1, int y1, int x2, int y2);
 static void gerber_draw_arc (hidGC gc, int cx, int cy, int width, int height, int start_angle, int delta_angle);
 static void gerber_draw_rect (hidGC gc, int x1, int y1, int x2, int y2);
@@ -145,7 +144,7 @@ int n_pending_drills = 0, max_pending_drills = 0;
 /*----------------------------------------------------------------------------*/
 /* Defined Constants                                                          */
 /*----------------------------------------------------------------------------*/
-#define AUTO_OUTLINE_WIDTH 800       /* Auto-geneated outline width of 8 mils */
+#define AUTO_OUTLINE_WIDTH MIL_TO_COORD(8)       /* Auto-geneated outline width of 8 mils */
 
 
 /*----------------------------------------------------------------------------*/
@@ -203,16 +202,16 @@ printAperture(FILE *f, int i)
     {
     case ROUND:
       fprintf (f, "%%ADD%dC,%.4f*%%\015\012", dCode,
-	       width / 100000.0);
+	       COORD_TO_INCH(width));
       break;
     case SQUARE:
       fprintf (f, "%%ADD%dR,%.4fX%.4f*%%\015\012",
-	       dCode, width / 100000.0, width / 100000.0);
+	       dCode, COORD_TO_INCH(width), COORD_TO_INCH(width));
       break;
     case OCTAGON:
       fprintf (f, "%%AMOCT%d*5,0,8,0,0,%.4f,22.5*%%\015\012"
 	       "%%ADD%dOCT%d*%%\015\012", dCode,
-	       width / (100000.0 * COS_22_5_DEGREE), dCode,
+	       COORD_TO_INCH(width) / COS_22_5_DEGREE, dCode,
 	       dCode);
       break;
 #if 0
@@ -277,60 +276,7 @@ SetAppLayer (int l)
 
 /* --------------------------------------------------------------------------- */
 
-static HID gerber_hid = {
-  sizeof (HID),
-  "gerber",
-  "RS-274X (Gerber) export.",
-  0, 0, 1, 0, 0, 1,
-  gerber_get_export_options,
-  gerber_do_export,
-  gerber_parse_arguments,
-  0 /* gerber_invalidate_lr */ ,
-  0 /* gerber_invalidate_all */ ,
-  gerber_set_layer,
-  gerber_make_gc,
-  gerber_destroy_gc,
-  gerber_use_mask,
-  gerber_set_color,
-  gerber_set_line_cap,
-  gerber_set_line_width,
-  gerber_set_draw_xor,
-  gerber_set_draw_faded,
-  gerber_set_line_cap_angle,
-  gerber_draw_line,
-  gerber_draw_arc,
-  gerber_draw_rect,
-  gerber_fill_circle,
-  gerber_fill_polygon,
-  common_fill_pcb_polygon,
-  0 /* gerber_thindraw_pcb_polygon */ ,
-  gerber_fill_rect,
-  gerber_calibrate,
-  0 /* gerber_shift_is_pressed */ ,
-  0 /* gerber_control_is_pressed */ ,
-  0 /* gerber_mod1_is_pressed */ ,
-  0 /* gerber_get_coords */ ,
-  gerber_set_crosshair,
-  0 /* gerber_add_timer */ ,
-  0 /* gerber_stop_timer */ ,
-  0 /* gerber_watch_file */ ,
-  0 /* gerber_unwatch_file */ ,
-  0 /* gerber_add_block_hook */ ,
-  0 /* gerber_stop_block_hook */ ,
-  0 /* gerber_log */ ,
-  0 /* gerber_logv */ ,
-  0 /* gerber_confirm_dialog */ ,
-  0 /* gerber_close_confirm_dialog */ ,
-  0 /* gerber_report_dialog */ ,
-  0 /* gerber_prompt_for */ ,
-  0 /* gerber_fileselect */ ,
-  0 /* gerber_attribute_dialog */ ,
-  0 /* gerber_show_item */ ,
-  0 /* gerber_beep */ ,
-  0 /* gerber_progress */ ,
-  0 /* gerber_drc_gui */
-};
-
+static HID gerber_hid;
 
 typedef struct hid_gc_struct
 {
@@ -681,7 +627,7 @@ gerber_set_layer (const char *name, int group, int empty)
 	    if (curapp->aperture_used[i])
 	      fprintf (f, "T%02dC%.3f\015\012",
 		       i + DCODE_BASE,
-		       global_aperture_sizes[i] / 100000.0);
+		       COORD_TO_INCH(global_aperture_sizes[i]));
 	  fprintf (f, "%%\015\012");
 	  /* FIXME */
 	  return 1;
@@ -853,18 +799,6 @@ static void
 gerber_set_draw_xor (hidGC gc, int xor_)
 {
   ;
-}
-
-static void
-gerber_set_draw_faded (hidGC gc, int faded)
-{
-  ;
-}
-
-static void
-gerber_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2)
-{
-  CRASH;
 }
 
 static void
@@ -1222,10 +1156,38 @@ gerber_set_crosshair (int x, int y, int action)
 {
 }
 
-
 void
 hid_gerber_init ()
 {
-  apply_default_hid (&gerber_hid, 0);
+  memset (&gerber_hid, 0, sizeof (HID));
+
+  common_nogui_init (&gerber_hid);
+  common_draw_helpers_init (&gerber_hid);
+
+  gerber_hid.struct_size         = sizeof (HID);
+  gerber_hid.name                = "gerber";
+  gerber_hid.description         = "RS-274X (Gerber) export.";
+  gerber_hid.exporter            = 1;
+
+  gerber_hid.get_export_options  = gerber_get_export_options;
+  gerber_hid.do_export           = gerber_do_export;
+  gerber_hid.parse_arguments     = gerber_parse_arguments;
+  gerber_hid.set_layer           = gerber_set_layer;
+  gerber_hid.make_gc             = gerber_make_gc;
+  gerber_hid.destroy_gc          = gerber_destroy_gc;
+  gerber_hid.use_mask            = gerber_use_mask;
+  gerber_hid.set_color           = gerber_set_color;
+  gerber_hid.set_line_cap        = gerber_set_line_cap;
+  gerber_hid.set_line_width      = gerber_set_line_width;
+  gerber_hid.set_draw_xor        = gerber_set_draw_xor;
+  gerber_hid.draw_line           = gerber_draw_line;
+  gerber_hid.draw_arc            = gerber_draw_arc;
+  gerber_hid.draw_rect           = gerber_draw_rect;
+  gerber_hid.fill_circle         = gerber_fill_circle;
+  gerber_hid.fill_polygon        = gerber_fill_polygon;
+  gerber_hid.fill_rect           = gerber_fill_rect;
+  gerber_hid.calibrate           = gerber_calibrate;
+  gerber_hid.set_crosshair       = gerber_set_crosshair;
+
   hid_register_hid (&gerber_hid);
 }

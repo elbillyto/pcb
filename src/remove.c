@@ -131,15 +131,13 @@ DestroyVia (PinTypePtr Via)
 {
   r_delete_entry (DestroyTarget->via_tree, (BoxTypePtr) Via);
   free (Via->Name);
-  if (Via != &DestroyTarget->Via[--DestroyTarget->ViaN])
-    {
-      *Via = DestroyTarget->Via[DestroyTarget->ViaN];
-      r_substitute (DestroyTarget->via_tree, (BoxTypePtr)
-		    (BoxType *) & DestroyTarget->Via[DestroyTarget->ViaN],
-		    (BoxType *) Via);
-    }
-  memset (&DestroyTarget->Via[DestroyTarget->ViaN], 0, sizeof (PinType));
-  return (NULL);
+
+  DestroyTarget->Via = g_list_remove (DestroyTarget->Via, Via);
+  DestroyTarget->ViaN --;
+
+  g_slice_free (PinType, Via);
+
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -150,15 +148,13 @@ DestroyLine (LayerTypePtr Layer, LineTypePtr Line)
 {
   r_delete_entry (Layer->line_tree, (BoxTypePtr) Line);
   free (Line->Number);
-  if (Line != &Layer->Line[--Layer->LineN])
-    {
-      *Line = Layer->Line[Layer->LineN];
-      /* tricky - line pointers are moved around */
-      r_substitute (Layer->line_tree, (BoxType *) & Layer->Line[Layer->LineN],
-		    (BoxType *) Line);
-    }
-  memset (&Layer->Line[Layer->LineN], 0, sizeof (LineType));
-  return (NULL);
+
+  Layer->Line = g_list_remove (Layer->Line, Line);
+  Layer->LineN --;
+
+  g_slice_free (LineType, Line);
+
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -168,14 +164,13 @@ static void *
 DestroyArc (LayerTypePtr Layer, ArcTypePtr Arc)
 {
   r_delete_entry (Layer->arc_tree, (BoxTypePtr) Arc);
-  if (Arc != &Layer->Arc[--Layer->ArcN])
-    {
-      *Arc = Layer->Arc[Layer->ArcN];
-      r_substitute (Layer->arc_tree, (BoxType *) & Layer->Arc[Layer->ArcN],
-		    (BoxType *) Arc);
-    }
-  memset (&Layer->Arc[Layer->ArcN], 0, sizeof (ArcType));
-  return (NULL);
+
+  Layer->Arc = g_list_remove (Layer->Arc, Arc);
+  Layer->ArcN --;
+
+  g_slice_free (ArcType, Arc);
+
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -186,15 +181,13 @@ DestroyPolygon (LayerTypePtr Layer, PolygonTypePtr Polygon)
 {
   r_delete_entry (Layer->polygon_tree, (BoxTypePtr) Polygon);
   FreePolygonMemory (Polygon);
-  if (Polygon != &Layer->Polygon[--Layer->PolygonN])
-    {
-      *Polygon = Layer->Polygon[Layer->PolygonN];
-      r_substitute (Layer->polygon_tree,
-		    (BoxType *) & Layer->Polygon[Layer->PolygonN],
-		    (BoxType *) Polygon);
-    }
-  memset (&Layer->Polygon[Layer->PolygonN], 0, sizeof (PolygonType));
-  return (NULL);
+
+  Layer->Polygon = g_list_remove (Layer->Polygon, Polygon);
+  Layer->PolygonN --;
+
+  g_slice_free (PolygonType, Polygon);
+
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -245,14 +238,13 @@ DestroyText (LayerTypePtr Layer, TextTypePtr Text)
 {
   free (Text->TextString);
   r_delete_entry (Layer->text_tree, (BoxTypePtr) Text);
-  if (Text != &Layer->Text[--Layer->TextN])
-    {
-      *Text = Layer->Text[Layer->TextN];
-      r_substitute (Layer->text_tree, (BoxType *) & Layer->Text[Layer->TextN],
-		    (BoxType *) Text);
-    }
-  memset (&Layer->Text[Layer->TextN], 0, sizeof (TextType));
-  return (NULL);
+
+  Layer->Text = g_list_remove (Layer->Text, Text);
+  Layer->TextN --;
+
+  g_slice_free (TextType, Text);
+
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -286,37 +278,13 @@ DestroyElement (ElementTypePtr Element)
   }
   END_LOOP;
   FreeElementMemory (Element);
-  if (Element != &DestroyTarget->Element[--DestroyTarget->ElementN])
-    {
-      *Element = DestroyTarget->Element[DestroyTarget->ElementN];
-      /* deal with changed element pointer */
-      r_substitute (DestroyTarget->element_tree,
-		    (BoxType *) & DestroyTarget->Element[DestroyTarget->
-							 ElementN],
-		    (BoxType *) Element);
-    }
-  PIN_LOOP (Element);
-  {
-    pin->Element = Element;
-  }
-  END_LOOP;
-  PAD_LOOP (Element);
-  {
-    pad->Element = Element;
-  }
-  END_LOOP;
-  ELEMENTTEXT_LOOP (Element);
-  {
-    r_substitute (DestroyTarget->name_tree[n],
-		  (BoxType *) & DestroyTarget->Element[DestroyTarget->
-						       ElementN].Name[n],
-		  (BoxType *) text);
-    text->Element = Element;
-  }
-  END_LOOP;
-  memset (&DestroyTarget->Element[DestroyTarget->ElementN], 0,
-	  sizeof (ElementType));
-  return (NULL);
+
+  DestroyTarget->Element = g_list_remove (DestroyTarget->Element, Element);
+  DestroyTarget->ElementN --;
+
+  g_slice_free (ElementType, Element);
+
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -327,15 +295,13 @@ DestroyRat (RatTypePtr Rat)
 {
   if (DestroyTarget->rat_tree)
     r_delete_entry (DestroyTarget->rat_tree, &Rat->BoundingBox);
-  if (Rat != &DestroyTarget->Rat[--DestroyTarget->RatN])
-    {
-      *Rat = DestroyTarget->Rat[DestroyTarget->RatN];
-      r_substitute (DestroyTarget->rat_tree,
-		    &DestroyTarget->Rat[DestroyTarget->RatN].BoundingBox,
-		    &Rat->BoundingBox);
-    }
-  memset (&DestroyTarget->Rat[DestroyTarget->RatN], 0, sizeof (RatType));
-  return (NULL);
+
+  DestroyTarget->Rat = g_list_remove (DestroyTarget->Rat, Rat);
+  DestroyTarget->RatN --;
+
+  g_slice_free (RatType, Rat);
+
+  return NULL;
 }
 
 
@@ -353,7 +319,7 @@ RemoveVia (PinTypePtr Via)
 	Draw ();
     }
   MoveObjectToRemoveUndoList (VIA_TYPE, Via, Via, Via);
-  return (NULL);
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -370,7 +336,7 @@ RemoveRat (RatTypePtr Rat)
 	Draw ();
     }
   MoveObjectToRemoveUndoList (RATLINE_TYPE, Rat, Rat, Rat);
-  return (NULL);
+  return NULL;
 }
 
 struct rlp_info
@@ -443,7 +409,7 @@ RemoveLine (LayerTypePtr Layer, LineTypePtr Line)
 	Draw ();
     }
   MoveObjectToRemoveUndoList (LINE_TYPE, Layer, Line, Line);
-  return (NULL);
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -460,7 +426,7 @@ RemoveArc (LayerTypePtr Layer, ArcTypePtr Arc)
 	Draw ();
     }
   MoveObjectToRemoveUndoList (ARC_TYPE, Layer, Arc, Arc);
-  return (NULL);
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -477,7 +443,7 @@ RemoveText (LayerTypePtr Layer, TextTypePtr Text)
 	Draw ();
     }
   MoveObjectToRemoveUndoList (TEXT_TYPE, Layer, Text, Text);
-  return (NULL);
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -494,7 +460,7 @@ RemovePolygon (LayerTypePtr Layer, PolygonTypePtr Polygon)
 	Draw ();
     }
   MoveObjectToRemoveUndoList (POLYGON_TYPE, Layer, Polygon, Polygon);
-  return (NULL);
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -541,7 +507,7 @@ RemovePolygonContour (LayerTypePtr Layer,
   /* redraw polygon if necessary */
   if (Layer->On)
     {
-      DrawPolygon (Layer, Polygon, 0);
+      DrawPolygon (Layer, Polygon);
       if (!Bulk)
         Draw ();
     }
@@ -595,11 +561,11 @@ RemovePolygonPoint (LayerTypePtr Layer,
   /* redraw polygon if necessary */
   if (Layer->On)
     {
-      DrawPolygon (Layer, Polygon, 0);
+      DrawPolygon (Layer, Polygon);
       if (!Bulk)
 	Draw ();
     }
-  return (NULL);
+  return NULL;
 }
 
 /* ---------------------------------------------------------------------------
@@ -617,7 +583,7 @@ RemoveElement (ElementTypePtr Element)
 	Draw ();
     }
   MoveObjectToRemoveUndoList (ELEMENT_TYPE, Element, Element, Element);
-  return (NULL);
+  return NULL;
 }
 
 /* ----------------------------------------------------------------------

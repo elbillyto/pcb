@@ -35,6 +35,14 @@
 #include "global.h"
 #include "mymem.h"
 
+enum unitflags { UNIT_PERCENT = 1 };
+
+typedef struct {
+  const char *suffix;
+  double scale;
+  enum unitflags flags;
+} UnitList[];
+
 void r_delete_element (DataTypePtr, ElementTypePtr);
 void SetLineBoundingBox (LineTypePtr);
 void SetArcBoundingBox (ArcTypePtr);
@@ -47,11 +55,12 @@ bool IsDataEmpty (DataTypePtr);
 bool IsLayerEmpty (LayerTypePtr);
 bool IsLayerNumEmpty (int);
 bool IsLayerGroupEmpty (int);
+bool IsPasteEmpty (int);
 BoxTypePtr GetDataBoundingBox (DataTypePtr);
 void CenterDisplay (LocationType, LocationType, bool);
 void SetFontInfo (FontTypePtr);
 int ParseGroupString (char *, LayerGroupTypePtr, int /* LayerN */);
-int ParseRouteString (char *, RouteStyleTypePtr, int);
+int ParseRouteString (char *, RouteStyleTypePtr, const char *);
 void QuitApplication (void);
 char *EvaluateFilename (char *, char *, char *, char *);
 char *ExpandFilename (char *, char *);
@@ -78,6 +87,7 @@ void ChangeArcAngles (LayerTypePtr, ArcTypePtr, long int, long int);
 char *UniqueElementName (DataTypePtr, char *);
 void AttachForCopy (LocationType, LocationType);
 double GetValue (const char *, const char *, bool *);
+double GetValueEx (const char *, const char *, bool *, UnitList, const char *);
 int FileExists (const char *);
 char *Concat (const char *, ...);	/* end with NULL */
 

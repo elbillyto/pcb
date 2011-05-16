@@ -139,7 +139,10 @@ directionIncrement(direction_t dir)
 return dir;
 }
 
+#ifdef ROUTE_DEBUG
+HID *ddraw = NULL;
 static hidGC ar_gc = 0;
+#endif
 
 #define EXPENSIVE 3e28
 /* round up "half" thicknesses */
@@ -159,10 +162,6 @@ static hidGC ar_gc = 0;
 	 CONFLICT_LEVEL(rb)==LO_CONFLICT ? \
 	 AutoRouteParameters.LastConflictPenalty : 1) * (rb)->pass)
 
-#if !defined(ABS)
-#define ABS(x) (((x)<0)?-(x):(x))
-#endif
-
 #define _NORTH 1
 #define _EAST 2
 #define _SOUTH 4
@@ -170,6 +169,7 @@ static hidGC ar_gc = 0;
 
 #define LIST_LOOP(init, which, x) do {\
      routebox_t *__next_one__ = (init);\
+   GList *__copy = NULL; /* DUMMY */\
    x = NULL;\
    if (!__next_one__)\
      assert(__next_one__);\
@@ -307,6 +307,10 @@ typedef struct routebox
   direction_t came_from;
   /* circular lists with connectivity information. */
   routebox_list same_net, same_subnet, original_subnet, different_net;
+  union {
+    PinType *via;
+    LineType *line;
+  } livedraw_obj;
 }
 routebox_t;
 
@@ -1456,14 +1460,6 @@ bloat_routebox (routebox_t * rb)
 
 #ifdef ROUTE_DEBUG		/* only for debugging expansion areas */
 
-void
-fillbox (const BoxType * b)
-{
-  LayerTypePtr SLayer = LAYER_PTR (0);
-  gui->set_color (Output.fgGC, SLayer->Color);
-  gui->fill_rect (Output.fgGC, b->X1, b->Y1, b->X2, b->Y2);
-}
-
 /* makes a line on the solder layer silk surrounding the box */
 void
 showbox (BoxType b, Dimension thickness, int group)
@@ -1475,16 +1471,17 @@ showbox (BoxType b, Dimension thickness, int group)
   if (showboxen != -1 && showboxen != group)
     return;
 
+  if (ddraw != NULL)
+    {
+      ddraw->set_line_width (ar_gc, thickness);
+      ddraw->set_line_cap (ar_gc, Trace_Cap);
+      ddraw->set_color (ar_gc, SLayer->Color);
 
-  gui->set_line_width (Output.fgGC, thickness);
-  gui->set_line_cap (Output.fgGC, Trace_Cap);
-  gui->set_color (Output.fgGC, SLayer->Color);
-
-  gui->draw_line (Output.fgGC, b.X1, b.Y1, b.X2, b.Y1);
-  gui->draw_line (Output.fgGC, b.X1, b.Y2, b.X2, b.Y2);
-  gui->draw_line (Output.fgGC, b.X1, b.Y1, b.X1, b.Y2);
-  gui->draw_line (Output.fgGC, b.X2, b.Y1, b.X2, b.Y2);
-  gui->use_mask (HID_FLUSH_DRAW_Q);
+      ddraw->draw_line (ar_gc, b.X1, b.Y1, b.X2, b.Y1);
+      ddraw->draw_line (ar_gc, b.X1, b.Y2, b.X2, b.Y2);
+      ddraw->draw_line (ar_gc, b.X1, b.Y1, b.X1, b.Y2);
+      ddraw->draw_line (ar_gc, b.X2, b.Y1, b.X2, b.Y2);
+    }
 
 #if 1
   if (b.Y1 == b.Y2 || b.X1 == b.X2)
@@ -1529,23 +1526,26 @@ showedge (edge_t * e)
 {
   BoxType *b = (BoxType *) e->rb;
 
-  gui->set_line_cap (Output.fgGC, Trace_Cap);
-  gui->set_line_width (Output.fgGC, 1);
-  gui->set_color (Output.fgGC, Settings.MaskColor);
+  if (ddraw == NULL)
+    return;
+
+  ddraw->set_line_cap (ar_gc, Trace_Cap);
+  ddraw->set_line_width (ar_gc, 1);
+  ddraw->set_color (ar_gc, Settings.MaskColor);
 
   switch (e->expand_dir)
     {
     case NORTH:
-      gui->draw_line (Output.fgGC, b->X1, b->Y1, b->X2, b->Y1);
+      ddraw->draw_line (ar_gc, b->X1, b->Y1, b->X2, b->Y1);
       break;
     case SOUTH:
-      gui->draw_line (Output.fgGC, b->X1, b->Y2, b->X2, b->Y2);
+      ddraw->draw_line (ar_gc, b->X1, b->Y2, b->X2, b->Y2);
       break;
     case WEST:
-      gui->draw_line (Output.fgGC, b->X1, b->Y1, b->X1, b->Y2);
+      ddraw->draw_line (ar_gc, b->X1, b->Y1, b->X1, b->Y2);
       break;
     case EAST:
-      gui->draw_line (Output.fgGC, b->X2, b->Y1, b->X2, b->Y2);
+      ddraw->draw_line (ar_gc, b->X2, b->Y1, b->X2, b->Y2);
       break;
     default:
       break;
@@ -1561,32 +1561,6 @@ showroutebox (routebox_t * rb)
 	   rb->flags.is_via ? component_silk_layer : rb->group);
 }
 #endif
-
-static void
-EraseRouteBox (routebox_t * rb)
-{
-  LocationType X1, Y1, X2, Y2;
-  BDimension thick;
-
-  if (rb->box.X2 - rb->box.X1 < rb->box.Y2 - rb->box.Y1)
-    {
-      thick = rb->box.X2 - rb->box.X1;
-      X1 = X2 = (rb->box.X2 + rb->box.X1) / 2;
-      Y1 = rb->box.Y1 + thick / 2;
-      Y2 = rb->box.Y2 - thick / 2;
-    }
-  else
-    {
-      thick = rb->box.Y2 - rb->box.Y1;
-      Y1 = Y2 = (rb->box.Y2 + rb->box.Y1) / 2;
-      X1 = rb->box.X1 + thick / 2;
-      X2 = rb->box.X2 - thick / 2;
-    }
-
-  gui->set_line_width (ar_gc, thick);
-  gui->set_color (ar_gc, Settings.BackgroundColor);
-  gui->draw_line (ar_gc, X1, Y1, X2, Y2);
-}
 
 /* return a "parent" of this edge which immediately precedes it in the route.*/
 static routebox_t *
@@ -3231,6 +3205,17 @@ RD_DrawVia (routedata_t * rd, LocationType X, LocationType Y,
   routebox_t *rb, *first_via = NULL;
   int i;
   int ka = AutoRouteParameters.style->Keepaway;
+  PinType *live_via = NULL;
+
+  if (TEST_FLAG (LIVEROUTEFLAG, PCB))
+    {
+       live_via = CreateNewVia (PCB->Data, X, Y, radius * 2,
+                                2 * AutoRouteParameters.style->Keepaway, 0,
+                                AutoRouteParameters.style->Hole, NULL,
+                                MakeFlags (0));
+       if (live_via != NULL)
+         DrawVia (live_via);
+    }
 
   /* a via cuts through every layer group */
   for (i = 0; i < max_group; i++)
@@ -3272,12 +3257,7 @@ RD_DrawVia (routedata_t * rd, LocationType X, LocationType Y,
       /* and add it to the r-tree! */
       r_insert_entry (rd->layergrouptree[rb->group], &rb->box, 1);
       rb->flags.homeless = 0;	/* not homeless anymore */
-
-      if (TEST_FLAG (LIVEROUTEFLAG, PCB))
-	{
-	  gui->set_color (ar_gc, PCB->ViaColor);
-	  gui->fill_circle (ar_gc, X, Y, radius);
-	}
+      rb->livedraw_obj.via = live_via;
     }
 }
 static void
@@ -3367,11 +3347,12 @@ RD_DrawLine (routedata_t * rd,
 
   if (TEST_FLAG (LIVEROUTEFLAG, PCB))
     {
-      LayerTypePtr layp = LAYER_PTR (PCB->LayerGroups.Entries[rb->group][0]);
-
-      gui->set_line_width (ar_gc, 2 * qhthick);
-      gui->set_color (ar_gc, layp->Color);
-      gui->draw_line (ar_gc, qX1, qY1, qX2, qY2);
+      LayerType *layer = LAYER_PTR (PCB->LayerGroups.Entries[rb->group][0]);
+      LineType *line = CreateNewLineOnLayer (layer, qX1, qY1, qX2, qY2,
+					     2 * qhthick, 0, MakeFlags (0));
+      rb->livedraw_obj.line = line;
+      if (line != NULL)
+	DrawLine (layer, line);
     }
 
   /* and to the via space structures */
@@ -3690,8 +3671,14 @@ TracePath (routedata_t * rd, routebox_t * path, const routebox_t * target,
   while (!path->flags.source);
   /* flush the line queue */
   RD_DrawLine (rd, -1, 0, 0, 0, 0, 0, NULL, false, false);
+
   if (TEST_FLAG (LIVEROUTEFLAG, PCB))
-    gui->use_mask (HID_FLUSH_DRAW_Q);
+    Draw ();
+
+#ifdef ROUTE_DEBUG
+  if (ddraw != NULL)
+    ddraw->flush_debug_draw ();
+#endif
 }
 
 /* create a fake "edge" used to defer via site searching. */
@@ -3975,23 +3962,6 @@ show_sources (routebox_t * rb)
   if (p->flags.source)
     show_one (p);
   END_LOOP;
-}
-
-int
-__show_tree (const BoxType * b, void *cl)
-{
-  int eo = (int) cl;
-  routebox_t *rb = (routebox_t *) b;
-  if (eo < 0 || eo == rb->flags.is_odd)
-    fillbox (b);
-  return 1;
-}
-
-static void
-show_tree (rtree_t * tree, int even_odd)
-{
-  r_search (tree, NULL, NULL, __show_tree, (void *) even_odd);
-  gui->use_mask (HID_FLUSH_DRAW_Q);
 }
 
 #endif
@@ -4638,6 +4608,32 @@ no_expansion_boxes (routedata_t * rd)
 }
 #endif
 
+static void
+ripout_livedraw_obj (routebox_t *rb)
+{
+  if (rb->type == LINE && rb->livedraw_obj.line)
+    {
+      LayerType *layer = LAYER_PTR (PCB->LayerGroups.Entries[rb->group][0]);
+      EraseLine (rb->livedraw_obj.line);
+      DestroyObject (PCB->Data, LINE_TYPE, layer, rb->livedraw_obj.line, NULL);
+      rb->livedraw_obj.line = NULL;
+    }
+  if (rb->type == VIA && rb->livedraw_obj.via)
+    {
+      EraseVia (rb->livedraw_obj.via);
+      DestroyObject (PCB->Data, VIA_TYPE, rb->livedraw_obj.via, NULL, NULL);
+      rb->livedraw_obj.via = NULL;
+    }
+}
+
+static int
+ripout_livedraw_obj_cb (const BoxType * b, void *cl)
+{
+  routebox_t *box = (routebox_t *) b;
+  ripout_livedraw_obj (box);
+  return 0;
+}
+
 struct routeall_status
 {
   /* --- for completion rate statistics ---- */
@@ -4652,12 +4648,28 @@ struct routeall_status
   int ripped;
   int total_nets_routed;
 };
+
+static double
+calculate_progress (double this_heap_item, double this_heap_size,
+                    struct routeall_status *ras)
+{
+  double total_passes = passes + smoothes + 1;      /* + 1 is the refinement pass */
+  double this_pass = AutoRouteParameters.pass - 1; /* Number passes from zero */
+  double heap_fraction = (double)(ras->routed_subnets + ras->conflict_subnets + ras->failed) /
+                         (double)ras->total_subnets;
+  double pass_fraction = (this_heap_item + heap_fraction ) / this_heap_size;
+  double process_fraction = (this_pass + pass_fraction) / total_passes;
+
+  return process_fraction;
+}
+
 struct routeall_status
 RouteAll (routedata_t * rd)
 {
   struct routeall_status ras;
   struct routeone_status ros;
   bool rip;
+  int request_cancel;
 #ifdef NET_HEAP
   heap_t *net_heap;
 #endif
@@ -4665,6 +4677,8 @@ RouteAll (routedata_t * rd)
   routebox_t *net, *p, *pp;
   cost_t total_net_cost, last_cost = 0, this_cost = 0;
   int i;
+  int this_heap_size;
+  int this_heap_item;
 
   /* initialize heap for first pass; 
    * do smallest area first; that makes
@@ -4706,7 +4720,8 @@ RouteAll (routedata_t * rd)
 	ras.failed = ras.ripped = 0;
       assert (heap_is_empty (next_pass));
 
-      while (!heap_is_empty (this_pass))
+      this_heap_size = heap_size (this_pass);
+      for (this_heap_item = 0; !heap_is_empty (this_pass); this_heap_item++)
 	{
 #ifdef ROUTE_DEBUG
 	  if (aabort)
@@ -4756,9 +4771,8 @@ RouteAll (routedata_t * rd)
 		    }
 		  if (rip)
 		    {
-		      if (TEST_FLAG (LIVEROUTEFLAG, PCB)
-			  && (p->type == LINE || p->type == VIA))
-			EraseRouteBox (p);
+		      if (TEST_FLAG (LIVEROUTEFLAG, PCB))
+			ripout_livedraw_obj (p);
 		      del =
 			r_delete_entry (rd->layergrouptree[p->group],
 					&p->box);
@@ -4771,7 +4785,7 @@ RouteAll (routedata_t * rd)
 		}
 	      END_LOOP;
 	      if (TEST_FLAG (LIVEROUTEFLAG, PCB))
-		gui->use_mask (HID_FLUSH_DRAW_Q);
+		Draw ();
 	      /* reset to original connectivity */
 	      if (rip)
 		{
@@ -4794,82 +4808,97 @@ RouteAll (routedata_t * rd)
 	  total_net_cost = 0;
 	  /* only route that which isn't fully routed */
 #ifdef ROUTE_DEBUG
-	  if (ras.total_subnets && !aabort)
+	  if (ras.total_subnets == 0 || aabort)
 #else
-	  if (ras.total_subnets)
+	  if (ras.total_subnets == 0)
 #endif
 	    {
-	      /* the loop here ensures that we get to all subnets even if
-	       * some of them are unreachable from the first subnet. */
-	      LIST_LOOP (net, same_net, p);
-	      {
+	      heap_insert (next_pass, 0, net);
+	      continue;
+	    }
+
+	  /* the loop here ensures that we get to all subnets even if
+	   * some of them are unreachable from the first subnet. */
+	  LIST_LOOP (net, same_net, p);
+	  {
 #ifdef NET_HEAP
-		BoxType b = shrink_routebox (p);
-		/* using a heap allows us to start from smaller objects and
-		 * end at bigger ones. also prefer to start at planes, then pads */
-		heap_insert (net_heap, (float) (b.X2 - b.X1) *
+	    BoxType b = shrink_routebox (p);
+	    /* using a heap allows us to start from smaller objects and
+	     * end at bigger ones. also prefer to start at planes, then pads */
+	    heap_insert (net_heap, (float) (b.X2 - b.X1) *
 #if defined(ROUTE_RANDOMIZED)
-			     (0.3 + rand () / (RAND_MAX + 1.0)) *
+			 (0.3 + rand () / (RAND_MAX + 1.0)) *
 #endif
-			     (b.Y2 - b.Y1) * (p->type == PLANE ?
-					      -1 : (p->type ==
-						    PAD ? 1 : 10)), p);
-	      }
-	      END_LOOP;
-	      ros.net_completely_routed = 0;
-	      while (!heap_is_empty (net_heap))
+			 (b.Y2 - b.Y1) * (p->type == PLANE ?
+					  -1 : (p->type ==
+						PAD ? 1 : 10)), p);
+	  }
+	  END_LOOP;
+	  ros.net_completely_routed = 0;
+	  while (!heap_is_empty (net_heap))
+	    {
+	      p = (routebox_t *) heap_remove_smallest (net_heap);
+#endif
+	      if (!p->flags.fixed || p->flags.subnet_processed ||
+		  p->type == OTHER)
+		continue;
+
+	      while (!ros.net_completely_routed)
 		{
-		  p = (routebox_t *) heap_remove_smallest (net_heap);
-#endif
-		  if (p->flags.fixed && !p->flags.subnet_processed
-		      && p->type != OTHER)
+		  double percent;
+
+		  assert (no_expansion_boxes (rd));
+		  /* FIX ME: the number of edges to examine should be in autoroute parameters
+		   * i.e. the 2000 and 800 hard-coded below should be controllable by the user
+		   */
+		  ros =
+		    RouteOne (rd, p, NULL,
+			      ((AutoRouteParameters.
+				is_smoothing ? 2000 : 800) * (i +
+							      1)) *
+			      routing_layers);
+		  total_net_cost += ros.best_route_cost;
+		  if (ros.found_route)
 		    {
-		      while (!ros.net_completely_routed)
+		      if (ros.route_had_conflicts)
+			ras.conflict_subnets++;
+		      else
 			{
-			  assert (no_expansion_boxes (rd));
-			  /* FIX ME: the number of edges to examine should be in autoroute parameters
-			   * i.e. the 2000 and 800 hard-coded below should be controllable by the user
-			   */
-			  ros =
-			    RouteOne (rd, p, NULL,
-				      ((AutoRouteParameters.
-					is_smoothing ? 2000 : 800) * (i +
-								      1)) *
-				      routing_layers);
-			  total_net_cost += ros.best_route_cost;
-			  if (ros.found_route)
-			    {
-			      if (ros.route_had_conflicts)
-				ras.conflict_subnets++;
-			      else
-				{
-				  ras.routed_subnets++;
-				  ras.total_nets_routed++;
-				}
-			    }
-			  else
-			    {
-			      if (!ros.net_completely_routed)
-				ras.failed++;
-			      /* don't bother trying any other source in this subnet */
-			      LIST_LOOP (p, same_subnet, pp);
-			      pp->flags.subnet_processed = 1;
-			      END_LOOP;
-			      break;
-			    }
-			  /* note that we can infer nothing about ras.total_subnets based
-			   * on the number of calls to RouteOne, because we may be unable
-			   * to route a net from a particular starting point, but perfectly
-			   * able to route it from some other. */
+			  ras.routed_subnets++;
+			  ras.total_nets_routed++;
 			}
 		    }
+		  else
+		    {
+		      if (!ros.net_completely_routed)
+			ras.failed++;
+		      /* don't bother trying any other source in this subnet */
+		      LIST_LOOP (p, same_subnet, pp);
+		      pp->flags.subnet_processed = 1;
+		      END_LOOP;
+		      break;
+		    }
+		  /* note that we can infer nothing about ras.total_subnets based
+		   * on the number of calls to RouteOne, because we may be unable
+		   * to route a net from a particular starting point, but perfectly
+		   * able to route it from some other. */
+		  percent = calculate_progress (this_heap_item, this_heap_size, &ras);
+		  request_cancel = gui->progress (percent * 100., 100,
+						  _("Autorouting tracks"));
+		  if (request_cancel)
+		    {
+		      ras.total_nets_routed = 0;
+		      ras.conflict_subnets = 0;
+		      Message ("Autorouting cancelled\n");
+		      goto out;
+		    }
 		}
-#ifndef NET_HEAP
-	      END_LOOP;
-#endif
-	      if (!ros.net_completely_routed)
-		net->flags.is_bad = 1;	/* don't skip this the next round */
 	    }
+#ifndef NET_HEAP
+	  END_LOOP;
+#endif
+	  if (!ros.net_completely_routed)
+	    net->flags.is_bad = 1;	/* don't skip this the next round */
 
 	  /* Route easiest nets from this pass first on next pass.
 	   * This works best because it's likely that the hardest
@@ -4893,7 +4922,6 @@ RouteAll (routedata_t * rd)
       tmp = this_pass;
       this_pass = next_pass;
       next_pass = tmp;
-      /* XXX: here we should update a status bar */
 #if defined(ROUTE_DEBUG) || defined (ROUTE_VERBOSE)
       printf
 	("END OF PASS %d: %d/%d subnets routed without conflicts at cost %.0f, %d conflicts, %d failed %d ripped\n",
@@ -4914,9 +4942,11 @@ RouteAll (routedata_t * rd)
       last_cost = this_cost;
       this_cost = 0;
     }
+
   Message ("%d of %d nets successfully routed.\n",
 	   ras.routed_subnets, ras.total_subnets);
 
+out:
   heap_destroy (&this_pass);
   heap_destroy (&next_pass);
 #ifdef NET_HEAP
@@ -5129,16 +5159,15 @@ AutoRoute (bool selected)
 
   total_wire_length = 0;
   total_via_count = 0;
-  if (TEST_FLAG (LIVEROUTEFLAG, PCB))
-    {
-      gui->use_mask (HID_LIVE_DRAWING);
-    }
 
-  if (ar_gc == 0)
+#ifdef ROUTE_DEBUG
+  ddraw = gui->request_debug_draw ();
+  if (ddraw != NULL)
     {
-      ar_gc = gui->make_gc ();
-      gui->set_line_cap (ar_gc, Round_Cap);
+      ar_gc = ddraw->make_gc ();
+      ddraw->set_line_cap (ar_gc, Round_Cap);
     }
+#endif
 
   for (i = 0; i < NUM_STYLES; i++)
     {
@@ -5293,15 +5322,26 @@ AutoRoute (bool selected)
   /* auto-route all nets */
   changed = (RouteAll (rd).total_nets_routed > 0) || changed;
 donerouting:
+  gui->progress (0, 0, NULL);
+  if (TEST_FLAG (LIVEROUTEFLAG, PCB))
+    {
+      int i;
+      BoxType big = {0, 0, MAX_COORD, MAX_COORD};
+      for (i = 0; i < max_group; i++)
+	{
+	  r_search (rd->layergrouptree[i], &big, NULL, ripout_livedraw_obj_cb, NULL);
+	}
+    }
+#ifdef ROUTE_DEBUG
+  if (ddraw != NULL)
+    ddraw->finish_debug_draw ();
+#endif
+
   if (changed)
     changed = IronDownAllUnfixedPaths (rd);
   Message ("Total added wire length = %f inches, %d vias added\n",
 	   total_wire_length / 1.e5, total_via_count);
   DestroyRouteData (&rd);
-  if (TEST_FLAG (LIVEROUTEFLAG, PCB))
-    {
-      gui->use_mask (HID_LIVE_DRAWING_OFF);
-    }
   if (changed)
     {
       SaveUndoSerialNumber ();
@@ -5314,7 +5354,7 @@ donerouting:
 
       IncrementUndoSerialNumber ();
 
-      ClearAndRedrawOutput ();
+      Redraw ();
     }
   RestoreFindFlag ();
 #if defined (ROUTE_DEBUG)

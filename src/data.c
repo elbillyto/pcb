@@ -57,21 +57,4 @@ BufferType Buffers[MAX_BUFFER];	/* my buffers */
 LibraryType Library;		/* the library */
 bool Bumped;			/* if the undo serial number has changed */
 
-LocationType Xorig, Yorig;	/* origin offset for drawing in pixmap */
-
 int addedLines;
-
-LocationType vxl, vxh, vyl, vyh;	/* visible pcb coordinates */
-
-BoxType theScreen;		/* box of screen in pcb coordinates */
-BoxType clipBox;		/* box for clipping of drawing */
-
-double Zoom_Multiplier = 0.01;
-
-/*  { 1.5625, 2.2097, 3.125, 4.4194, 6.25, 8.8388,
-      12.5, 17.6777, 25, 35.3553, 50, 70.7106, 100,
-      141.421, 200, 282.848, 400, 565.685, 800, 1131.37,
-      1600, 2262.74, 3200, 4525.48, 6400 };
-*/
-
-

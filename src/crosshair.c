@@ -56,23 +56,10 @@
 
 RCSID ("$Id$");
 
-#if !defined(ABS)
-#define ABS(x) (((x)<0)?-(x):(x))
-#endif
-
 typedef struct
 {
   int x, y;
 } point;
-
-/* ---------------------------------------------------------------------------
- * some local identifiers
- */
-
-/* This is a stack for HideCrosshair() and RestoreCrosshair() calls. They
- * must always be matched. */
-static bool CrosshairStack[MAX_CROSSHAIRSTACK_DEPTH];
-static int CrosshairStackLocation = 0;
 
 /* ---------------------------------------------------------------------------
  * some local prototypes
@@ -85,6 +72,17 @@ static void XORDrawMoveOrCopyObject (void);
 static void XORDrawAttachedLine (LocationType, LocationType, LocationType,
 				 LocationType, BDimension);
 static void XORDrawAttachedArc (BDimension);
+
+static void
+thindraw_moved_pv (PinType *pv, int x, int y)
+{
+  /* Make a copy of the pin structure, moved to the correct position */
+  PinType moved_pv = *pv;
+  moved_pv.X += x;
+  moved_pv.Y += y;
+
+  gui->thindraw_pcb_pv (Crosshair.GC, Crosshair.GC, &moved_pv, true, false);
+}
 
 /* ---------------------------------------------------------------------------
  * creates a tmp polygon with coordinates converted to screen system
@@ -245,39 +243,22 @@ XORDrawElement (ElementTypePtr Element, LocationType DX, LocationType DY)
   /* pin coordinates and angles have to be converted to X11 notation */
   PIN_LOOP (Element);
   {
-    gui->draw_arc (Crosshair.GC,
-		   DX + pin->X,
-		   DY + pin->Y,
-		   pin->Thickness / 2, pin->Thickness / 2, 0, 360);
+    thindraw_moved_pv (pin, DX, DY);
   }
   END_LOOP;
 
   /* pads */
   PAD_LOOP (Element);
   {
-    if ((TEST_FLAG (ONSOLDERFLAG, pad) != 0) ==
-	Settings.ShowSolderSide || PCB->InvisibleObjectsOn)
+    if (PCB->InvisibleObjectsOn ||
+        (TEST_FLAG (ONSOLDERFLAG, pad) != 0) == Settings.ShowSolderSide)
       {
-	if (pad->Point1.X == pad->Point2.X
-	    || pad->Point1.Y == pad->Point2.Y)
-	  {
-	    int minx, miny, maxx, maxy;
-	    minx = DX + MIN (pad->Point1.X, pad->Point2.X) - pad->Thickness/2;
-	    maxx = DX + MAX (pad->Point1.X, pad->Point2.X) + pad->Thickness/2;
-	    miny = DY + MIN (pad->Point1.Y, pad->Point2.Y) - pad->Thickness/2;
-	    maxy = DY + MAX (pad->Point1.Y, pad->Point2.Y) + pad->Thickness/2;
-	    gui->draw_line (Crosshair.GC, minx, miny, maxx, miny);
-	    gui->draw_line (Crosshair.GC, minx, miny, minx, maxy);
-	    gui->draw_line (Crosshair.GC, maxx, miny, maxx, maxy);
-	    gui->draw_line (Crosshair.GC, minx, maxy, maxx, maxy);
-	  }
-	else
-	  {
-	    /* FIXME: draw outlines, not centerlines.  */
-	    gui->draw_line (Crosshair.GC,
-			    DX + pad->Point1.X, DY + pad->Point1.Y,
-			    DX + pad->Point2.X, DY + pad->Point2.Y);
-	  }
+        /* Make a copy of the pad structure, moved to the correct position */
+        PadType moved_pad = *pad;
+        moved_pad.Point1.X += DX; moved_pad.Point1.Y += DY;
+        moved_pad.Point2.X += DX; moved_pad.Point2.Y += DY;
+
+        gui->thindraw_pcb_pad (Crosshair.GC, &moved_pad, false, false);
       }
   }
   END_LOOP;
@@ -366,13 +347,11 @@ XORDrawBuffer (BufferTypePtr Buffer)
   }
   END_LOOP;
 
-  /* and the vias, move offset by thickness/2 */
+  /* and the vias */
   if (PCB->ViaOn)
     VIA_LOOP (Buffer->Data);
   {
-    gui->draw_arc (Crosshair.GC,
-		   x + via->X, y + via->Y,
-		   via->Thickness / 2, via->Thickness / 2, 0, 360);
+    thindraw_moved_pv (via, x, y);
   }
   END_LOOP;
 }
@@ -410,13 +389,9 @@ XORDrawMoveOrCopyObject (void)
     {
     case VIA_TYPE:
       {
-	PinTypePtr via = (PinTypePtr) Crosshair.AttachedObject.Ptr1;
-
-	gui->draw_arc (Crosshair.GC,
-		       via->X + dx,
-		       via->Y + dy,
-		       via->Thickness / 2, via->Thickness / 2, 0, 360);
-	break;
+        PinTypePtr via = (PinTypePtr) Crosshair.AttachedObject.Ptr1;
+        thindraw_moved_pv (via, dx, dy);
+        break;
       }
 
     case LINE_TYPE:
@@ -565,27 +540,35 @@ XORDrawMoveOrCopyObject (void)
 /* ---------------------------------------------------------------------------
  * draws additional stuff that follows the crosshair
  */
-static void
+void
 DrawAttached (void)
 {
-  BDimension s;
   switch (Settings.Mode)
     {
     case VIA_MODE:
-      gui->draw_arc (Crosshair.GC,
-		     Crosshair.X,
-		     Crosshair.Y,
-		     Settings.ViaThickness / 2,
-		     Settings.ViaThickness / 2, 0, 360);
-      if (TEST_FLAG (SHOWDRCFLAG, PCB))
-	{
-	  s = Settings.ViaThickness / 2 + PCB->Bloat + 1;
-	  gui->set_color (Crosshair.GC, Settings.CrossColor);
-	  gui->draw_arc (Crosshair.GC,
-			 Crosshair.X, Crosshair.Y, s, s, 0, 360);
-	  gui->set_color (Crosshair.GC, Settings.CrosshairColor);
-	}
-      break;
+      {
+        /* Make a dummy via structure to draw from */
+        PinType via;
+        via.X = Crosshair.X;
+        via.Y = Crosshair.Y;
+        via.Thickness = Settings.ViaThickness;
+        via.Clearance = 2 * Settings.Keepaway;
+        via.DrillingHole = Settings.ViaDrillingHole;
+        via.Mask = 0;
+        via.Flags = NoFlags ();
+
+        gui->thindraw_pcb_pv (Crosshair.GC, Crosshair.GC, &via, true, false);
+
+        if (TEST_FLAG (SHOWDRCFLAG, PCB))
+          {
+            /* XXX: Naughty cheat - use the mask to draw DRC clearance! */
+            via.Mask = Settings.ViaThickness + PCB->Bloat * 2;
+            gui->set_color (Crosshair.GC, Settings.CrossColor);
+            gui->thindraw_pcb_pv (Crosshair.GC, Crosshair.GC, &via, false, true);
+            gui->set_color (Crosshair.GC, Settings.CrosshairColor);
+          }
+        break;
+      }
 
       /* the attached line is used by both LINEMODE, POLYGON_MODE and POLYGONHOLE_MODE*/
     case POLYGON_MODE:
@@ -684,74 +667,116 @@ DrawAttached (void)
     }
 }
 
-/* ---------------------------------------------------------------------------
- * switches crosshair on
+
+/* --------------------------------------------------------------------------
+ * draw the marker position
  */
 void
-CrosshairOn (void)
+DrawMark (void)
 {
-  if (!Crosshair.On)
-    {
-      Crosshair.On = true;
-      DrawAttached ();
-      DrawMark ();
-    }
+  /* Mark is not drawn when it is not set */
+  if (!Marked.status)
+    return;
+
+  gui->draw_line (Crosshair.GC,
+                  Marked.X - MARK_SIZE,
+                  Marked.Y - MARK_SIZE,
+                  Marked.X + MARK_SIZE, Marked.Y + MARK_SIZE);
+  gui->draw_line (Crosshair.GC,
+                  Marked.X + MARK_SIZE,
+                  Marked.Y - MARK_SIZE,
+                  Marked.X - MARK_SIZE, Marked.Y + MARK_SIZE);
 }
 
+
 /* ---------------------------------------------------------------------------
- * switches crosshair off
+ * notify the GUI that data relating to the crosshair is being changed.
+ *
+ * The argument passed is false to notify "changes are about to happen",
+ * and true to notify "changes have finished".
+ *
+ * Each call with a 'false' parameter must be matched with a following one
+ * with a 'true' parameter. Unmatched 'true' calls are currently not permitted,
+ * but might be allowed in the future.
+ *
+ * GUIs should not complain if they receive extra calls with 'true' as parameter.
+ * They should initiate a redraw of the crosshair attached objects - which may
+ * (if necessary) mean repainting the whole screen if the GUI hasn't tracked the
+ * location of existing attached drawing.
  */
 void
-CrosshairOff (void)
+notify_crosshair_change (bool changes_complete)
 {
-  if (Crosshair.On)
-    {
-      Crosshair.On = false;
-      DrawAttached ();
-      DrawMark ();
-    }
+  if (gui->notify_crosshair_change)
+    gui->notify_crosshair_change (changes_complete);
 }
 
+
 /* ---------------------------------------------------------------------------
- * saves crosshair state (on/off) and hides him
+ * notify the GUI that data relating to the mark is being changed.
+ *
+ * The argument passed is false to notify "changes are about to happen",
+ * and true to notify "changes have finished".
+ *
+ * Each call with a 'false' parameter must be matched with a following one
+ * with a 'true' parameter. Unmatched 'true' calls are currently not permitted,
+ * but might be allowed in the future.
+ *
+ * GUIs should not complain if they receive extra calls with 'true' as parameter.
+ * They should initiate a redraw of the mark - which may (if necessary) mean
+ * repainting the whole screen if the GUI hasn't tracked the mark's location.
  */
 void
-HideCrosshair ()
+notify_mark_change (bool changes_complete)
 {
-  /* fprintf(stderr, "HideCrosshair stack %d\n", CrosshairStackLocation); */
-  if (CrosshairStackLocation >= MAX_CROSSHAIRSTACK_DEPTH)
-    {
-      fprintf(stderr, "Error: CrosshairStackLocation overflow\n");
-      return;
-    }
-
-  CrosshairStack[CrosshairStackLocation] = Crosshair.On;
-  CrosshairStackLocation++;
-
-  CrosshairOff ();
+  if (gui->notify_mark_change)
+    gui->notify_mark_change (changes_complete);
 }
 
+
 /* ---------------------------------------------------------------------------
- * restores last crosshair state
+ * Convenience for plugins using the old {Hide,Restore}Crosshair API.
+ * This links up to notify the GUI of the expected changes using the new APIs.
+ *
+ * Use of this old API is deprecated, as the names don't necessarily reflect
+ * what all GUIs may do in response to the notifications. Keeping these APIs
+ * is aimed at easing transition to the newer API, they will emit a harmless
+ * warning at the time of their first use.
+ *
  */
+void
+HideCrosshair (void)
+{
+  static bool warned_old_api = false;
+  if (!warned_old_api)
+    {
+      Message (_("WARNING: A plugin is using the deprecated API HideCrosshair().\n"
+                 "         This API may be removed in a future release of PCB.\n"));
+      warned_old_api = true;
+    }
+
+  notify_crosshair_change (false);
+  notify_mark_change (false);
+}
+
 void
 RestoreCrosshair (void)
 {
-  /* fprintf(stderr, "RestoreCrosshair stack %d\n", CrosshairStackLocation); */
-  if (CrosshairStackLocation <= 0)
+  static bool warned_old_api = false;
+  if (!warned_old_api)
     {
-      fprintf(stderr, "Error: CrosshairStackLocation underflow\n");
-      return;
+      Message (_("WARNING: A plugin is using the deprecated API RestoreCrosshair().\n"
+                 "         This API may be removed in a future release of PCB.\n"));
+      warned_old_api = true;
     }
 
-  CrosshairStackLocation--;
-
-  if (CrosshairStack[CrosshairStackLocation])
-    CrosshairOn ();
-  else
-    CrosshairOff ();
+  notify_crosshair_change (true);
+  notify_mark_change (true);
 }
 
+/* ---------------------------------------------------------------------------
+ * Returns the square of the given number
+ */
 static double
 square (double x)
 {
@@ -1043,8 +1068,8 @@ MoveCrosshairRelative (LocationType DeltaX, LocationType DeltaY)
 }
 
 /* ---------------------------------------------------------------------------
- * move crosshair absolute switched off if it moved
- * return true if it switched off
+ * move crosshair absolute
+ * return true if the crosshair was moved from its existing position
  */
 bool
 MoveCrosshairAbsolute (LocationType X, LocationType Y)
@@ -1055,13 +1080,14 @@ MoveCrosshairAbsolute (LocationType X, LocationType Y)
   FitCrosshairIntoGrid (X, Y);
   if (Crosshair.X != x || Crosshair.Y != y)
     {
-      /* back up to old position and erase crosshair */
+      /* back up to old position to notify the GUI
+       * (which might want to erase the old crosshair) */
       z = Crosshair.X;
       Crosshair.X = x;
       x = z;
       z = Crosshair.Y;
       Crosshair.Y = y;
-      HideCrosshair ();
+      notify_crosshair_change (false); /* Our caller notifies when it has done */
       /* now move forward again */
       Crosshair.X = x;
       Crosshair.Y = z;
@@ -1086,30 +1112,9 @@ SetCrosshairRange (LocationType MinX, LocationType MinY, LocationType MaxX,
   MoveCrosshairRelative (0, 0);
 }
 
-/* --------------------------------------------------------------------------
- * draw the marker position
- * if argument is true, draw only if it is visible, otherwise draw it regardless
- */
-void
-DrawMark (void)
-{
-  if (Marked.status)
-    {
-      gui->draw_line (Crosshair.GC,
-		      Marked.X - MARK_SIZE,
-		      Marked.Y - MARK_SIZE,
-		      Marked.X + MARK_SIZE, Marked.Y + MARK_SIZE);
-      gui->draw_line (Crosshair.GC,
-		      Marked.X + MARK_SIZE,
-		      Marked.Y - MARK_SIZE,
-		      Marked.X - MARK_SIZE, Marked.Y + MARK_SIZE);
-    }
-}
-
 /* ---------------------------------------------------------------------------
  * initializes crosshair stuff
- * clears the struct, allocates to graphical contexts and
- * initializes the stack
+ * clears the struct, allocates to graphical contexts
  */
 void
 InitCrosshair (void)
@@ -1120,11 +1125,6 @@ InitCrosshair (void)
   gui->set_draw_xor (Crosshair.GC, 1);
   gui->set_line_cap (Crosshair.GC, Trace_Cap);
   gui->set_line_width (Crosshair.GC, 1);
-
-  /* fake a crosshair off entry on stack */
-  CrosshairStackLocation = 0;
-  CrosshairStack[CrosshairStackLocation++] = true;
-  Crosshair.On = false;
 
   /* set initial shape */
   Crosshair.shape = Basic_Crosshair_Shape;

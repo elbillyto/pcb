@@ -171,7 +171,6 @@ parsepcb
 		  pcbdata
 		  pcbnetlist
 			{
-			  int i, j;
 			  PCBTypePtr pcb_save = PCB;
 
 			  if (layer_group_string == NULL)
@@ -186,9 +185,11 @@ parsepcb
 			 * we didn't know the layer grouping before.
 			 */
 			PCB = yyPCB;
-			for (i = 0; i < yyData->LayerN+2; i++)
-			  for (j = 0; j < yyData->Layer[i].PolygonN; j++)
-			      InitClip (yyData, &yyData->Layer[i], &yyData->Layer[i].Polygon[j]);
+			ALLPOLYGON_LOOP (yyData);
+			{
+			  InitClip (yyData, layer, polygon);
+			}
+			ENDALL_LOOP;
 			PCB = pcb_save;
 			}
 			   
@@ -646,7 +647,7 @@ is split across lines only to make it readable.
 pcbstyles
 		: T_STYLES '(' STRING ')'
 			{
-				if (ParseRouteString($3, &yyPCB->RouteStyle[0], 100))
+				if (ParseRouteString($3, &yyPCB->RouteStyle[0], "mil"))
 				{
 					Message("illegal route-style string\n");
 					YYABORT;
@@ -654,7 +655,7 @@ pcbstyles
 			}
 		| T_STYLES '[' STRING ']'
 			{
-				if (ParseRouteString($3, &yyPCB->RouteStyle[0], 1))
+				if (ParseRouteString($3, &yyPCB->RouteStyle[0], "cmil"))
 				{
 					Message("illegal route-style string\n");
 					YYABORT;

@@ -230,9 +230,10 @@ typedef enum
     int (*throw_drc_dialog) (void);
   } HID_DRC_GUI;
 
+  typedef struct hid_st HID;
 
 /* This is the main HID structure.  */
-  typedef struct
+  struct hid_st
   {
     /* The size of this structure.  We use this as a compatibility
        check; a HID built with a different hid.h than we're expecting
@@ -272,10 +273,6 @@ typedef enum
        polygons will be drawn twice.  */
     char poly_after:1;
 
-    /* If set, the redraw code will dice the polygons, so that there
-       are no clearances in any polygons.  */
-    char poly_dicer:1;
-
     /* Returns a set of resources describing options the export or print
        HID supports.  In GUI mode, the print/export dialogs use this to
        set up the selectable options.  In command line mode, these are
@@ -298,6 +295,8 @@ typedef enum
     /* This may be called to ask the GUI to force a redraw of a given area */
     void (*invalidate_lr) (int left_, int right_, int top_, int bottom_);
     void (*invalidate_all) (void);
+    void (*notify_crosshair_change) (bool changes_complete);
+    void (*notify_mark_change) (bool changes_complete);
 
     /* During redraw or print/export cycles, this is called once per
        layer (or layer group, for copper layers).  If it returns false
@@ -311,6 +310,9 @@ typedef enum
        from the PCB struct.  The EMPTY argument is a hint - if set, the
        layer is empty, if zero it may be non-empty.  */
     int (*set_layer) (const char *name_, int group_, int _empty);
+
+    /* Tell the GUI the layer last selected has been finished with */
+    void (*end_layer) (void);
 
     /* Drawing Functions.  Coordinates and distances are ALWAYS in PCB's
        default coordinates (1/100 mil at the time this comment was
@@ -338,12 +340,6 @@ typedef enum
 #define HID_MASK_CLEAR 2
     /* Polygons being drawn after clears.  */
 #define HID_MASK_AFTER 3
-    /* Set to do live drawing on the screen   */
-#define HID_LIVE_DRAWING 4
-    /* stop live drawing on the screen   */
-#define HID_LIVE_DRAWING_OFF 5
-    /* flush any queued drawing   */
-#define HID_FLUSH_DRAW_Q 6
 
     /* Set a color.  Names can be like "red" or "#rrggbb" or special
        names like "erase".  *Always* use the "erase" color for removing
@@ -364,11 +360,6 @@ typedef enum
        assembly drawings so far. */
     void (*set_draw_faded) (hidGC gc_, int faded_);
 
-    /* When you pass the same x,y twice to draw_line, the end caps are
-       drawn as if the "line" were parallel to the line defined by these
-       coordinates.  Use this for rotating non-round pads.  */
-    void (*set_line_cap_angle) (hidGC gc_, int x1_, int y1_, int x2_, int y2_);
-
     /* The usual drawing functions.  "draw" means to use segments of the
        given width, whereas "fill" means to fill to a zero-width
        outline.  */
@@ -382,6 +373,10 @@ typedef enum
                               const BoxType *clip_box);
     void (*thindraw_pcb_polygon) (hidGC gc_, PolygonType *poly,
                                   const BoxType *clip_box);
+    void (*fill_pcb_pad) (hidGC gc_, PadType *pad, bool clip, bool mask);
+    void (*thindraw_pcb_pad) (hidGC gc_, PadType *pad, bool clip, bool mask);
+    void (*fill_pcb_pv) (hidGC fg_gc, hidGC bg_gc, PinType *pv, bool drawHole, bool mask);
+    void (*thindraw_pcb_pv) (hidGC fg_gc, hidGC bg_gc, PinType *pv, bool drawHole, bool mask);
     void (*fill_rect) (hidGC gc_, int x1_, int y1_, int x2_, int y2_);
 
 
@@ -542,7 +537,35 @@ typedef enum
 
     void (*edit_attributes) (char *owner, AttributeListType *attrlist_);
 
-  } HID;
+    /* Debug drawing support. These APIs must be implemented (non NULL),
+     * but they do not have to be functional. request_debug_draw can
+     * return NULL to indicate debug drawing is not permitted.
+     *
+     * Debug drawing is not gauranteed to be re-entrant.
+     * The caller must not nest requests for debug drawing.
+     */
+
+    /* Request permission for debug drawing
+     *
+     * Returns a HID pointer which should be used rather than the global
+     * gui-> for making drawing calls. If the return value is NULL, then
+     * permission has been denied, and the drawing must not continue.
+     */
+    HID *(*request_debug_draw) (void);
+
+    /* Flush pending drawing to the screen
+     *
+     * May be implemented as a NOOP if the GUI has chosen to send the
+     * debug drawing directly to the screen.
+     */
+    void (*flush_debug_draw)   (void);
+
+    /* When finished, the user must inform the GUI to clean up resources
+     *
+     * Any remaining rendering will be flushed to the screen.
+     */
+    void (*finish_debug_draw)  (void);
+  };
 
 /* Call this as soon as possible from main().  No other HID calls are
    valid until this is called.  */

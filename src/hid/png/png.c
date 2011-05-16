@@ -41,6 +41,7 @@
 
 #include "hid.h"
 #include "../hidint.h"
+#include "hid/common/hidnogui.h"
 #include "hid/common/draw_helpers.h"
 #include "png.h"
 
@@ -54,6 +55,8 @@
 #endif
 
 #define CRASH fprintf(stderr, "HID error: pcb called unimplemented PNG function %s.\n", __FUNCTION__); abort()
+
+static HID png_hid;
 
 static void *color_cache = NULL;
 static void *brush_cache = NULL;
@@ -94,7 +97,6 @@ typedef struct hid_gc_struct
   EndCapStyle cap;
   int width;
   unsigned char r, g, b;
-  int faded;
   color_struct *color;
   gdImagePtr brush;
   int is_erase;
@@ -228,17 +230,26 @@ static HID_Attr_Val png_values[NUM_OPTIONS];
 
 static const char *get_file_suffix(void)
 {
-	const char *fmt;
-	const char *result;
-	fmt = filetypes[png_attribute_list[HA_filetype].default_val.int_value];
-	     if (strcmp (fmt, FMT_gif) == 0)  result=".gif";
-	else if (strcmp (fmt, FMT_jpg) == 0)  result=".jpg";
-	else if (strcmp (fmt, FMT_png) == 0)  result=".png";
-	else {
-		fprintf (stderr, "Error:  Invalid graphic file format\n");
-		result=".???";
-	}
-	return result;
+  const char *result = NULL;
+  const char *fmt;
+
+  fmt = filetypes[png_attribute_list[HA_filetype].default_val.int_value];
+
+  if (fmt == NULL)
+    ; /* Do nothing */
+  else if (strcmp (fmt, FMT_gif) == 0)
+    result=".gif";
+  else if (strcmp (fmt, FMT_jpg) == 0)
+    result=".jpg";
+  else if (strcmp (fmt, FMT_png) == 0)
+    result=".png";
+
+  if (result == NULL)
+    {
+      fprintf (stderr, "Error:  Invalid graphic file format\n");
+      result=".???";
+    }
+  return result;
 }
 
 static HID_Attribute *
@@ -247,7 +258,11 @@ png_get_export_options (int *n)
   static char *last_made_filename = 0;
   const char *suffix = get_file_suffix();
 
-  if (PCB) derive_default_filename(PCB->Filename, &png_attribute_list[HA_pngfile], suffix, &last_made_filename);
+  if (PCB)
+    derive_default_filename (PCB->Filename,
+                             &png_attribute_list[HA_pngfile],
+                             suffix,
+                             &last_made_filename);
 
   if (n)
     *n = NUM_OPTIONS;
@@ -300,16 +315,16 @@ parse_bloat (char *str)
     return;
   suf[0] = 0;
   sscanf (str, "%lf %s", &val, suf);
-  if (strcasecmp (suf, "in") == 0)
-    bloat = val * 100000.0;
-  else if (strcasecmp (suf, "mil") == 0)
-    bloat = val * 100.0;
-  else if (strcasecmp (suf, "mm") == 0)
-    bloat = val * MM_TO_COOR;
-  else if (strcasecmp (suf, "um") == 0)
-    bloat = val * MM_TO_COOR * 1000.0;
-  else if (strcasecmp (suf, "pix") == 0
-	   || strcasecmp (suf, "px") == 0)
+  if (strcmp (suf, "in") == 0)
+    bloat = INCH_TO_COORD(val);
+  else if (strcmp (suf, "mil") == 0)
+    bloat = MIL_TO_COORD(val);
+  else if (strcmp (suf, "mm") == 0)
+    bloat = MM_TO_COORD(val);
+  else if (strcmp (suf, "um") == 0)
+    bloat = MM_TO_COORD(val) / 1000.0;
+  else if (strcmp (suf, "pix") == 0
+	   || strcmp (suf, "px") == 0)
     bloat = val * scale;
   else
     bloat = val;
@@ -504,6 +519,7 @@ png_do_export (HID_Attr_Val * options)
   int w, h;
   int xmax, ymax, dpi;
   const char *fmt;
+  bool format_error = false;
 
   if (color_cache)
     {
@@ -612,13 +628,10 @@ png_do_export (HID_Attr_Val * options)
   if (dpi > 0)
     {
       /*
-       * a scale of 1 means 1 pixel is 1/100 mil 
-       * a scale of 100,000 means 1 pixel is 1 inch
-       * FIXME -- need to use a macro to go from PCB units
-       * so if we ever change pcb's internal units, this 
-       * will get updated.
+       * a scale of 1  means 1 pixel is 1 inch
+       * a scale of 10 means 1 pixel is 10 inches
        */
-      scale = 100000.0 / dpi;
+      scale = INCH_TO_COORD(1) / dpi;
       w = w / scale;
       h = h / scale;
     }
@@ -841,37 +854,33 @@ png_do_export (HID_Attr_Val * options)
 
   /* actually write out the image */
   fmt = filetypes[options[HA_filetype].int_value];
-  
-  if (strcmp (fmt, FMT_gif) == 0)
+
+  if (fmt == NULL)
+    format_error = true;
+  else if (strcmp (fmt, FMT_gif) == 0)
 #ifdef HAVE_GDIMAGEGIF
     gdImageGif (im, f);
 #else
-    {
-      gdImageDestroy (im);
-      return;
-    }
+    format_error = true;
 #endif
   else if (strcmp (fmt, FMT_jpg) == 0)
 #ifdef HAVE_GDIMAGEJPEG
     gdImageJpeg (im, f, -1);
 #else
-    {
-      gdImageDestroy (im);
-      return;
-    }
+    format_error = true;
 #endif
   else if (strcmp (fmt, FMT_png) == 0)
 #ifdef HAVE_GDIMAGEPNG
     gdImagePng (im, f);
 #else
-    {
-      gdImageDestroy (im);
-      return;
-    }
+    format_error = true;
 #endif
   else
+    format_error = true;
+
+  if (format_error)
     fprintf (stderr, "Error:  Invalid graphic file format."
-	     "  This is a bug.  Please report it.\n");
+                     "  This is a bug.  Please report it.\n");
 
   fclose (f);
 
@@ -1165,18 +1174,6 @@ static void
 png_set_draw_xor (hidGC gc, int xor_)
 {
   ;
-}
-
-static void
-png_set_draw_faded (hidGC gc, int faded)
-{
-  gc->faded = faded;
-}
-
-static void
-png_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2)
-{
-  CRASH;
 }
 
 static void
@@ -1512,72 +1509,42 @@ png_set_crosshair (int x, int y, int a)
 {
 }
 
-HID png_hid = {
-  sizeof (HID),
-  "png",
-  "GIF/JPEG/PNG export.",
-  0,				/* gui */
-  0,				/* printer */
-  1,				/* exporter */
-  1,				/* poly before */
-  0,				/* poly after */
-  1,				/* poly dicer */
-  png_get_export_options,
-  png_do_export,
-  png_parse_arguments,
-  0 /* png_invalidate_lr */ ,
-  0 /* png_invalidate_all */ ,
-  png_set_layer,
-  png_make_gc,
-  png_destroy_gc,
-  png_use_mask,
-  png_set_color,
-  png_set_line_cap,
-  png_set_line_width,
-  png_set_draw_xor,
-  png_set_draw_faded,
-  png_set_line_cap_angle,
-  png_draw_line,
-  png_draw_arc,
-  png_draw_rect,
-  png_fill_circle,
-  png_fill_polygon,
-  common_fill_pcb_polygon,
-  0 /* png_thindraw_pcb_polygon */ ,
-  png_fill_rect,
-  png_calibrate,
-  0 /* png_shift_is_pressed */ ,
-  0 /* png_control_is_pressed */ ,
-  0 /* png_mod1_is_pressed */ ,
-  0 /* png_get_coords */ ,
-  png_set_crosshair,
-  0 /* png_add_timer */ ,
-  0 /* png_stop_timer */ ,
-  0 /* png_watch_file */ ,
-  0 /* png_unwatch_file */ ,
-  0 /* png_add_block_hook */ ,
-  0 /* png_stop_block_hook */ ,
-  0 /* png_log */ ,
-  0 /* png_logv */ ,
-  0 /* png_confirm_dialog */ ,
-  0 /* png_close_confirm_dialog */ ,
-  0 /* png_report_dialog */ ,
-  0 /* png_prompt_for */ ,
-  0 /* png_fileselect */ ,
-  0 /* png_attribute_dialog */ ,
-  0 /* png_show_item */ ,
-  0 /* png_beep */ ,
-  0 /* png_progress */ ,
-  0 /* png_drc_gui */ ,
-  0 /* png_edit_attributes */
-};
-
 #include "dolists.h"
 
 void
 hid_png_init ()
 {
-  apply_default_hid (&png_hid, 0);
+  memset (&png_hid, 0, sizeof (HID));
+
+  common_nogui_init (&png_hid);
+  common_draw_helpers_init (&png_hid);
+
+  png_hid.struct_size = sizeof (HID);
+  png_hid.name        = "png";
+  png_hid.description = "GIF/JPEG/PNG export.";
+  png_hid.exporter    = 1;
+  png_hid.poly_before = 1;
+
+  png_hid.get_export_options  = png_get_export_options;
+  png_hid.do_export           = png_do_export;
+  png_hid.parse_arguments     = png_parse_arguments;
+  png_hid.set_layer           = png_set_layer;
+  png_hid.make_gc             = png_make_gc;
+  png_hid.destroy_gc          = png_destroy_gc;
+  png_hid.use_mask            = png_use_mask;
+  png_hid.set_color           = png_set_color;
+  png_hid.set_line_cap        = png_set_line_cap;
+  png_hid.set_line_width      = png_set_line_width;
+  png_hid.set_draw_xor        = png_set_draw_xor;
+  png_hid.draw_line           = png_draw_line;
+  png_hid.draw_arc            = png_draw_arc;
+  png_hid.draw_rect           = png_draw_rect;
+  png_hid.fill_circle         = png_fill_circle;
+  png_hid.fill_polygon        = png_fill_polygon;
+  png_hid.fill_rect           = png_fill_rect;
+  png_hid.calibrate           = png_calibrate;
+  png_hid.set_crosshair       = png_set_crosshair;
+
   hid_register_hid (&png_hid);
 
 #include "png_lists.h"

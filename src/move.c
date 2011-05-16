@@ -117,7 +117,7 @@ MoveElementLowLevel (DataTypePtr Data, ElementTypePtr Element,
 		     LocationType DX, LocationType DY)
 {
   if (Data)
-    r_delete_entry (Data->element_tree, (BoxType *) Element);
+    r_delete_entry (Data->element_tree, (BoxType *)Element);
   ELEMENTLINE_LOOP (Element);
   {
     MOVE_LINE_LOWLEVEL (line, DX, DY);
@@ -127,13 +127,13 @@ MoveElementLowLevel (DataTypePtr Data, ElementTypePtr Element,
   {
     if (Data)
       {
-	r_delete_entry (Data->pin_tree, (BoxType *) pin);
+	r_delete_entry (Data->pin_tree, (BoxType *)pin);
 	RestoreToPolygon (Data, PIN_TYPE, Element, pin);
       }
     MOVE_PIN_LOWLEVEL (pin, DX, DY);
     if (Data)
       {
-	r_insert_entry (Data->pin_tree, (BoxType *) pin, 0);
+	r_insert_entry (Data->pin_tree, (BoxType *)pin, 0);
 	ClearFromPolygon (Data, PIN_TYPE, Element, pin);
       }
   }
@@ -142,13 +142,13 @@ MoveElementLowLevel (DataTypePtr Data, ElementTypePtr Element,
   {
     if (Data)
       {
-	r_delete_entry (Data->pad_tree, (BoxType *) pad);
+	r_delete_entry (Data->pad_tree, (BoxType *)pad);
 	RestoreToPolygon (Data, PAD_TYPE, Element, pad);
       }
     MOVE_PAD_LOWLEVEL (pad, DX, DY);
     if (Data)
       {
-	r_insert_entry (Data->pad_tree, (BoxType *) pad, 0);
+	r_insert_entry (Data->pad_tree, (BoxType *)pad, 0);
 	ClearFromPolygon (Data, PAD_TYPE, Element, pad);
       }
   }
@@ -161,17 +161,17 @@ MoveElementLowLevel (DataTypePtr Data, ElementTypePtr Element,
   ELEMENTTEXT_LOOP (Element);
   {
     if (Data && Data->name_tree[n])
-      r_delete_entry (PCB->Data->name_tree[n], (BoxType *) text);
+      r_delete_entry (PCB->Data->name_tree[n], (BoxType *)text);
     MOVE_TEXT_LOWLEVEL (text, DX, DY);
     if (Data && Data->name_tree[n])
-      r_insert_entry (PCB->Data->name_tree[n], (BoxType *) text, 0);
+      r_insert_entry (PCB->Data->name_tree[n], (BoxType *)text, 0);
   }
   END_LOOP;
   MOVE_BOX_LOWLEVEL (&Element->BoundingBox, DX, DY);
   MOVE_BOX_LOWLEVEL (&Element->VBox, DX, DY);
   MOVE (Element->MarkX, Element->MarkY, DX, DY);
   if (Data)
-    r_insert_entry (Data->element_tree, (BoxType *) Element, 0);
+    r_insert_entry (Data->element_tree, (BoxType *)Element, 0);
 }
 
 /* ----------------------------------------------------------------------
@@ -186,13 +186,13 @@ MoveElementName (ElementTypePtr Element)
       ELEMENTTEXT_LOOP (Element);
       {
 	if (PCB->Data->name_tree[n])
-	  r_delete_entry (PCB->Data->name_tree[n], (BoxType *) text);
+	  r_delete_entry (PCB->Data->name_tree[n], (BoxType *)text);
 	MOVE_TEXT_LOWLEVEL (text, DeltaX, DeltaY);
 	if (PCB->Data->name_tree[n])
-	  r_insert_entry (PCB->Data->name_tree[n], (BoxType *) text, 0);
+	  r_insert_entry (PCB->Data->name_tree[n], (BoxType *)text, 0);
       }
       END_LOOP;
-      DrawElementName (Element, 0);
+      DrawElementName (Element);
       Draw ();
     }
   else
@@ -200,10 +200,10 @@ MoveElementName (ElementTypePtr Element)
       ELEMENTTEXT_LOOP (Element);
       {
 	if (PCB->Data->name_tree[n])
-	  r_delete_entry (PCB->Data->name_tree[n], (BoxType *) text);
+	  r_delete_entry (PCB->Data->name_tree[n], (BoxType *)text);
 	MOVE_TEXT_LOWLEVEL (text, DeltaX, DeltaY);
 	if (PCB->Data->name_tree[n])
-	  r_insert_entry (PCB->Data->name_tree[n], (BoxType *) text, 0);
+	  r_insert_entry (PCB->Data->name_tree[n], (BoxType *)text, 0);
       }
       END_LOOP;
     }
@@ -222,8 +222,8 @@ MoveElement (ElementTypePtr Element)
     {
       EraseElement (Element);
       MoveElementLowLevel (PCB->Data, Element, DeltaX, DeltaY);
-      DrawElementName (Element, 0);
-      DrawElementPackage (Element, 0);
+      DrawElementName (Element);
+      DrawElementPackage (Element);
       didDraw = true;
     }
   else
@@ -234,7 +234,7 @@ MoveElement (ElementTypePtr Element)
     }
   if (PCB->PinOn)
     {
-      DrawElementPinsAndPads (Element, 0);
+      DrawElementPinsAndPads (Element);
       didDraw = true;
     }
   if (didDraw)
@@ -248,16 +248,16 @@ MoveElement (ElementTypePtr Element)
 static void *
 MoveVia (PinTypePtr Via)
 {
-  r_delete_entry (PCB->Data->via_tree, (BoxTypePtr) Via);
+  r_delete_entry (PCB->Data->via_tree, (BoxType *)Via);
   RestoreToPolygon (PCB->Data, VIA_TYPE, Via, Via);
   MOVE_VIA_LOWLEVEL (Via, DeltaX, DeltaY);
   if (PCB->ViaOn)
     EraseVia (Via);
-  r_insert_entry (PCB->Data->via_tree, (BoxTypePtr) Via, 0);
+  r_insert_entry (PCB->Data->via_tree, (BoxType *)Via, 0);
   ClearFromPolygon (PCB->Data, VIA_TYPE, Via, Via);
   if (PCB->ViaOn)
     {
-      DrawVia (Via, 0);
+      DrawVia (Via);
       Draw ();
     }
   return (Via);
@@ -272,13 +272,13 @@ MoveLine (LayerTypePtr Layer, LineTypePtr Line)
   if (Layer->On)
     EraseLine (Line);
   RestoreToPolygon (PCB->Data, LINE_TYPE, Layer, Line);
-  r_delete_entry (Layer->line_tree, (BoxTypePtr) Line);
+  r_delete_entry (Layer->line_tree, (BoxType *)Line);
   MOVE_LINE_LOWLEVEL (Line, DeltaX, DeltaY);
-  r_insert_entry (Layer->line_tree, (BoxTypePtr) Line, 0);
+  r_insert_entry (Layer->line_tree, (BoxType *)Line, 0);
   ClearFromPolygon (PCB->Data, LINE_TYPE, Layer, Line);
   if (Layer->On)
     {
-      DrawLine (Layer, Line, 0);
+      DrawLine (Layer, Line);
       Draw ();
     }
   return (Line);
@@ -291,19 +291,19 @@ static void *
 MoveArc (LayerTypePtr Layer, ArcTypePtr Arc)
 {
   RestoreToPolygon (PCB->Data, ARC_TYPE, Layer, Arc);
-  r_delete_entry (Layer->arc_tree, (BoxTypePtr) Arc);
+  r_delete_entry (Layer->arc_tree, (BoxType *)Arc);
   if (Layer->On)
     {
       EraseArc (Arc);
       MOVE_ARC_LOWLEVEL (Arc, DeltaX, DeltaY);
-      DrawArc (Layer, Arc, 0);
+      DrawArc (Layer, Arc);
       Draw ();
     }
   else
     {
       MOVE_ARC_LOWLEVEL (Arc, DeltaX, DeltaY);
     }
-  r_insert_entry (Layer->arc_tree, (BoxTypePtr) Arc, 0);
+  r_insert_entry (Layer->arc_tree, (BoxType *)Arc, 0);
   ClearFromPolygon (PCB->Data, ARC_TYPE, Layer, Arc);
   return (Arc);
 }
@@ -315,17 +315,17 @@ static void *
 MoveText (LayerTypePtr Layer, TextTypePtr Text)
 {
   RestoreToPolygon (PCB->Data, TEXT_TYPE, Layer, Text);
-  r_delete_entry (Layer->text_tree, (BoxTypePtr) Text);
+  r_delete_entry (Layer->text_tree, (BoxType *)Text);
   if (Layer->On)
     {
       EraseText (Layer, Text);
       MOVE_TEXT_LOWLEVEL (Text, DeltaX, DeltaY);
-      DrawText (Layer, Text, 0);
+      DrawText (Layer, Text);
       Draw ();
     }
   else
     MOVE_TEXT_LOWLEVEL (Text, DeltaX, DeltaY);
-  r_insert_entry (Layer->text_tree, (BoxTypePtr) Text, 0);
+  r_insert_entry (Layer->text_tree, (BoxType *)Text, 0);
   ClearFromPolygon (PCB->Data, TEXT_TYPE, Layer, Text);
   return (Text);
 }
@@ -355,13 +355,13 @@ MovePolygon (LayerTypePtr Layer, PolygonTypePtr Polygon)
     {
       ErasePolygon (Polygon);
     }
-  r_delete_entry (Layer->polygon_tree, (BoxType *) Polygon);
+  r_delete_entry (Layer->polygon_tree, (BoxType *)Polygon);
   MovePolygonLowLevel (Polygon, DeltaX, DeltaY);
-  r_insert_entry (Layer->polygon_tree, (BoxType *) Polygon, 0);
+  r_insert_entry (Layer->polygon_tree, (BoxType *)Polygon, 0);
   InitClip (PCB->Data, Layer, Polygon);
   if (Layer->On)
     {
-      DrawPolygon (Layer, Polygon, 0);
+      DrawPolygon (Layer, Polygon);
       Draw ();
     }
   return (Polygon);
@@ -385,7 +385,7 @@ MoveLinePoint (LayerTypePtr Layer, LineTypePtr Line, PointTypePtr Point)
       ClearFromPolygon (PCB->Data, LINE_TYPE, Layer, Line);
       if (Layer->On)
 	{
-	  DrawLine (Layer, Line, 0);
+	  DrawLine (Layer, Line);
 	  Draw ();
 	}
       return (Line);
@@ -400,7 +400,7 @@ MoveLinePoint (LayerTypePtr Layer, LineTypePtr Line, PointTypePtr Point)
       r_insert_entry (PCB->Data->rat_tree, &Line->BoundingBox, 0);
       if (PCB->RatOn)
 	{
-	  DrawRat ((RatTypePtr) Line, 0);
+	  DrawRat ((RatTypePtr) Line);
 	  Draw ();
 	}
       return (Line);
@@ -418,15 +418,15 @@ MovePolygonPoint (LayerTypePtr Layer, PolygonTypePtr Polygon,
     {
       ErasePolygon (Polygon);
     }
-  r_delete_entry (Layer->polygon_tree, (BoxType *) Polygon);
+  r_delete_entry (Layer->polygon_tree, (BoxType *)Polygon);
   MOVE (Point->X, Point->Y, DeltaX, DeltaY);
   SetPolygonBoundingBox (Polygon);
-  r_insert_entry (Layer->polygon_tree, (BoxType *) Polygon, 0);
+  r_insert_entry (Layer->polygon_tree, (BoxType *)Polygon, 0);
   RemoveExcessPolygonPoints (Layer, Polygon);
   InitClip (PCB->Data, Layer, Polygon);
   if (Layer->On)
     {
-      DrawPolygon (Layer, Polygon, 0);
+      DrawPolygon (Layer, Polygon);
       Draw ();
     }
   return (Point);
@@ -435,45 +435,37 @@ MovePolygonPoint (LayerTypePtr Layer, PolygonTypePtr Polygon,
 /* ---------------------------------------------------------------------------
  * moves a line between layers; lowlevel routines
  */
-void *
-MoveLineToLayerLowLevel (LayerTypePtr Source, LineTypePtr Line,
-			 LayerTypePtr Destination)
+static void *
+MoveLineToLayerLowLevel (LayerType *Source, LineType *line,
+			 LayerType *Destination)
 {
-  LineTypePtr newone = GetLineMemory (Destination);
+  r_delete_entry (Source->line_tree, (BoxType *)line);
 
-  r_delete_entry (Source->line_tree, (BoxTypePtr) Line);
-  /* copy the data and remove it from the former layer */
-  *newone = *Line;
-  *Line = Source->Line[--Source->LineN];
-  r_substitute (Source->line_tree, (BoxType *) & Source->Line[Source->LineN],
-		(BoxType *) Line);
-  memset (&Source->Line[Source->LineN], 0, sizeof (LineType));
+  Source->Line = g_list_remove (Source->Line, line);
+  Destination->Line = g_list_append (Destination->Line, line);
+
   if (!Destination->line_tree)
     Destination->line_tree = r_create_tree (NULL, 0, 0);
-  r_insert_entry (Destination->line_tree, (BoxTypePtr) newone, 0);
-  return (newone);
+  r_insert_entry (Destination->line_tree, (BoxType *)line, 0);
+  return line;
 }
 
 /* ---------------------------------------------------------------------------
  * moves an arc between layers; lowlevel routines
  */
-void *
-MoveArcToLayerLowLevel (LayerTypePtr Source, ArcTypePtr Arc,
-			LayerTypePtr Destination)
+static void *
+MoveArcToLayerLowLevel (LayerType *Source, ArcType *arc,
+			LayerType *Destination)
 {
-  ArcTypePtr newone = GetArcMemory (Destination);
+  r_delete_entry (Source->arc_tree, (BoxType *)arc);
 
-  r_delete_entry (Source->arc_tree, (BoxTypePtr) Arc);
-  /* copy the data and remove it from the former layer */
-  *newone = *Arc;
-  *Arc = Source->Arc[--Source->ArcN];
-  r_substitute (Source->arc_tree, (BoxType *) & Source->Arc[Source->ArcN],
-		(BoxType *) Arc);
-  memset (&Source->Arc[Source->ArcN], 0, sizeof (ArcType));
+  Source->Arc = g_list_remove (Source->Arc, arc);
+  Destination->Arc = g_list_append (Destination->Arc, arc);
+
   if (!Destination->arc_tree)
     Destination->arc_tree = r_create_tree (NULL, 0, 0);
-  r_insert_entry (Destination->arc_tree, (BoxTypePtr) newone, 0);
-  return (newone);
+  r_insert_entry (Destination->arc_tree, (BoxType *)arc, 0);
+  return arc;
 }
 
 
@@ -481,7 +473,7 @@ MoveArcToLayerLowLevel (LayerTypePtr Source, ArcTypePtr Arc,
  * moves an arc between layers
  */
 static void *
-MoveArcToLayer (LayerTypePtr Layer, ArcTypePtr Arc)
+MoveArcToLayer (LayerType *Layer, ArcType *Arc)
 {
   ArcTypePtr newone;
 
@@ -492,7 +484,7 @@ MoveArcToLayer (LayerTypePtr Layer, ArcTypePtr Arc)
     }
   if (Dest == Layer && Layer->On)
     {
-      DrawArc (Layer, Arc, 0);
+      DrawArc (Layer, Arc);
       Draw ();
     }
   if (((long int) Dest == -1) || Dest == Layer)
@@ -504,7 +496,7 @@ MoveArcToLayer (LayerTypePtr Layer, ArcTypePtr Arc)
   newone = (ArcTypePtr)MoveArcToLayerLowLevel (Layer, Arc, Dest);
   ClearFromPolygon (PCB->Data, ARC_TYPE, Dest, Arc);
   if (Dest->On)
-    DrawArc (Dest, newone, 0);
+    DrawArc (Dest, newone);
   Draw ();
   return (newone);
 }
@@ -513,7 +505,7 @@ MoveArcToLayer (LayerTypePtr Layer, ArcTypePtr Arc)
  * moves a line between layers
  */
 static void *
-MoveRatToLayer (RatTypePtr Rat)
+MoveRatToLayer (RatType *Rat)
 {
   LineTypePtr newone;
   //LocationType X1 = Rat->Point1.X, Y1 = Rat->Point1.Y;
@@ -535,7 +527,7 @@ MoveRatToLayer (RatTypePtr Rat)
   if (PCB->RatOn)
     EraseRat (Rat);
   MoveObjectToRemoveUndoList (RATLINE_TYPE, Rat, Rat, Rat);
-  DrawLine (Dest, newone, 0);
+  DrawLine (Dest, newone);
   Draw ();
   return (newone);
 }
@@ -563,13 +555,13 @@ moveline_callback (const BoxType * b, void *cl)
 		     NoFlags ())) != NULL)
     {
       AddObjectToCreateUndoList (VIA_TYPE, via, via, via);
-      DrawVia (via, 0);
+      DrawVia (via);
     }
   longjmp (i->env, 1);
 }
 
 static void *
-MoveLineToLayer (LayerTypePtr Layer, LineTypePtr Line)
+MoveLineToLayer (LayerType *Layer, LineType *Line)
 {
   struct via_info info;
   BoxType sb;
@@ -583,7 +575,7 @@ MoveLineToLayer (LayerTypePtr Layer, LineTypePtr Line)
     }
   if (Dest == Layer && Layer->On)
     {
-      DrawLine (Layer, Line, 0);
+      DrawLine (Layer, Line);
       Draw ();
     }
   if (((long int) Dest == -1) || Dest == Layer)
@@ -597,7 +589,7 @@ MoveLineToLayer (LayerTypePtr Layer, LineTypePtr Line)
   Line = NULL;
   ClearFromPolygon (PCB->Data, LINE_TYPE, Dest, newone);
   if (Dest->On)
-    DrawLine (Dest, newone, 0);
+    DrawLine (Dest, newone);
   Draw ();
   if (!PCB->ViaOn || MoreToCome ||
       GetLayerGroupNumberByPointer (Layer) ==
@@ -640,83 +632,74 @@ MoveLineToLayer (LayerTypePtr Layer, LineTypePtr Line)
 /* ---------------------------------------------------------------------------
  * moves a text object between layers; lowlevel routines
  */
-void *
-MoveTextToLayerLowLevel (LayerTypePtr Source, TextTypePtr Text,
-			 LayerTypePtr Destination)
+static void *
+MoveTextToLayerLowLevel (LayerType *Source, TextType *text,
+			 LayerType *Destination)
 {
-  TextTypePtr newone = GetTextMemory (Destination);
+  RestoreToPolygon (PCB->Data, TEXT_TYPE, Source, text);
+  r_delete_entry (Source->text_tree, (BoxType *)text);
 
-  RestoreToPolygon (PCB->Data, TEXT_TYPE, Source, Text);
-  r_delete_entry (Source->text_tree, (BoxTypePtr) Text);
-  /* copy the data and remove it from the former layer */
-  *newone = *Text;
-  *Text = Source->Text[--Source->TextN];
-  r_substitute (Source->text_tree, (BoxType *) & Source->Text[Source->TextN],
-		(BoxType *) Text);
-  memset (&Source->Text[Source->TextN], 0, sizeof (TextType));
+  Source->Text = g_list_remove (Source->Text, text);
+  Destination->Text = g_list_append (Destination->Text, text);
+
   if (GetLayerGroupNumberByNumber (solder_silk_layer) ==
       GetLayerGroupNumberByPointer (Destination))
-    SET_FLAG (ONSOLDERFLAG, newone);
+    SET_FLAG (ONSOLDERFLAG, text);
   else
-    CLEAR_FLAG (ONSOLDERFLAG, newone);
+    CLEAR_FLAG (ONSOLDERFLAG, text);
+
   /* re-calculate the bounding box (it could be mirrored now) */
-  SetTextBoundingBox (&PCB->Font, newone);
+  SetTextBoundingBox (&PCB->Font, text);
   if (!Destination->text_tree)
     Destination->text_tree = r_create_tree (NULL, 0, 0);
-  r_insert_entry (Destination->text_tree, (BoxTypePtr) newone, 0);
-  ClearFromPolygon (PCB->Data, TEXT_TYPE, Destination, newone);
-  return (newone);
+  r_insert_entry (Destination->text_tree, (BoxType *)text, 0);
+  ClearFromPolygon (PCB->Data, TEXT_TYPE, Destination, text);
+
+  return text;
 }
 
 /* ---------------------------------------------------------------------------
  * moves a text object between layers
  */
 static void *
-MoveTextToLayer (LayerTypePtr Layer, TextTypePtr Text)
+MoveTextToLayer (LayerType *layer, TextType *text)
 {
-  TextTypePtr newone;
-
-  if (TEST_FLAG (LOCKFLAG, Text))
+  if (TEST_FLAG (LOCKFLAG, text))
     {
       Message (_("Sorry, the object is locked\n"));
       return NULL;
     }
-  if (Dest != Layer)
+  if (Dest != layer)
     {
-      AddObjectToMoveToLayerUndoList (TEXT_TYPE, Layer, Text, Text);
-      if (Layer->On)
-	EraseText (Layer, Text);
-      newone = (TextTypePtr)MoveTextToLayerLowLevel (Layer, Text, Dest);
+      AddObjectToMoveToLayerUndoList (TEXT_TYPE, layer, text, text);
+      if (layer->On)
+	EraseText (layer, text);
+      text = MoveTextToLayerLowLevel (layer, text, Dest);
       if (Dest->On)
-	DrawText (Dest, newone, 0);
-      if (Layer->On || Dest->On)
+	DrawText (Dest, text);
+      if (layer->On || Dest->On)
 	Draw ();
-      return (newone);
     }
-  return (Text);
+  return text;
 }
 
 /* ---------------------------------------------------------------------------
  * moves a polygon between layers; lowlevel routines
  */
-void *
-MovePolygonToLayerLowLevel (LayerTypePtr Source, PolygonTypePtr Polygon,
-			    LayerTypePtr Destination)
+static void *
+MovePolygonToLayerLowLevel (LayerType *Source, PolygonType *polygon,
+			    LayerType *Destination)
 {
-  PolygonTypePtr newone = GetPolygonMemory (Destination);
+  r_delete_entry (Source->polygon_tree, (BoxType *)polygon);
 
-  r_delete_entry (Source->polygon_tree, (BoxType *) Polygon);
-  /* copy the data and remove it from the former layer */
-  *newone = *Polygon;
-  *Polygon = Source->Polygon[--Source->PolygonN];
-  r_substitute (Source->polygon_tree,
-		(BoxType *) & Source->Polygon[Source->PolygonN],
-		(BoxType *) Polygon);
-  memset (&Source->Polygon[Source->PolygonN], 0, sizeof (PolygonType));
+  Source->Polygon = g_list_remove (Source->Polygon, polygon);
+  Destination->Polygon = g_list_append (Destination->Polygon, polygon);
+
   if (!Destination->polygon_tree)
     Destination->polygon_tree = r_create_tree (NULL, 0, 0);
-  r_insert_entry (Destination->polygon_tree, (BoxType *) newone, 0);
-  return (newone);
+  r_insert_entry (Destination->polygon_tree, (BoxType *)polygon, 0);
+
+  return polygon;
 }
 
 struct mptlc
@@ -748,7 +731,7 @@ mptl_pin_callback (const BoxType *b, void *cl)
  * moves a polygon between layers
  */
 static void *
-MovePolygonToLayer (LayerTypePtr Layer, PolygonTypePtr Polygon)
+MovePolygonToLayer (LayerType *Layer, PolygonType *Polygon)
 {
   PolygonTypePtr newone;
   struct mptlc d;
@@ -775,7 +758,7 @@ MovePolygonToLayer (LayerTypePtr Layer, PolygonTypePtr Polygon)
   InitClip (PCB->Data, Dest, newone);
   if (Dest->On)
     {
-      DrawPolygon (Dest, newone, 0);
+      DrawPolygon (Dest, newone);
       Draw ();
     }
   return (newone);

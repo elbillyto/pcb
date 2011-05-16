@@ -18,6 +18,7 @@
 #include "error.h"
 #include "../hidint.h"
 #include "gui.h"
+#include "hid/common/hidnogui.h"
 #include "hid/common/draw_helpers.h"
 
 #ifdef HAVE_LIBDMALLOC
@@ -739,10 +740,188 @@ ghid_beep ()
   gdk_beep ();
 }
 
+struct progress_dialog
+{
+  GtkWidget *dialog;
+  GtkWidget *message;
+  GtkWidget *progress;
+  gint response_id;
+  GMainLoop *loop;
+  gboolean destroyed;
+  gboolean started;
+  GTimer *timer;
+
+  gulong response_handler;
+  gulong destroy_handler;
+  gulong delete_handler;
+};
+
+static void
+run_response_handler (GtkDialog *dialog,
+                      gint response_id,
+                      gpointer data)
+{
+  struct progress_dialog *pd = data;
+
+  pd->response_id = response_id;
+}
+
+static gint
+run_delete_handler (GtkDialog *dialog,
+                    GdkEventAny *event,
+                    gpointer data)
+{
+  struct progress_dialog *pd = data;
+
+  pd->response_id = GTK_RESPONSE_DELETE_EVENT;
+
+  return TRUE; /* Do not destroy */
+}
+
+static void
+run_destroy_handler (GtkDialog *dialog, gpointer data)
+{
+  struct progress_dialog *pd = data;
+
+  pd->destroyed = TRUE;
+}
+
+static struct progress_dialog *
+make_progress_dialog (void)
+{
+  struct progress_dialog *pd;
+  GtkWidget *alignment;
+  GtkWidget *vbox;
+
+  pd = g_new0 (struct progress_dialog, 1);
+  pd->response_id = GTK_RESPONSE_NONE;
+
+  pd->dialog = gtk_dialog_new_with_buttons (_("Progress"),
+                                            GTK_WINDOW (gport->top_window),
+                                            /* Modal so nothing else can get events whilst
+                                               the main mainloop isn't running */
+                                            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                            GTK_STOCK_CANCEL,
+                                            GTK_RESPONSE_CANCEL,
+                                            NULL);
+
+  gtk_window_set_deletable (GTK_WINDOW (pd->dialog), FALSE);
+  gtk_window_set_skip_pager_hint (GTK_WINDOW (pd->dialog), TRUE);
+  gtk_window_set_skip_taskbar_hint (GTK_WINDOW (pd->dialog), TRUE);
+  gtk_widget_set_size_request (pd->dialog, 300, -1);
+
+  pd->message = gtk_label_new (NULL);
+  gtk_misc_set_alignment (GTK_MISC (pd->message), 0., 0.);
+
+  pd->progress = gtk_progress_bar_new ();
+  gtk_widget_set_size_request (pd->progress, -1, 26);
+
+  vbox = gtk_vbox_new (false, 0);
+  gtk_box_pack_start (GTK_BOX (vbox), pd->message, true, true, 8);
+  gtk_box_pack_start (GTK_BOX (vbox), pd->progress, false, true, 8);
+
+  alignment = gtk_alignment_new (0., 0., 1., 1.);
+  gtk_alignment_set_padding (GTK_ALIGNMENT (alignment), 8, 8, 8, 8);
+  gtk_container_add (GTK_CONTAINER (alignment), vbox);
+
+  gtk_box_pack_start (GTK_BOX (GTK_DIALOG (pd->dialog)->vbox),
+                      alignment, true, true, 0);
+
+  gtk_widget_show_all (alignment);
+
+  g_object_ref (pd->dialog);
+  gtk_window_present (GTK_WINDOW (pd->dialog));
+
+  pd->response_handler =
+    g_signal_connect (pd->dialog, "response",
+                      G_CALLBACK (run_response_handler), pd);
+  pd->delete_handler =
+    g_signal_connect (pd->dialog, "delete-event",
+                      G_CALLBACK (run_delete_handler), pd);
+  pd->destroy_handler =
+    g_signal_connect (pd->dialog, "destroy",
+                      G_CALLBACK (run_destroy_handler), pd);
+
+  pd->loop = g_main_loop_new (NULL, FALSE);
+  pd->timer = g_timer_new ();
+
+  return pd;
+}
+
+static void
+destroy_progress_dialog (struct progress_dialog *pd)
+{
+  if (pd == NULL)
+    return;
+
+  if (!pd->destroyed)
+    {
+      g_signal_handler_disconnect (pd->dialog, pd->response_handler);
+      g_signal_handler_disconnect (pd->dialog, pd->delete_handler);
+      g_signal_handler_disconnect (pd->dialog, pd->destroy_handler);
+    }
+
+  g_timer_destroy (pd->timer);
+  g_object_unref (pd->dialog);
+  g_main_loop_unref (pd->loop);
+
+  gtk_widget_destroy (pd->dialog);
+
+  pd->loop = NULL;
+  g_free (pd);
+}
+
+static void
+handle_progress_dialog_events (struct progress_dialog *pd)
+{
+  GMainContext * context = g_main_loop_get_context (pd->loop);
+
+  /* Process events */
+  while (g_main_context_pending (context))
+    {
+      g_main_context_iteration (context, FALSE);
+    }
+}
+
+#define MIN_TIME_SEPARATION (50./1000.) /* 50ms */
 static int
 ghid_progress (int so_far, int total, const char *message)
 {
-  return 0;
+  static struct progress_dialog *pd = NULL;
+
+  /* If we are finished, destroy any dialog */
+  if (so_far == 0 && total == 0 && message == NULL)
+    {
+      destroy_progress_dialog (pd);
+      pd = NULL;
+      return 0;
+    }
+
+  if (pd == NULL)
+    pd = make_progress_dialog ();
+
+  /* We don't want to keep the underlying process too busy whilst we
+   * process events. If we get called quickly after the last progress
+   * update, wait a little bit before we respond - perhaps the next
+   * time progress is reported.
+
+   * The exception here is that we always want to process the first
+   * batch of events after having shown the dialog for the first time
+   */
+  if (pd->started && g_timer_elapsed (pd->timer, NULL) < MIN_TIME_SEPARATION)
+    return 0;
+
+  gtk_label_set_text (GTK_LABEL (pd->message), message);
+  gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR (pd->progress),
+                                 (double)so_far / (double)total);
+
+  handle_progress_dialog_events (pd);
+  g_timer_start (pd->timer);
+
+  pd->started = TRUE;
+
+  return (pd->response_id == GTK_RESPONSE_CANCEL ||
+          pd->response_id == GTK_RESPONSE_DELETE_EVENT) ? 1 : 0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -972,68 +1151,6 @@ HID_DRC_GUI ghid_drc_gui = {
 
 extern HID_Attribute *ghid_get_export_options (int *);
 
-HID ghid_hid = {
-  sizeof (HID),
-  "gtk",
-  "Gtk - The Gimp Toolkit",
-  1,				/* gui */
-  0,				/* printer */
-  0,				/* exporter */
-  0,				/* poly before */
-  1,				/* poly after */
-  0,				/* poly dicer */
-
-  ghid_get_export_options,
-  ghid_do_export,
-  ghid_parse_arguments,
-  ghid_invalidate_lr,
-  ghid_invalidate_all,
-  ghid_set_layer,
-  ghid_make_gc,
-  ghid_destroy_gc,
-  ghid_use_mask,
-  ghid_set_color,
-  ghid_set_line_cap,
-  ghid_set_line_width,
-  ghid_set_draw_xor,
-  ghid_set_draw_faded,
-  ghid_set_line_cap_angle,
-  ghid_draw_line,
-  ghid_draw_arc,
-  ghid_draw_rect,
-  ghid_fill_circle,
-  ghid_fill_polygon,
-  common_fill_pcb_polygon,
-  common_thindraw_pcb_polygon,
-  ghid_fill_rect,
-
-  ghid_calibrate,
-  ghid_shift_is_pressed,
-  ghid_control_is_pressed,
-  ghid_mod1_is_pressed,
-  ghid_get_coords,
-  ghid_set_crosshair,
-  ghid_add_timer,
-  ghid_stop_timer,
-  ghid_watch_file,
-  ghid_unwatch_file,
-  ghid_add_block_hook,
-  ghid_stop_block_hook,
-
-  ghid_log,
-  ghid_logv,
-  ghid_confirm_dialog,
-  ghid_close_confirm_dialog,
-  ghid_report_dialog,
-  ghid_prompt_for,
-  ghid_fileselect,
-  ghid_attribute_dialog,
-  ghid_show_item,
-  ghid_beep,
-  ghid_progress,
-  &ghid_drc_gui,
-  ghid_attributes
-};
 
 /* ------------------------------------------------------------ 
  *
@@ -1688,9 +1805,20 @@ The values are percentages of the board size.  Thus, a move of
 static int
 CursorAction(int argc, char **argv, int x, int y)
 {
+  UnitList extra_units_x = {
+    { "grid",  PCB->Grid, 0 },
+    { "view",  gport->view_width, UNIT_PERCENT },
+    { "board", PCB->MaxWidth, UNIT_PERCENT },
+    { "", 0, 0 }
+  };
+  UnitList extra_units_y = {
+    { "grid",  PCB->Grid, 0 },
+    { "view",  gport->view_height, UNIT_PERCENT },
+    { "board", PCB->MaxHeight, UNIT_PERCENT },
+    { "", 0, 0 }
+  };
   int pan_warp = HID_SC_DO_NOTHING;
   double dx, dy;
-  double xu = 0.0, yu = 0.0;
 
   if (argc != 4)
     AFAIL (cursor);
@@ -1702,35 +1830,14 @@ CursorAction(int argc, char **argv, int x, int y)
   else
     AFAIL (cursor);
 
-  dx = strtod (argv[1], 0);
+  dx = GetValueEx (argv[1], argv[3], NULL, extra_units_x, "");
   if (ghid_flip_x)
     dx = -dx;
-  dy = strtod (argv[2], 0);
+  dy = GetValueEx (argv[2], argv[3], NULL, extra_units_y, "");
   if (!ghid_flip_y)
     dy = -dy;
 
-  /* 
-   * xu and yu are the scale factors that we multiply dx and dy by to
-   * come up with PCB internal units.
-   */
-  if (strncasecmp (argv[3], "mm", 2) == 0)
-    xu = yu = MM_TO_COOR;
-  else if (strncasecmp (argv[3], "mil", 3) == 0)
-    xu = yu = 100;
-  else if (strncasecmp (argv[3], "grid", 4) == 0)
-    xu = yu = PCB->Grid;
-  else if (strncasecmp (argv[3], "view", 4) == 0)
-    {
-      xu = gport->view_width / 100.0;
-      yu = gport->view_height / 100.0;
-    }
-  else if (strncasecmp (argv[3], "board", 4) == 0)
-    {
-      xu = PCB->MaxWidth / 100.0;
-      yu = PCB->MaxHeight / 100.0;
-    }
-
-  EventMoveCrosshair (Crosshair.X+(int)(dx*xu), Crosshair.Y+(int)(dy*yu));
+  EventMoveCrosshair (Crosshair.X + dx, Crosshair.Y + dy);
   gui->set_crosshair (Crosshair.X, Crosshair.Y, pan_warp);
 
   return 0;
@@ -1900,11 +2007,11 @@ ScrollAction (int argc, char **argv, int x, int y)
   else
     AFAIL (scroll);
 
-  HideCrosshair ();
+  notify_crosshair_change (false);
   ghid_port_ranges_pan (dx, dy, TRUE);
   MoveCrosshairRelative (dx, dy);
   AdjustAttachedObjects ();
-  RestoreCrosshair ();
+  notify_crosshair_change (true);
 
   return 0;
 }
@@ -1955,9 +2062,9 @@ PanAction (int argc, char **argv, int x, int y)
     }
   else if (x == on_x && y == on_y)
     {
-      ghid_show_crosshair (FALSE);
+      notify_crosshair_change (false);
       ghidgui->auto_pan_on = !ghidgui->auto_pan_on;
-      ghid_show_crosshair (TRUE);
+      notify_crosshair_change (true);
     }
 
   return 0;
@@ -2138,14 +2245,17 @@ REGISTER_FLAGS (ghid_main_flag_list)
 #include <winreg.h>
 #endif
 
+HID ghid_hid;
+
 void
 hid_gtk_init ()
 {
-  #ifdef WIN32
-
+#ifdef WIN32
   char * tmps;
   char * share_dir;
+#endif
 
+#ifdef WIN32
   tmps = g_win32_get_package_installation_directory (PACKAGE "-" VERSION, NULL);
 #define REST_OF_PATH G_DIR_SEPARATOR_S "share" G_DIR_SEPARATOR_S PACKAGE
   share_dir = (char *) malloc(strlen(tmps) + 
@@ -2155,7 +2265,71 @@ hid_gtk_init ()
   free (tmps);
 #undef REST_OF_PATH
   printf ("\"Share\" installation path is \"%s\"\n", share_dir);
-#endif  
+#endif
+
+  memset (&ghid_hid, 0, sizeof (HID));
+
+  common_nogui_init (&ghid_hid);
+  common_draw_helpers_init (&ghid_hid);
+
+  ghid_hid.struct_size              = sizeof (HID);
+  ghid_hid.name                     = "gtk";
+  ghid_hid.description              = "Gtk - The Gimp Toolkit";
+  ghid_hid.gui                      = 1;
+  ghid_hid.poly_after               = 1;
+
+  ghid_hid.get_export_options       = ghid_get_export_options;
+  ghid_hid.do_export                = ghid_do_export;
+  ghid_hid.parse_arguments          = ghid_parse_arguments;
+  ghid_hid.invalidate_lr            = ghid_invalidate_lr;
+  ghid_hid.invalidate_all           = ghid_invalidate_all;
+  ghid_hid.notify_crosshair_change  = ghid_notify_crosshair_change;
+  ghid_hid.notify_mark_change       = ghid_notify_mark_change;
+  ghid_hid.set_layer                = ghid_set_layer;
+  ghid_hid.make_gc                  = ghid_make_gc;
+  ghid_hid.destroy_gc               = ghid_destroy_gc;
+  ghid_hid.use_mask                 = ghid_use_mask;
+  ghid_hid.set_color                = ghid_set_color;
+  ghid_hid.set_line_cap             = ghid_set_line_cap;
+  ghid_hid.set_line_width           = ghid_set_line_width;
+  ghid_hid.set_draw_xor             = ghid_set_draw_xor;
+  ghid_hid.draw_line                = ghid_draw_line;
+  ghid_hid.draw_arc                 = ghid_draw_arc;
+  ghid_hid.draw_rect                = ghid_draw_rect;
+  ghid_hid.fill_circle              = ghid_fill_circle;
+  ghid_hid.fill_polygon             = ghid_fill_polygon;
+  ghid_hid.fill_rect                = ghid_fill_rect;
+
+  ghid_hid.calibrate                = ghid_calibrate;
+  ghid_hid.shift_is_pressed         = ghid_shift_is_pressed;
+  ghid_hid.control_is_pressed       = ghid_control_is_pressed;
+  ghid_hid.mod1_is_pressed          = ghid_mod1_is_pressed,
+  ghid_hid.get_coords               = ghid_get_coords;
+  ghid_hid.set_crosshair            = ghid_set_crosshair;
+  ghid_hid.add_timer                = ghid_add_timer;
+  ghid_hid.stop_timer               = ghid_stop_timer;
+  ghid_hid.watch_file               = ghid_watch_file;
+  ghid_hid.unwatch_file             = ghid_unwatch_file;
+  ghid_hid.add_block_hook           = ghid_add_block_hook;
+  ghid_hid.stop_block_hook          = ghid_stop_block_hook;
+
+  ghid_hid.log                      = ghid_log;
+  ghid_hid.logv                     = ghid_logv;
+  ghid_hid.confirm_dialog           = ghid_confirm_dialog;
+  ghid_hid.close_confirm_dialog     = ghid_close_confirm_dialog;
+  ghid_hid.report_dialog            = ghid_report_dialog;
+  ghid_hid.prompt_for               = ghid_prompt_for;
+  ghid_hid.fileselect               = ghid_fileselect;
+  ghid_hid.attribute_dialog         = ghid_attribute_dialog;
+  ghid_hid.show_item                = ghid_show_item;
+  ghid_hid.beep                     = ghid_beep;
+  ghid_hid.progress                 = ghid_progress;
+  ghid_hid.drc_gui                  = &ghid_drc_gui,
+  ghid_hid.edit_attributes          = ghid_attributes;
+
+  ghid_hid.request_debug_draw       = ghid_request_debug_draw;
+  ghid_hid.flush_debug_draw         = ghid_flush_debug_draw;
+  ghid_hid.finish_debug_draw        = ghid_finish_debug_draw;
 
   hid_register_hid (&ghid_hid);
 #include "gtk_lists.h"
