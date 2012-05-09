@@ -22,22 +22,15 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for crosshair routines
  */
 
-#ifndef	__CROSSHAIR_INCLUDED__
-#define	__CROSSHAIR_INCLUDED__
+#ifndef	PCB_CROSSHAIR_H
+#define	PCB_CROSSHAIR_H
 
 #include "global.h"
-
-/* ---------------------------------------------------------------------------
- * fits screen coordinates into grid
- */
-#define	GRIDFIT_X(x,g)	(int)(0.5 + ((int)(((x) -PCB->GridOffsetX + g/2) /(g)) *(g)) +PCB->GridOffsetX)
-#define	GRIDFIT_Y(y,g)	(int)(0.5 + ((int)(((y) -PCB->GridOffsetY + g/2) /(g)) *(g)) +PCB->GridOffsetY)
 
 /* ---------------------------------------------------------------------------
  * all possible states of an attached object
@@ -46,18 +39,18 @@
 #define	STATE_SECOND	1
 #define	STATE_THIRD		2
 
+Coord GridFit (Coord x, Coord grid_spacing, Coord grid_offset);
 void notify_crosshair_change (bool changes_complete);
 void notify_mark_change (bool changes_complete);
 void HideCrosshair (void);
 void RestoreCrosshair (void);
 void DrawAttached (void);
 void DrawMark (void);
-void MoveCrosshairRelative (LocationType, LocationType);
-bool MoveCrosshairAbsolute (LocationType, LocationType);
-void SetCrosshairRange (LocationType, LocationType, LocationType,
-			LocationType);
+void MoveCrosshairRelative (Coord, Coord);
+bool MoveCrosshairAbsolute (Coord, Coord);
+void SetCrosshairRange (Coord, Coord, Coord, Coord);
 void InitCrosshair (void);
 void DestroyCrosshair (void);
-void FitCrosshairIntoGrid (LocationType, LocationType);
+void FitCrosshairIntoGrid (Coord, Coord);
 
 #endif

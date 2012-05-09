@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes to change objects mirror flag
  */
 
-#ifndef	__MIRROR_INCLUDED__
-#define	__MIRROR_INCLUDED__
+#ifndef	PCB_MIRROR_H
+#define	PCB_MIRROR_H
 
 #include "global.h"
 
@@ -41,6 +40,6 @@
 #define	MIRROR_TYPES	(TEXT_TYPE | ELEMENTNAME_TYPE)
 
 
-void MirrorElementCoordinates (DataTypePtr, ElementTypePtr, LocationType);
+void MirrorElementCoordinates (DataType *, ElementType *, Coord);
 
 #endif

@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -71,8 +69,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 /*
   int    PCB->NetlistLib.MenuN
   char * PCB->NetlistLib.Menu[i].Name
@@ -103,7 +99,7 @@ NetlistChanged (int force_unfreeze)
     }
 }
 
-LibraryMenuTypePtr
+LibraryMenuType *
 netnode_to_netname (char *nodename)
 {
   int i, j;
@@ -122,7 +118,7 @@ netnode_to_netname (char *nodename)
   return 0;
 }
 
-LibraryMenuTypePtr
+LibraryMenuType *
 netname_to_netname (char *netname)
 {
   int i;
@@ -344,7 +340,7 @@ updates the GUI.
 #define ARG(n) (argc > (n) ? argv[n] : 0)
 
 static int
-Netlist (int argc, char **argv, int x, int y)
+Netlist (int argc, char **argv, Coord x, Coord y)
 {
   NFunc func;
   int i, j;

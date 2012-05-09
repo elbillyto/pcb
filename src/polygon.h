@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for polygon editing routines
  */
 
-#ifndef	__POLYGON_INCLUDED__
-#define	__POLYGON_INCLUDED__
+#ifndef	PCB_POLYGON_H
+#define	PCH_POLYGON_H
 
 #include "global.h"
 
@@ -50,13 +49,13 @@
 /* Prototypes */
 
 void polygon_init (void);
-Cardinal polygon_point_idx (PolygonTypePtr polygon, PointTypePtr point);
-Cardinal polygon_point_contour (PolygonTypePtr polygon, Cardinal point);
-Cardinal prev_contour_point (PolygonTypePtr polygon, Cardinal point);
-Cardinal next_contour_point (PolygonTypePtr polygon, Cardinal point);
-Cardinal GetLowestDistancePolygonPoint (PolygonTypePtr,
-					LocationType, LocationType);
-bool RemoveExcessPolygonPoints (LayerTypePtr, PolygonTypePtr);
+Cardinal polygon_point_idx (PolygonType * polygon, PointType * point);
+Cardinal polygon_point_contour (PolygonType * polygon, Cardinal point);
+Cardinal prev_contour_point (PolygonType * polygon, Cardinal point);
+Cardinal next_contour_point (PolygonType * polygon, Cardinal point);
+Cardinal GetLowestDistancePolygonPoint (PolygonType *,
+					Coord, Coord);
+bool RemoveExcessPolygonPoints (LayerType *, PolygonType *);
 void GoToPreviousPoint (void);
 void ClosePolygon (void);
 void CopyAttachedPolygonToLayer (void);
@@ -64,29 +63,29 @@ int PolygonHoles (PolygonType *ptr, const BoxType *range,
 		  int (*callback) (PLINE *, void *user_data),
                   void *user_data);
 int PlowsPolygon (DataType *, int, void *, void *,
-		  int (*callback) (DataTypePtr, LayerTypePtr, PolygonTypePtr, int, void *, void *));
+		  int (*callback) (DataType *, LayerType *, PolygonType *, int, void *, void *));
 void ComputeNoHoles (PolygonType *poly);
 POLYAREA * ContourToPoly (PLINE *);
 POLYAREA * PolygonToPoly (PolygonType *);
-POLYAREA * RectPoly (LocationType x1, LocationType x2, LocationType y1, LocationType y2);
-POLYAREA * CirclePoly(LocationType x, LocationType y, BDimension radius);
-POLYAREA * OctagonPoly(LocationType x, LocationType y, BDimension radius);
-POLYAREA * LinePoly(LineType *l, BDimension thick);
-POLYAREA * ArcPoly(ArcType *l, BDimension thick);
-POLYAREA * PinPoly(PinType *l, BDimension thick, BDimension clear);
-POLYAREA * BoxPolyBloated (BoxType *box, BDimension radius);
-void frac_circle (PLINE *, LocationType, LocationType, Vector, int);
+POLYAREA * RectPoly (Coord x1, Coord x2, Coord y1, Coord y2);
+POLYAREA * CirclePoly (Coord x, Coord y, Coord radius);
+POLYAREA * OctagonPoly(Coord x, Coord y, Coord radius);
+POLYAREA * LinePoly(LineType *l, Coord thick);
+POLYAREA * ArcPoly(ArcType *l, Coord thick);
+POLYAREA * PinPoly(PinType *l, Coord thick, Coord clear);
+POLYAREA * BoxPolyBloated (BoxType *box, Coord radius);
+void frac_circle (PLINE *, Coord, Coord, Vector, int);
 int InitClip(DataType *d, LayerType *l, PolygonType *p);
 void RestoreToPolygon(DataType *, int, void *, void *);
 void ClearFromPolygon(DataType *, int, void *, void *);
 
-bool IsPointInPolygon (LocationType, LocationType, BDimension, PolygonTypePtr);
-bool IsPointInPolygonIgnoreHoles (LocationType, LocationType, PolygonTypePtr);
-bool IsRectangleInPolygon (LocationType, LocationType, LocationType,
-			      LocationType, PolygonTypePtr);
-bool isects (POLYAREA *, PolygonTypePtr, bool);
-bool MorphPolygon (LayerTypePtr, PolygonTypePtr);
+bool IsPointInPolygon (Coord, Coord, Coord, PolygonType *);
+bool IsPointInPolygonIgnoreHoles (Coord, Coord, PolygonType *);
+bool IsRectangleInPolygon (Coord, Coord, Coord, Coord, PolygonType *);
+bool isects (POLYAREA *, PolygonType *, bool);
+bool MorphPolygon (LayerType *, PolygonType *);
 void NoHolesPolygonDicer (PolygonType *p, const BoxType *clip,
                           void (*emit) (PLINE *, void *), void *user_data);
 void PolyToPolygonsOnLayer (DataType *, LayerType *, POLYAREA *, FlagType);
+
 #endif

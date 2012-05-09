@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -36,12 +34,11 @@
 
 #include "global.h"
 #include "data.h"
+#include "pcb-printf.h"
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 static int
 FlagCurrentStyle (int dummy)
@@ -61,13 +58,31 @@ FlagCurrentStyle (int dummy)
 static int
 FlagGrid (int dummy)
 {
-  return PCB->Grid > 1.0;
+  return PCB->Grid > 1;
 }
 
 static int
 FlagGridSize (int dummy)
 {
-  return (int) (PCB->Grid + 0.5);
+  return PCB->Grid;
+}
+
+static int
+FlagUnitsMm (int dummy)
+{
+  static const Unit *u = NULL;
+  if (u == NULL)
+    u = get_unit_struct ("mm");
+  return (Settings.grid_unit == u);
+}
+
+static int
+FlagUnitsMil (int dummy)
+{
+  static const Unit *u = NULL;
+  if (u == NULL)
+    u = get_unit_struct ("mil");
+  return (Settings.grid_unit == u);
 }
 
 static int
@@ -230,7 +245,8 @@ HID_Flag flags_flag_list[] = {
   {"hidenames", FlagTESTFLAG, HIDENAMESFLAG},
 
   {"fullpoly", FlagSETTINGS, OffsetOf (SettingType, FullPoly)},
-  {"grid_units_mm", FlagSETTINGS, OffsetOf (SettingType, grid_units_mm)},
+  {"grid_units_mm", FlagUnitsMm, -1},
+  {"grid_units_mil", FlagUnitsMil, -1},
   {"clearline", FlagSETTINGS, OffsetOf (SettingType, ClearLine)},
   {"uniquenames", FlagSETTINGS, OffsetOf (SettingType, UniqueNames)},
   {"showsolderside", FlagSETTINGS, OffsetOf (SettingType, ShowSolderSide)},

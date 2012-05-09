@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for remove routines
  */
 
-#ifndef	__REMOVE_INCLUDED__
-#define	__REMOVE_INCLUDED__
+#ifndef	PCB_REMOVE_H
+#define	PCB_REMOVE_H
 
 #include "global.h"
 
@@ -40,16 +39,16 @@
 	(VIA_TYPE | LINEPOINT_TYPE | LINE_TYPE | TEXT_TYPE | ELEMENT_TYPE |	\
 	POLYGONPOINT_TYPE | POLYGON_TYPE | RATLINE_TYPE | ARC_TYPE)
 
-void *RemoveLine (LayerTypePtr, LineTypePtr);
-void *RemoveArc (LayerTypePtr, ArcTypePtr);
-void *RemovePolygon (LayerTypePtr, PolygonTypePtr);
-void *RemoveText (LayerTypePtr, TextTypePtr);
-void *RemoveElement (ElementTypePtr);
+void *RemoveLine (LayerType *, LineType *);
+void *RemoveArc (LayerType *, ArcType *);
+void *RemovePolygon (LayerType *, PolygonType *);
+void *RemoveText (LayerType *, TextType *);
+void *RemoveElement (ElementType *);
 void ClearRemoveList (void);
-void RemovePCB (PCBTypePtr);
+void RemovePCB (PCBType *);
 bool RemoveSelected (void);
 bool DeleteRats (bool);
 void *RemoveObject (int, void *, void *, void *);
-void *DestroyObject (DataTypePtr, int, void *, void *, void *);
+void *DestroyObject (DataType *, int, void *, void *, void *);
 
 #endif

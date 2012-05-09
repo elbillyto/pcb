@@ -22,20 +22,18 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for action routines
  */
 
-#ifndef	__ACTION_INCLUDED__
-#define	__ACTION_INCLUDED__
+#ifndef	PCB_ACTION_H
+#define	PCH_ACTION_H
 
 #include "global.h"
 
 #define CLONE_TYPES LINE_TYPE | ARC_TYPE | VIA_TYPE | POLYGON_TYPE
 
-void ActionMovePointer (char *, char *);
 void ActionAdjustStyle (char *);
 void EventMoveCrosshair (int, int);
 
@@ -46,4 +44,5 @@ void warpNoWhere (void);
 /* In gui-misc.c */
 bool ActionGetLocation (char *);
 void ActionGetXY (char *);
+
 #endif

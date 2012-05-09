@@ -22,20 +22,19 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* just defines common parser identifiers
  */
 
-#ifndef	__LEX_INCLUDED__
-#define	__LEX_INCLUDED__
+#ifndef	PCB_LEX_H
+#define	PCB_LEX_H
 
 #include "global.h"
 
-int ParsePCB (PCBTypePtr, char *);
-int ParseElementFile (DataTypePtr, char *);
-int ParseLibraryEntry (DataTypePtr, char *);
-int ParseFont (FontTypePtr, char *);
+int ParsePCB (PCBType *, char *);
+int ParseElementFile (DataType *, char *);
+int ParseLibraryEntry (DataType *, char *);
+int ParseFont (FontType *, char *);
 
 #endif

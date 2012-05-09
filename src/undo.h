@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for undo routines
  */
 
-#ifndef	__UNDO_INCLUDED__
-#define	__UNDO_INCLUDED__
+#ifndef	PCB_UNDO_H
+#define	PCB_UNDO_H
 
 #include "global.h"
 
@@ -50,12 +49,12 @@ void AddObjectToInsertPointUndoList (int, void *, void *, void *);
 void AddObjectToRemoveContourUndoList (int, LayerType *, PolygonType *);
 void AddObjectToInsertContourUndoList (int, LayerType *, PolygonType *);
 void AddObjectToMoveUndoList (int, void *, void *, void *,
-			      LocationType, LocationType);
+			      Coord, Coord);
 void AddObjectToChangeNameUndoList (int, void *, void *, void *, char *);
 void AddObjectToRotateUndoList (int, void *, void *, void *,
-				LocationType, LocationType, BYTE);
+				Coord, Coord, BYTE);
 void AddObjectToCreateUndoList (int, void *, void *, void *);
-void AddObjectToMirrorUndoList (int, void *, void *, void *, LocationType);
+void AddObjectToMirrorUndoList (int, void *, void *, void *, Coord);
 void AddObjectToMoveToLayerUndoList (int, void *, void *, void *);
 void AddObjectToFlagUndoList (int, void *, void *, void *);
 void AddObjectToSizeUndoList (int, void *, void *, void *);
@@ -65,7 +64,7 @@ void AddObjectToMaskSizeUndoList (int, void *, void *, void *);
 void AddObjectToChangeAnglesUndoList (int, void *, void *, void *);
 void AddObjectToClearPolyUndoList (int, void *, void *, void *, bool);
 void AddLayerChangeToUndoList (int, int);
-void AddNetlistLibToUndoList (LibraryTypePtr);
+void AddNetlistLibToUndoList (LibraryType *);
 void LockUndo (void);
 void UnlockUndo (void);
 bool Undoing (void);

@@ -52,7 +52,6 @@
 
 #define TOOLTIP_UPDATE_DELAY 200
 
-static gint x_pan_speed, y_pan_speed;
 void
 ghid_port_ranges_changed (void)
 {
@@ -60,135 +59,47 @@ ghid_port_ranges_changed (void)
 
   h_adj = gtk_range_get_adjustment (GTK_RANGE (ghidgui->h_range));
   v_adj = gtk_range_get_adjustment (GTK_RANGE (ghidgui->v_range));
-  gport->view_x0 = h_adj->value;
-  gport->view_y0 = v_adj->value;
+  gport->view.x0 = gtk_adjustment_get_value (h_adj);
+  gport->view.y0 = gtk_adjustment_get_value (v_adj);
 
   ghid_invalidate_all ();
 }
 
-gboolean
-ghid_port_ranges_pan (gdouble x, gdouble y, gboolean relative)
-{
-  GtkAdjustment *h_adj, *v_adj;
-  gdouble x0, y0, x1, y1;
-
-  h_adj = gtk_range_get_adjustment (GTK_RANGE (ghidgui->h_range));
-  v_adj = gtk_range_get_adjustment (GTK_RANGE (ghidgui->v_range));
-  x0 = h_adj->value;
-  y0 = v_adj->value;
-
-  if (relative)
-    {
-      x1 = x0 + x;
-      y1 = y0 + y;
-    }
-  else
-    {
-      x1 = x;
-      y1 = y;
-    }
-
-  if (x1 < h_adj->lower)
-    x1 = h_adj->lower;
-  if (x1 > h_adj->upper - h_adj->page_size)
-    x1 = h_adj->upper - h_adj->page_size;
-
-  if (y1 < v_adj->lower)
-    y1 = v_adj->lower;
-  if (y1 > v_adj->upper - v_adj->page_size)
-    y1 = v_adj->upper - v_adj->page_size;
-
-  ghidgui->adjustment_changed_holdoff = TRUE;
-  gtk_range_set_value (GTK_RANGE (ghidgui->h_range), x1);
-  gtk_range_set_value (GTK_RANGE (ghidgui->v_range), y1);
-  ghidgui->adjustment_changed_holdoff = FALSE;
-
-  if ((x0 != x1) || (y0 != y1))
-    ghid_port_ranges_changed();
-
-  ghid_note_event_location (NULL);
-  return ((x0 != x1) || (y0 != y1));
-}
-
-  /* Do scrollbar scaling based on current port drawing area size and
-     |  overall PCB board size.
-   */
+/* Do scrollbar scaling based on current port drawing area size and
+   |  overall PCB board size.
+ */
 void
-ghid_port_ranges_scale (gboolean emit_changed)
+ghid_port_ranges_scale (void)
 {
   GtkAdjustment *adj;
+  gdouble page_size;
 
   /* Update the scrollbars with PCB units.  So Scale the current
      |  drawing area size in pixels to PCB units and that will be
      |  the page size for the Gtk adjustment.
    */
-  gport->view_width = gport->width * gport->zoom;
-  gport->view_height = gport->height * gport->zoom;
-
-  if (gport->view_width >= PCB->MaxWidth)
-    gport->view_width = PCB->MaxWidth;
-  if (gport->view_height >= PCB->MaxHeight)
-    gport->view_height = PCB->MaxHeight;
+  gport->view.width = gport->width * gport->view.coord_per_px;
+  gport->view.height = gport->height * gport->view.coord_per_px;
 
   adj = gtk_range_get_adjustment (GTK_RANGE (ghidgui->h_range));
-  adj->page_size = gport->view_width;
-  adj->page_increment = adj->page_size/10.0;
-  adj->step_increment = adj->page_size/100.0;
-  adj->upper = PCB->MaxWidth;
-  if (emit_changed)
-    gtk_signal_emit_by_name (GTK_OBJECT (adj), "changed");
+  page_size = MIN (gport->view.width, PCB->MaxWidth);
+  gtk_adjustment_configure (adj,
+                            gtk_adjustment_get_value (adj), /* value          */
+                            -gport->view.width,             /* lower          */
+                             PCB->MaxWidth + page_size,     /* upper          */
+                             page_size / 100.0,             /* step_increment */
+                             page_size / 10.0,              /* page_increment */
+                             page_size);                    /* page_size      */
 
   adj = gtk_range_get_adjustment (GTK_RANGE (ghidgui->v_range));
-  adj->page_size = gport->view_height;
-  adj->page_increment = adj->page_size/10.0;
-  adj->step_increment = adj->page_size/100.0;
-  adj->upper = PCB->MaxHeight;
-  if (emit_changed)
-    gtk_signal_emit_by_name (GTK_OBJECT (adj), "changed");
-}
-
-void
-ghid_port_ranges_zoom (gdouble zoom)
-{
-  gdouble xtmp, ytmp;
-  gint		x0, y0;
-
-  /* figure out zoom values in that would just make the width fit and
-   * that would just make the height fit
-   */
-  xtmp = (gdouble) PCB->MaxWidth / gport->width;
-  ytmp = (gdouble) PCB->MaxHeight / gport->height;
-
-  /* if we've tried to zoom further out than what would make the
-   * entire board fit or we passed 0, then pick a zoom that just makes
-   * the board fit.
-   */
-  if ((zoom > xtmp && zoom > ytmp) || zoom == 0.0)
-    zoom = (xtmp > ytmp) ? xtmp : ytmp;
-
-  xtmp = (gport->view_x - gport->view_x0) / (gdouble) gport->view_width;
-  ytmp = (gport->view_y - gport->view_y0) / (gdouble) gport->view_height;
-
-  gport->zoom = zoom;
-  pixel_slop = zoom;
-  ghid_port_ranges_scale(FALSE);
-
-  x0 = gport->view_x - xtmp * gport->view_width;
-  if (x0 < 0)
-    x0 = 0;
-  gport->view_x0 = x0;
-
-  y0 = gport->view_y - ytmp * gport->view_height;
-  if (y0 < 0)
-    y0 = 0;
-  gport->view_y0 = y0;
-
-  ghidgui->adjustment_changed_holdoff = TRUE;
-  gtk_range_set_value (GTK_RANGE (ghidgui->h_range), gport->view_x0);
-  gtk_range_set_value (GTK_RANGE (ghidgui->v_range), gport->view_y0);
-  ghidgui->adjustment_changed_holdoff = FALSE;
-
-  ghid_port_ranges_changed();
+  page_size = MIN (gport->view.height, PCB->MaxHeight);
+  gtk_adjustment_configure (adj,
+                            gtk_adjustment_get_value (adj), /* value          */
+                            -gport->view.height,            /* lower          */
+                            PCB->MaxHeight + page_size,     /* upper          */
+                            page_size / 100.0,              /* step_increment */
+                            page_size / 10.0,               /* page_increment */
+                            page_size);                     /* page_size      */
 }
 
 
@@ -197,14 +108,14 @@ ghid_port_ranges_zoom (gdouble zoom)
  */
 
 void
-ghid_get_coords (const char *msg, int *x, int *y)
+ghid_get_coords (const char *msg, Coord *x, Coord *y)
 {
   if (!ghid_port.has_entered && msg)
     ghid_get_user_xy (msg);
   if (ghid_port.has_entered)
     {
-      *x = SIDE_X (gport->view_x);
-      *y = SIDE_Y (gport->view_y);
+      *x = gport->pcb_x;
+      *y = gport->pcb_y;
     }
 }
 
@@ -216,7 +127,7 @@ ghid_note_event_location (GdkEventButton * ev)
 
   if (!ev)
     {
-      gdk_window_get_pointer (ghid_port.drawing_area->window,
+      gdk_window_get_pointer (gtk_widget_get_window (ghid_port.drawing_area),
                               &event_x, &event_y, NULL);
     }
   else
@@ -224,11 +135,10 @@ ghid_note_event_location (GdkEventButton * ev)
       event_x = ev->x;
       event_y = ev->y;
     }
-  gport->view_x = event_x * gport->zoom + gport->view_x0;
-  gport->view_y = event_y * gport->zoom + gport->view_y0;
 
-  moved = MoveCrosshairAbsolute (SIDE_X (gport->view_x), 
-				 SIDE_Y (gport->view_y));
+  ghid_event_to_pcb_coords (event_x, event_y, &gport->pcb_x, &gport->pcb_y);
+
+  moved = MoveCrosshairAbsolute (gport->pcb_x, gport->pcb_y);
   if (moved)
     {
       AdjustAttachedObjects ();
@@ -236,45 +146,6 @@ ghid_note_event_location (GdkEventButton * ev)
     }
   ghid_set_cursor_position_labels ();
   return moved;
-}
-
-gboolean
-have_crosshair_attachments (void)
-{
-  gboolean result = FALSE;
-
-  switch (Settings.Mode)
-    {
-    case COPY_MODE:
-    case MOVE_MODE:
-    case INSERTPOINT_MODE:
-      if (Crosshair.AttachedObject.Type != NO_TYPE)
-	result = TRUE;
-      break;
-    case PASTEBUFFER_MODE:
-    case VIA_MODE:
-      result = TRUE;
-      break;
-    case POLYGON_MODE:
-    case POLYGONHOLE_MODE:
-      if (Crosshair.AttachedLine.State != STATE_FIRST)
-	result = TRUE;
-      break;
-    case ARC_MODE:
-      if (Crosshair.AttachedBox.State != STATE_FIRST)
-	result = TRUE;
-      break;
-    case LINE_MODE:
-      if (Crosshair.AttachedLine.State != STATE_FIRST)
-	result = TRUE;
-      break;
-    default:
-      if (Crosshair.AttachedBox.State == STATE_SECOND
-	  || Crosshair.AttachedBox.State == STATE_THIRD)
-	result = TRUE;
-      break;
-    }
-  return result;
 }
 
 static gboolean
@@ -295,7 +166,7 @@ ghid_idle_cb (gpointer data)
 
 gboolean
 ghid_port_key_release_cb (GtkWidget * drawing_area, GdkEventKey * kev,
-			  GtkUIManager * ui)
+			  gpointer data)
 {
   gint ksym = kev->keyval;
 
@@ -321,7 +192,7 @@ ghid_port_key_release_cb (GtkWidget * drawing_area, GdkEventKey * kev,
 
 gboolean
 ghid_port_key_press_cb (GtkWidget * drawing_area,
-			GdkEventKey * kev, GtkUIManager * ui)
+			GdkEventKey * kev, gpointer data)
 {
   ModifierKeysState mk;
   gint  ksym = kev->keyval;
@@ -345,6 +216,7 @@ ghid_port_key_press_cb (GtkWidget * drawing_area,
     case GDK_Shift_L:
     case GDK_Shift_R:
     case GDK_Shift_Lock:
+    case GDK_ISO_Level3_Shift:
       break;
 
     case GDK_Up:
@@ -427,7 +299,7 @@ ghid_port_key_press_cb (GtkWidget * drawing_area,
 
 gboolean
 ghid_port_button_press_cb (GtkWidget * drawing_area,
-			   GdkEventButton * ev, GtkUIManager * ui)
+			   GdkEventButton * ev, gpointer data)
 {
   ModifierKeysState mk;
   GdkModifierType state;
@@ -452,7 +324,7 @@ ghid_port_button_press_cb (GtkWidget * drawing_area,
 
 gboolean
 ghid_port_button_release_cb (GtkWidget * drawing_area,
-			     GdkEventButton * ev, GtkUIManager * ui)
+			     GdkEventButton * ev, gpointer data)
 {
   ModifierKeysState mk;
   GdkModifierType state;
@@ -486,7 +358,7 @@ ghid_port_drawing_area_configure_event_cb (GtkWidget * widget,
   if (gport->pixmap)
     gdk_pixmap_unref (gport->pixmap);
 
-  gport->pixmap = gdk_pixmap_new (widget->window,
+  gport->pixmap = gdk_pixmap_new (gtk_widget_get_window (widget),
 				  gport->width, gport->height, -1);
   gport->drawable = gport->pixmap;
 
@@ -511,21 +383,14 @@ ghid_port_drawing_area_configure_event_cb (GtkWidget * widget,
       ghid_drawing_area_configure_hook (out);
     }
 
-  ghid_port_ranges_scale (FALSE);
+  ghid_port_ranges_scale ();
   ghid_invalidate_all ();
   return 0;
 }
 
 
-#if GTK_CHECK_VERSION(2,12,0)
-# define ENABLE_TOOLTIPS 1
-#else
-# define ENABLE_TOOLTIPS 0
-#endif
-
-#if ENABLE_TOOLTIPS
 static char *
-describe_location (LocationType X, LocationType Y)
+describe_location (Coord X, Coord Y)
 {
   void *ptr1, *ptr2, *ptr3;
   int type;
@@ -544,11 +409,11 @@ describe_location (LocationType X, LocationType Y)
 
   /* don't mess with silk objects! */
   if (type & SILK_TYPE &&
-      GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1) >= max_copper_layer)
+      GetLayerNumber (PCB->Data, (LayerType *) ptr1) >= max_copper_layer)
     return NULL;
 
   if (type == PIN_TYPE || type == PAD_TYPE)
-    elename = (char *)UNKNOWN (NAMEONPCB_NAME ((ElementTypePtr) ptr1));
+    elename = (char *)UNKNOWN (NAMEONPCB_NAME ((ElementType *) ptr1));
 
   pinname = ConnectionName (type, ptr1, ptr2);
 
@@ -598,7 +463,7 @@ static gboolean check_object_tooltips (GHidPort *out)
   char *description;
 
   /* check if there are any pins or pads at that position */
-  description = describe_location (out->x_crosshair, out->y_crosshair);
+  description = describe_location (out->crosshair_x, out->crosshair_y);
 
   if (description == NULL)
     return FALSE;
@@ -637,7 +502,6 @@ queue_tooltip_update (GHidPort *out)
                      (GSourceFunc) check_object_tooltips,
                      out);
 }
-#endif
 
 gint
 ghid_port_window_motion_cb (GtkWidget * widget,
@@ -650,10 +514,10 @@ ghid_port_window_motion_cb (GtkWidget * widget,
 
   if (out->panning)
     {
-      dx = gport->zoom * (x_prev - ev->x);
-      dy = gport->zoom * (y_prev - ev->y);
+      dx = gport->view.coord_per_px * (x_prev - ev->x);
+      dy = gport->view.coord_per_px * (y_prev - ev->y);
       if (x_prev > 0)
-	ghid_port_ranges_pan (dx, dy, TRUE);
+        ghid_pan_view_rel (dx, dy);
       x_prev = ev->x;
       y_prev = ev->y;
       return FALSE;
@@ -661,9 +525,7 @@ ghid_port_window_motion_cb (GtkWidget * widget,
   x_prev = y_prev = -1;
   ghid_note_event_location ((GdkEventButton *)ev);
 
-#if ENABLE_TOOLTIPS
   queue_tooltip_update (out);
-#endif
 
   return FALSE;
 }
@@ -701,24 +563,10 @@ ghid_port_window_enter_cb (GtkWidget * widget,
   return FALSE;
 }
 
-static gboolean
-ghid_pan_idle_cb (gpointer data)
-{
-  gdouble dx = 0, dy = 0;
-
-  if (gport->has_entered)
-    return FALSE;
-  dy = gport->zoom * y_pan_speed;
-  dx = gport->zoom * x_pan_speed;
-  return (ghid_port_ranges_pan (dx, dy, TRUE));
-}
-
 gint
 ghid_port_window_leave_cb (GtkWidget * widget, 
                            GdkEventCrossing * ev, GHidPort * out)
 {
-  gint x0, y0, x, y, dx, dy, w, h;
-  
   /* printf("leave mode: %d detail: %d\n", ev->mode, ev->detail); */
 
   /* Window leave events can also be triggered because of focus grabs. Some
@@ -731,62 +579,6 @@ ghid_port_window_leave_cb (GtkWidget * widget,
   if(ev->mode != GDK_CROSSING_NORMAL)
     {
       return FALSE;
-    }
-
-  if(out->has_entered && !ghidgui->in_popup)
-    {
-      /* if actively drawing, start scrolling */
-
-      if (have_crosshair_attachments () && ghidgui->auto_pan_on)
-	{
-	  /* GdkEvent coords are set to 0,0 at leave events, so must figure
-	     |  out edge the cursor left.
-	   */
-	  w = ghid_port.width * gport->zoom;
-	  h = ghid_port.height * gport->zoom;
-
-	  x0 = VIEW_X (0);
-	  y0 = VIEW_Y (0);
-	  ghid_get_coords (NULL, &x, &y);
-	  x -= x0;
-	  y -= y0;
-
-	  if (ghid_flip_x )
-	      x = -x;
-	  if (ghid_flip_y )
-	      y = -y;
-
-	  dx = w - x;
-	  dy = h - y;
-
-	  x_pan_speed = y_pan_speed = 2 * ghidgui->auto_pan_speed;
-
-	  if (x < dx)
-	    {
-	      x_pan_speed = -x_pan_speed;
-	      dx = x;
-	    }
-	  if (y < dy)
-	    {
-	      y_pan_speed = -y_pan_speed;
-	      dy = y;
-	    }
-	  if (dx < dy)
-	    {
-	      if (dy < h / 3)
-		y_pan_speed = y_pan_speed - (3 * dy * y_pan_speed) / h;
-	      else
-		y_pan_speed = 0;
-	    }
-	  else
-	    {
-	      if (dx < w / 3)
-		x_pan_speed = x_pan_speed - (3 * dx * x_pan_speed) / w;
-	      else
-		x_pan_speed = 0;
-	    }
-	  g_idle_add (ghid_pan_idle_cb, NULL);
-	}
     }
 
   out->has_entered = FALSE;

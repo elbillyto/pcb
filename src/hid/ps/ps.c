@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -16,6 +14,7 @@
 #include "misc.h"
 #include "error.h"
 #include "draw.h"
+#include "pcb-printf.h"
 
 #include "hid.h"
 #include "../hidint.h"
@@ -29,34 +28,20 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 #define CRASH fprintf(stderr, "HID error: pcb called unimplemented PS function %s.\n", __FUNCTION__); abort()
+
+static int ps_set_layer (const char *name, int group, int empty);
+static void use_gc (hidGC gc);
 
 typedef struct hid_gc_struct
 {
   HID *me_pointer;
   EndCapStyle cap;
-  int width;
+  Coord width;
   unsigned char r, g, b;
   int erase;
   int faded;
 } hid_gc_struct;
-
-static double calibration_x = 1.0, calibration_y = 1.0;
-
-static FILE *f = 0;
-static int pagecount = 0;
-static int linewidth = -1;
-static int lastgroup = -1;
-static int lastcap = -1;
-static int lastcolor = -1;
-static int print_group[MAX_LAYER];
-static int print_layer[MAX_LAYER];
-static double fade_ratio = 0.4;
-static double antifade_ratio = 0.6;
-static int multi_file = 0;
-static double media_width, media_height, ps_width, ps_height;
 
 static const char *medias[] = {
   "A0", "A1", "A2", "A3", "A4", "A5",
@@ -74,9 +59,9 @@ static const char *medias[] = {
 typedef struct
 {
   char *name;
-  long int Width, Height;
-  long int MarginX, MarginY;
-} MediaType, *MediaTypePtr;
+  Coord Width, Height;
+  Coord MarginX, MarginY;
+} MediaType;
 
 /*
  * Metric ISO sizes in mm.  See http://en.wikipedia.org/wiki/ISO_paper_sizes
@@ -156,57 +141,212 @@ static MediaType media_data[] = {
 
 HID_Attribute ps_attribute_list[] = {
   /* other HIDs expect this to be first.  */
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --psfile <string>
+Name of the postscript output file. Can contain a path.
+@end ftable
+%end-doc
+*/
   {"psfile", "Postscript output file",
    HID_String, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_psfile 0
-  {"drill-helper", "Prints a centering target in large drill holes",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@cindex drill-helper
+@item --drill-helper
+Print a centering target in large drill holes.
+@end ftable
+%end-doc
+*/
+  {"drill-helper", "Print a centering target in large drill holes",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_drillhelper 1
-  {"align-marks", "Prints alignment marks on each layer",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@cindex align-marks
+@item --align-marks
+Print alignment marks on each sheet. This is meant to ease alignment during exposure.
+@end ftable
+%end-doc
+*/
+  {"align-marks", "Print alignment marks on each sheet",
    HID_Boolean, 0, 0, {1, 0, 0}, 0, 0},
 #define HA_alignmarks 2
-  {"outline", "Prints outline on each layer",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --outline
+Print the contents of the outline layer on each sheet.
+@end ftable
+%end-doc
+*/
+  {"outline", "Print outline on each sheet",
    HID_Boolean, 0, 0, {1, 0, 0}, 0, 0},
 #define HA_outline 3
-  {"mirror", "Prints mirror image of each layer",
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --mirror
+Print mirror image.
+@end ftable
+%end-doc
+*/
+  {"mirror", "Print mirror image of every page",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_mirror 4
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --fill-page
+Scale output to make the board fit the page.
+@end ftable
+%end-doc
+*/
   {"fill-page", "Scale board to fill page",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_fillpage 5
-  {"auto-mirror", "Prints mirror image of appropriate layers",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --auto-mirror
+Print mirror image of appropriate layers.
+@end ftable
+%end-doc
+*/
+  {"auto-mirror", "Print mirror image of appropriate layers",
    HID_Boolean, 0, 0, {1, 0, 0}, 0, 0},
 #define HA_automirror 6
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --ps-color
+Postscript output in color.
+@end ftable
+%end-doc
+*/
   {"ps-color", "Prints in color",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_color 7
-  {"ps-bloat", "Amount to add to trace/pad/pin edges (1 = 1/100 mil)",
-   HID_Integer, -10000, 10000, {0, 0, 0}, 0, 0},
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@cindex ps-bloat
+@item --ps-bloat <num>
+Amount to add to trace/pad/pin edges.
+@end ftable
+%end-doc
+*/
+  {"ps-bloat", "Amount to add to trace/pad/pin edges",
+   HID_Coord, -MIL_TO_COORD (100), MIL_TO_COORD (100), {0, 0, 0}, 0, 0},
 #define HA_psbloat 8
-  {"ps-invert", "Draw images as white-on-black",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@cindex ps-invert
+@item --ps-invert
+Draw objects as white-on-black.
+@end ftable
+%end-doc
+*/
+ {"ps-invert", "Draw objects as white-on-black",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_psinvert 9
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --media <media-name>
+Size of the media, the postscript is fitted to. The parameter
+@code{<media-name>} can be any of the standard names for paper size: @samp{A0}
+to @samp{A10}, @samp{B0} to @samp{B10}, @samp{Letter}, @samp{11x17},
+@samp{Ledger}, @samp{Legal}, @samp{Executive}, @samp{A-Size}, @samp{B-size},
+@samp{C-Size}, @samp{D-size}, @samp{E-size}, @samp{US-Business_Card},
+@samp{Intl-Business_Card}.
+@end ftable
+%end-doc
+*/
   {"media", "media type",
    HID_Enum, 0, 0, {22, 0, 0}, medias, 0},
 #define HA_media 10
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@cindex psfade
+@item --psfade <num>
+Fade amount for assembly drawings (0.0=missing, 1.0=solid).
+@end ftable
+%end-doc
+*/
   {"psfade", "Fade amount for assembly drawings (0.0=missing, 1.0=solid)",
    HID_Real, 0, 1, {0, 0, 0.40}, 0, 0},
 #define HA_psfade 11
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --scale <num>
+Scale value to compensate for printer sizing errors (1.0 = full scale).
+@end ftable
+%end-doc
+*/
   {"scale", "Scale value to compensate for printer sizing errors (1.0 = full scale)",
    HID_Real, 0.01, 4, {0, 0, 1.00}, 0, 0},
 #define HA_scale 12
-  {"multi-file", "Produce multiple files, one per page, instead of a single file.",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@cindex multi-file
+@item --multi-file
+Produce multiple files, one per page, instead of a single multi page file.
+@end ftable
+%end-doc
+*/
+  {"multi-file", "Produce multiple files, one per page, instead of a single file",
    HID_Boolean, 0, 0, {0, 0, 0.40}, 0, 0},
 #define HA_multifile 13
-  {"xcalib", "X-Axis calibration (paper width).",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --xcalib <num>
+Paper width. Used for x-Axis calibration.
+@end ftable
+%end-doc
+*/
+  {"xcalib", "Paper width. Used for x-Axis calibration",
    HID_Real, 0, 0, {0, 0, 1.0}, 0, 0},
 #define HA_xcalib 14
-  {"ycalib", "Y-Axis calibration (paper height).",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --ycalib <num>
+Paper height. Used for y-Axis calibration.
+@end ftable
+%end-doc
+*/
+  {"ycalib", "Paper height. Used for y-Axis calibration",
    HID_Real, 0, 0, {0, 0, 1.0}, 0, 0},
 #define HA_ycalib 15
-  {"drill-copper", "Draw drill holes in pins / vias, instead of leaving solid copper.",
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@item --drill-copper
+Draw drill holes in pins / vias, instead of leaving solid copper.
+@end ftable
+%end-doc
+*/
+  {"drill-copper", "Draw drill holes in pins / vias, instead of leaving solid copper",
    HID_Boolean, 0, 0, {1, 0, 0}, 0, 0},
 #define HA_drillcopper 16
+
+/* %start-doc options "91 Postscript Export"
+@ftable @code
+@cindex show-legend
+@item --show-legend
+Print file name and scale on printout.
+@end ftable
+%end-doc
+*/
   {"show-legend", "Print file name and scale on printout",
    HID_Boolean, 0, 0, {1, 0, 0}, 0, 0},
 #define HA_legend 17
@@ -216,7 +356,48 @@ HID_Attribute ps_attribute_list[] = {
 
 REGISTER_ATTRIBUTES (ps_attribute_list)
 
-static HID_Attr_Val ps_values[NUM_OPTIONS];
+/* All file-scope data is in global struct */
+static struct {
+  double calibration_x, calibration_y;
+
+  FILE *f;
+  int pagecount;
+  Coord linewidth;
+  bool print_group[MAX_LAYER];
+  bool print_layer[MAX_LAYER];
+  double fade_ratio;
+  bool multi_file;
+  Coord media_width, media_height, ps_width, ps_height;
+
+  const char *filename;
+  bool drill_helper;
+  bool align_marks;
+  bool outline;
+  bool mirror;
+  bool fillpage;
+  bool automirror;
+  bool incolor;
+  bool doing_toc;
+  Coord bloat;
+  bool invert;
+  int media_idx;
+  bool drillcopper;
+  bool legend;
+
+  LayerType *outline_layer;
+
+  double scale_factor;
+
+  BoxType region;
+
+  HID_Attr_Val ps_values[NUM_OPTIONS];
+
+  bool is_mask;
+  bool is_drill;
+  bool is_assy;
+  bool is_copper;
+  bool is_paste;
+} global;
 
 static HID_Attribute *
 ps_get_export_options (int *n)
@@ -249,26 +430,6 @@ layer_sort (const void *va, const void *vb)
     return d;
   return b - a;
 }
-
-static char *filename;
-static int drill_helper;
-static int align_marks;
-static int outline;
-static int mirror;
-static int fillpage;
-static int automirror;
-static int incolor;
-static int doing_toc;
-static int bloat;
-static int invert;
-static int media;
-static int drillcopper;
-static int legend;
-
-static LayerTypePtr outline_layer;
-
-static double fill_zoom;
-static double scale_value;
 
 void
 ps_start_file (FILE *f)
@@ -348,12 +509,11 @@ ps_start_file (FILE *f)
    *
    * Media sizes are in PCB units
    */
-  fprintf (f, "%%%%DocumentMedia: %s %g %g 0 \"\" \"\"\n",
-	   media_data[media].name,
-	   COORD_TO_INCH(media_data[media].Width) * 72.0,
-	   COORD_TO_INCH(media_data[media].Height) * 72.0);
-  fprintf (f, "%%%%DocumentPaperSizes: %s\n",
-	   media_data[media].name);
+  pcb_fprintf (f, "%%%%DocumentMedia: %s %mi %mi 0 \"\" \"\"\n",
+               media_data[global.media_idx].name,
+               72 * media_data[global.media_idx].Width,
+               72 * media_data[global.media_idx].Height);
+  pcb_fprintf (f, "%%%%DocumentPaperSizes: %s\n", media_data[global.media_idx].name);
 
   /* End General Header Comments. */
 
@@ -385,7 +545,7 @@ ps_end_file (FILE *f)
    * %%Pages was deferred until the end of the document via the
    * (atend) mentioned, in the General Header section.
    */
-  fprintf (f, "%%%%Pages: %d\n", pagecount );
+  fprintf (f, "%%%%Pages: %d\n", global.pagecount);
 
   /*
    * %%EOF DCS signifies the end of the document. When the document
@@ -403,7 +563,7 @@ psopen (const char *base, const char *which)
   FILE *ps_open_file;
   char *buf, *suff, *buf2;
 
-  if (!multi_file)
+  if (!global.multi_file)
     return fopen (base, "w");
 
   buf = (char *)malloc (strlen (base) + strlen (which) + 5);
@@ -425,8 +585,6 @@ psopen (const char *base, const char *which)
   return ps_open_file;
 }
 
-static BoxType region;
-
 /* This is used by other HIDs that use a postscript format, like lpr
    or eps.  */
 void
@@ -439,118 +597,108 @@ ps_hid_export_to_file (FILE * the_file, HID_Attr_Val * options)
   save_thindraw = PCB->Flags;
   CLEAR_FLAG(THINDRAWFLAG, PCB);
   CLEAR_FLAG(THINDRAWPOLYFLAG, PCB);
+  CLEAR_FLAG(CHECKPLANESFLAG, PCB);
 
-  f = the_file;
-  drill_helper = options[HA_drillhelper].int_value;
-  align_marks = options[HA_alignmarks].int_value;
-  outline = options[HA_outline].int_value;
-  mirror = options[HA_mirror].int_value;
-  fillpage = options[HA_fillpage].int_value;
-  automirror = options[HA_automirror].int_value;
-  incolor = options[HA_color].int_value;
-  bloat = options[HA_psbloat].int_value;
-  invert = options[HA_psinvert].int_value;
-  fade_ratio = options[HA_psfade].real_value;
-  media = options[HA_media].int_value;
-  media_width = media_data[media].Width / 1e5;
-  media_height = media_data[media].Height / 1e5;
-  ps_width = media_width - 2.0*media_data[media].MarginX / 1e5;
-  ps_height = media_height - 2.0*media_data[media].MarginY / 1e5;
-  scale_value = options[HA_scale].real_value;
-  calibration_x = options[HA_xcalib].real_value;
-  calibration_y = options[HA_ycalib].real_value;
-  drillcopper = options[HA_drillcopper].int_value;
-  legend = options[HA_legend].int_value;
+  global.f = the_file;
+  global.drill_helper = options[HA_drillhelper].int_value;
+  global.align_marks  = options[HA_alignmarks].int_value;
+  global.outline      = options[HA_outline].int_value;
+  global.mirror       = options[HA_mirror].int_value;
+  global.fillpage     = options[HA_fillpage].int_value;
+  global.automirror   = options[HA_automirror].int_value;
+  global.incolor      = options[HA_color].int_value;
+  global.bloat        = options[HA_psbloat].int_value;
+  global.invert       = options[HA_psinvert].int_value;
+  global.fade_ratio   = CLAMP (options[HA_psfade].real_value, 0, 1);
+  global.media_idx    = options[HA_media].int_value;
+  global.media_width  = media_data[global.media_idx].Width;
+  global.media_height = media_data[global.media_idx].Height;
+  global.ps_width     = global.media_width
+                        - 2.0 * media_data[global.media_idx].MarginX;
+  global.ps_height    = global.media_height
+                        - 2.0 * media_data[global.media_idx].MarginY;
+  global.scale_factor = options[HA_scale].real_value;
+  global.calibration_x = options[HA_xcalib].real_value;
+  global.calibration_y = options[HA_ycalib].real_value;
+  global.drillcopper  = options[HA_drillcopper].int_value;
+  global.legend       = options[HA_legend].int_value;
 
-  if (f)
-    ps_start_file (f);
+  if (the_file)
+    ps_start_file (the_file);
 
-  if (fade_ratio < 0)
-    fade_ratio = 0;
-  if (fade_ratio > 1)
-    fade_ratio = 1;
-  antifade_ratio = 1.0 - fade_ratio;
-
-  if (fillpage)
+  if (global.fillpage)
     {
       double zx, zy;
       if (PCB->MaxWidth > PCB->MaxHeight)
 	{
-	  zx = ps_height / PCB->MaxWidth;
-	  zy = ps_width / PCB->MaxHeight;
+	  zx = global.ps_height / PCB->MaxWidth;
+	  zy = global.ps_width  / PCB->MaxHeight;
 	}
       else
 	{
-	  zx = ps_height / PCB->MaxHeight;
-	  zy = ps_width / PCB->MaxWidth;
+	  zx = global.ps_height / PCB->MaxHeight;
+	  zy = global.ps_width  / PCB->MaxWidth;
 	}
-      if (zx < zy)
-	fill_zoom = zx;
-      else
-	fill_zoom = zy;
+      global.scale_factor *= MIN (zx, zy);
     }
-  else
-    fill_zoom = 0.00001;
 
+  memset (global.print_group, 0, sizeof (global.print_group));
+  memset (global.print_layer, 0, sizeof (global.print_layer));
 
-  memset (print_group, 0, sizeof (print_group));
-  memset (print_layer, 0, sizeof (print_layer));
-
-  outline_layer = NULL;
+  global.outline_layer = NULL;
 
   for (i = 0; i < max_copper_layer; i++)
     {
       LayerType *layer = PCB->Data->Layer + i;
       if (layer->LineN || layer->TextN || layer->ArcN || layer->PolygonN)
-	print_group[GetLayerGroupNumberByNumber (i)] = 1;
+	global.print_group[GetLayerGroupNumberByNumber (i)] = 1;
 
       if (strcmp (layer->Name, "outline") == 0 ||
 	  strcmp (layer->Name, "route") == 0)
 	{
-	  outline_layer = layer;
+	  global.outline_layer = layer;
 	}
     }
-  print_group[GetLayerGroupNumberByNumber (solder_silk_layer)] = 1;
-  print_group[GetLayerGroupNumberByNumber (component_silk_layer)] = 1;
+  global.print_group[GetLayerGroupNumberByNumber (solder_silk_layer)] = 1;
+  global.print_group[GetLayerGroupNumberByNumber (component_silk_layer)] = 1;
   for (i = 0; i < max_copper_layer; i++)
-    if (print_group[GetLayerGroupNumberByNumber (i)])
-      print_layer[i] = 1;
+    if (global.print_group[GetLayerGroupNumberByNumber (i)])
+      global.print_layer[i] = 1;
 
   memcpy (saved_layer_stack, LayerStack, sizeof (LayerStack));
   qsort (LayerStack, max_copper_layer, sizeof (LayerStack[0]), layer_sort);
 
-  lastgroup = -1;
-  linewidth = -1;
-  lastcap = -1;
-  lastcolor = -1;
+  global.linewidth = -1;
+  /* reset static vars */
+  ps_set_layer (NULL, 0, -1);
+  use_gc (NULL);
 
-  region.X1 = 0;
-  region.Y1 = 0;
-  region.X2 = PCB->MaxWidth;
-  region.Y2 = PCB->MaxHeight;
+  global.region.X1 = 0;
+  global.region.Y1 = 0;
+  global.region.X2 = PCB->MaxWidth;
+  global.region.Y2 = PCB->MaxHeight;
 
-  if (! multi_file)
+  if (!global.multi_file)
     {
-      fprintf (f, "%%%%Page: TableOfContents 1\n");  /* %%Page DSC requires both a label and an ordinal */
-      fprintf (f, "/Times-Roman findfont 24 scalefont setfont\n");
-      fprintf (f,
-	       "/rightshow { /s exch def s stringwidth pop -1 mul 0 rmoveto s show } def\n");
-      fprintf (f,
-	       "/y 72 9 mul def /toc { 100 y moveto show /y y 24 sub def } bind def\n");
-      fprintf (f, "/tocp { /y y 12 sub def 90 y moveto rightshow } bind def\n");
+      /* %%Page DSC requires both a label and an ordinal */
+      fprintf (the_file, "%%%%Page: TableOfContents 1\n");
+      fprintf (the_file, "/Times-Roman findfont 24 scalefont setfont\n");
+      fprintf (the_file, "/rightshow { /s exch def s stringwidth pop -1 mul 0 rmoveto s show } def\n");
+      fprintf (the_file, "/y 72 9 mul def /toc { 100 y moveto show /y y 24 sub def } bind def\n");
+      fprintf (the_file, "/tocp { /y y 12 sub def 90 y moveto rightshow } bind def\n");
 
-      doing_toc = 1;
-      pagecount = 1;      /* 'pagecount' is modified by hid_expose_callback() call */
-      hid_expose_callback (&ps_hid, &region, 0);
+      global.doing_toc = 1;
+      global.pagecount = 1;  /* 'pagecount' is modified by hid_expose_callback() call */
+      hid_expose_callback (&ps_hid, &global.region, 0);
     }
 
-  pagecount = 1; /* Reset 'pagecount' if single file */
-  doing_toc = 0;
-  lastgroup = -1;
-  hid_expose_callback (&ps_hid, &region, 0);
+  global.pagecount = 1; /* Reset 'pagecount' if single file */
+  global.doing_toc = 0;
+  ps_set_layer (NULL, 0, -1);  /* reset static vars */
+  hid_expose_callback (&ps_hid, &global.region, 0);
 
-  if (f)
-    fprintf (f, "showpage\n");
+  if (the_file)
+    fprintf (the_file, "showpage\n");
 
   memcpy (LayerStack, saved_layer_stack, sizeof (LayerStack));
   PCB->Flags = save_thindraw;
@@ -559,6 +707,7 @@ ps_hid_export_to_file (FILE * the_file, HID_Attr_Val * options)
 static void
 ps_do_export (HID_Attr_Val * options)
 {
+  FILE *fh;
   int save_ons[MAX_LAYER + 2];
   int i;
 
@@ -566,60 +715,53 @@ ps_do_export (HID_Attr_Val * options)
     {
       ps_get_export_options (0);
       for (i = 0; i < NUM_OPTIONS; i++)
-	ps_values[i] = ps_attribute_list[i].default_val;
-      options = ps_values;
+	global.ps_values[i] = ps_attribute_list[i].default_val;
+      options = global.ps_values;
     }
 
-  filename = options[HA_psfile].str_value;
-  if (!filename)
-    filename = "pcb-out.ps";
+  global.filename = options[HA_psfile].str_value;
+  if (!global.filename)
+    global.filename = "pcb-out.ps";
 
-  multi_file = options[HA_multifile].int_value;
+  global.multi_file = options[HA_multifile].int_value;
 
-  if (multi_file)
-    f = 0;
+  if (global.multi_file)
+    fh = 0;
   else
     {
-      f = psopen (filename, "toc");
-      if (!f)
+      fh = psopen (global.filename, "toc");
+      if (!fh)
 	{
-	  perror (filename);
+	  perror (global.filename);
 	  return;
 	}
     }
 
   hid_save_and_show_layer_ons (save_ons);
-  ps_hid_export_to_file (f, options);
+  ps_hid_export_to_file (fh, options);
   hid_restore_layer_ons (save_ons);
 
-  multi_file = 0;
-  if (f)
+  global.multi_file = 0;
+  if (fh)
     {
-      ps_end_file (f);
-      fclose (f);
+      ps_end_file (fh);
+      fclose (fh);
     }
 }
 
 static void
 ps_parse_arguments (int *argc, char ***argv)
 {
-  hid_register_attributes (ps_attribute_list,
-			   sizeof (ps_attribute_list) /
-			   sizeof (ps_attribute_list[0]));
+  hid_register_attributes (ps_attribute_list, NUM_OPTIONS);
   hid_parse_command_line (argc, argv);
 }
 
 static void
-corner (int x, int y, int dx, int dy)
+corner (FILE *fh, Coord x, Coord y, int dx, int dy)
 {
-#if 0
-  int len = (PCB->MaxWidth + PCB->MaxHeight) / 10;
-  int len2 = (PCB->MaxWidth + PCB->MaxHeight) / 50;
-#else
-  int len = MIL_TO_COORD(2000);
-  int len2 = MIL_TO_COORD(200);
-#endif
-  int thick = 0;
+  Coord len   = MIL_TO_COORD (2000);
+  Coord len2  = MIL_TO_COORD (200);
+  Coord thick = 0;
   /*
    * Originally 'thick' used thicker lines.  Currently is uses
    * Postscript's "device thin" line - i.e. zero width means one
@@ -629,72 +771,68 @@ corner (int x, int y, int dx, int dy)
    * of the thick line.
    */
 
-  fprintf (f, "gsave %d setlinewidth %d %d translate %d %d scale\n",
-	   thick * 2, x, y, dx, dy);
-  fprintf (f, "%d %d moveto %d %d %d 0 90 arc %d %d lineto\n",
-	   len, thick, thick, thick, len2 + thick, thick, len);
+  pcb_fprintf (fh, "gsave %mi setlinewidth %mi %mi translate %d %d scale\n",
+               thick * 2, x, y, dx, dy);
+  pcb_fprintf (fh, "%mi %mi moveto %mi %mi %mi 0 90 arc %mi %mi lineto\n",
+               len, thick, thick, thick, len2 + thick, thick, len);
   if (dx < 0 && dy < 0)
-    fprintf (f, "%d %d moveto 0 %d rlineto\n",
-	     len2 * 2 + thick, thick, -len2);
-  fprintf (f, "stroke grestore\n");
+    pcb_fprintf (fh, "%mi %mi moveto 0 %mi rlineto\n", len2 * 2 + thick, thick, -len2);
+  fprintf (fh, "stroke grestore\n");
 }
-
-static int is_mask;
-static int is_drill;
-static int is_assy;
-static int is_copper;
-static int is_paste;
 
 static int
 ps_set_layer (const char *name, int group, int empty)
 {
+  static int lastgroup = -1;
   time_t currenttime;
-  int idx = (group >= 0
-	     && group <
-	     max_group) ? PCB->LayerGroups.Entries[group][0] : group;
+  int idx = (group >= 0 && group < max_group)
+            ? PCB->LayerGroups.Entries[group][0]
+            : group;
   if (name == 0)
     name = PCB->Data->Layer[idx].Name;
 
+  if (empty == -1)
+    lastgroup = -1;
   if (empty)
     return 0;
 
-  if (idx >= 0 && idx < max_copper_layer && !print_layer[idx])
+  if (idx >= 0 && idx < max_copper_layer && !global.print_layer[idx])
     return 0;
 
   if (strcmp (name, "invisible") == 0)
     return 0;
 
-  is_drill = (SL_TYPE (idx) == SL_PDRILL || SL_TYPE (idx) == SL_UDRILL);
-  is_mask = (SL_TYPE (idx) == SL_MASK);
-  is_assy = (SL_TYPE (idx) == SL_ASSY);
-  is_copper = (SL_TYPE (idx) == 0);
-  is_paste = (SL_TYPE (idx) == SL_PASTE);
+  global.is_drill = (SL_TYPE (idx) == SL_PDRILL || SL_TYPE (idx) == SL_UDRILL);
+  global.is_mask  = (SL_TYPE (idx) == SL_MASK);
+  global.is_assy  = (SL_TYPE (idx) == SL_ASSY);
+  global.is_copper = (SL_TYPE (idx) == 0);
+  global.is_paste  = (SL_TYPE (idx) == SL_PASTE);
 #if 0
-  printf ("Layer %s group %d drill %d mask %d\n", name, group, is_drill,
-	  is_mask);
+  printf ("Layer %s group %d drill %d mask %d\n", name, group, global.is_drill,
+	  global.is_mask);
 #endif
 
-  if (doing_toc)
+  if (global.doing_toc)
     {
       if (group < 0 || group != lastgroup)
 	{
-          if( 1 == pagecount )
+          if (global.pagecount == 1)
             {
-              currenttime = time( NULL );
-              fprintf (f, "30 30 moveto (%s) show\n", PCB->Filename);
+              currenttime = time (NULL);
+              fprintf (global.f, "30 30 moveto (%s) show\n", PCB->Filename);
 
-              fprintf (f, "(%d.) tocp\n", pagecount);
-              fprintf (f, "(Table of Contents \\(This Page\\)) toc\n" );
+              fprintf (global.f, "(%d.) tocp\n", global.pagecount);
+              fprintf (global.f, "(Table of Contents \\(This Page\\)) toc\n" );
 
-              fprintf (f, "(Created on %s) toc\n", asctime (localtime (&currenttime)));
-              fprintf (f, "( ) tocp\n" );
+              fprintf (global.f, "(Created on %s) toc\n", asctime (localtime (&currenttime)));
+              fprintf (global.f, "( ) tocp\n" );
             }
 
-	  pagecount++;
+	  global.pagecount++;
 	  lastgroup = group;
-	  fprintf (f, "(%d.) tocp\n", pagecount);
+	  fprintf (global.f, "(%d.) tocp\n", global.pagecount);
 	}
-      fprintf (f, "(%s) toc\n", name);
+      fprintf (global.f, "(%s) toc\n", name);
       return 0;
     }
 
@@ -704,26 +842,26 @@ ps_set_layer (const char *name, int group, int empty)
       int mirror_this = 0;
       lastgroup = group;
 
-      if (f && pagecount)
+      if (global.pagecount != 0)
 	{
-	  fprintf (f, "showpage\n");
+	  pcb_fprintf (global.f, "showpage\n");
 	}
-      pagecount++;
-      if (multi_file)
+      global.pagecount++;
+      if (global.multi_file)
 	{
-	  if (f)
+	  if (global.f)
             {
-              ps_end_file (f);
-              fclose (f);
+              ps_end_file (global.f);
+              fclose (global.f);
             }
-	  f = psopen (filename, layer_type_to_file_name (idx));
-	  if (!f)
+	  global.f = psopen (global.filename, layer_type_to_file_name (idx, FNS_fixed));
+	  if (!global.f)
 	  {
-	    perror(filename);
+	    perror (global.filename);
 	    return 0;
 	  }
 
-	  ps_start_file (f);
+	  ps_start_file (global.f);
 	}
 
       /*
@@ -734,137 +872,137 @@ ps_set_layer (const char *name, int group, int empty)
        * ordinal page number must reflect the position of that page in
        * the body of the PostScript file and must start with 1, not 0.
        */
-      fprintf (f, "%%%%Page: %s %d\n", layer_type_to_file_name(idx), pagecount);
+      fprintf (global.f, "%%%%Page: %s %d\n", layer_type_to_file_name(idx, FNS_fixed), global.pagecount);
 
-      if (mirror)
-	mirror_this = 1 - mirror_this;
-      if (automirror
+      if (global.mirror)
+	mirror_this = !mirror_this;
+      if (global.automirror
 	  &&
 	  ((idx >= 0 && group == GetLayerGroupNumberByNumber (solder_silk_layer))
 	   || (idx < 0 && SL_SIDE (idx) == SL_BOTTOM_SIDE)))
-	mirror_this = 1 - mirror_this;
+	mirror_this = !mirror_this;
 
-      fprintf (f, "/Helvetica findfont 10 scalefont setfont\n");
-      if (legend)
+      fprintf (global.f, "/Helvetica findfont 10 scalefont setfont\n");
+      if (global.legend)
 	{
-	  fprintf (f, "30 30 moveto (%s) show\n", PCB->Filename);
+	  fprintf (global.f, "30 30 moveto (%s) show\n", PCB->Filename);
 	  if (PCB->Name)
-	    fprintf (f, "30 41 moveto (%s, %s) show\n",
-		     PCB->Name, layer_type_to_file_name (idx));
+	    fprintf (global.f, "30 41 moveto (%s, %s) show\n",
+		     PCB->Name, layer_type_to_file_name (idx, FNS_fixed));
 	  else
-	    fprintf (f, "30 41 moveto (%s) show\n",
-		     layer_type_to_file_name (idx));
+	    fprintf (global.f, "30 41 moveto (%s) show\n",
+		     layer_type_to_file_name (idx, FNS_fixed));
 	  if (mirror_this)
-	    fprintf (f, "( \\(mirrored\\)) show\n");
+	    fprintf (global.f, "( \\(mirrored\\)) show\n");
 
-	  if (fillpage)
-	    fprintf (f, "(, not to scale) show\n");
+	  if (global.fillpage)
+	    fprintf (global.f, "(, not to scale) show\n");
 	  else
-	    fprintf (f, "(, scale = 1:%.3f) show\n", scale_value);
+	    fprintf (global.f, "(, scale = 1:%.3f) show\n", global.scale_factor);
 	}
-      fprintf (f, "newpath\n");
+      fprintf (global.f, "newpath\n");
 
-      fprintf (f, "72 72 scale %g %g translate\n", 0.5*media_width, 0.5*media_height);
+      pcb_fprintf (global.f, "72 72 scale %mi %mi translate\n",
+                   global.media_width / 2, global.media_height / 2);
 
-      boffset = 0.5*media_height;
+      boffset = global.media_height / 2;
       if (PCB->MaxWidth > PCB->MaxHeight)
 	{
-	  fprintf (f, "90 rotate\n");
-	  boffset = 0.5*media_width;
-	  fprintf (f, "%g %g scale %% calibration\n", calibration_y, calibration_x);
+	  fprintf (global.f, "90 rotate\n");
+	  boffset = global.media_width / 2;
+	  fprintf (global.f, "%g %g scale %% calibration\n", global.calibration_y, global.calibration_x);
 	}
       else
-	fprintf (f, "%g %g scale %% calibration\n", calibration_x, calibration_y);
+	fprintf (global.f, "%g %g scale %% calibration\n", global.calibration_x, global.calibration_y);
 
       if (mirror_this)
-	fprintf (f, "1 -1 scale\n");
+	fprintf (global.f, "1 -1 scale\n");
 
-      if (SL_TYPE (idx) == SL_FAB)
-	fprintf (f, "0.00001 dup neg scale\n");
-      else
-	fprintf (f, "%g dup neg scale\n", (fill_zoom * scale_value));
-      fprintf (f, "%d %d translate\n",
-	       -PCB->MaxWidth / 2, -PCB->MaxHeight / 2);
+      fprintf (global.f, "%g dup neg scale\n",
+               (SL_TYPE (idx) == SL_FAB) ? 1.0 : global.scale_factor);
+      pcb_fprintf (global.f, "%mi %mi translate\n", -PCB->MaxWidth / 2, -PCB->MaxHeight / 2);
 
       /* Keep the drill list from falling off the left edge of the paper,
        * even if it means some of the board falls off the right edge.
        * If users don't want to make smaller boards, or use fewer drill
        * sizes, they can always ignore this sheet. */
       if (SL_TYPE (idx) == SL_FAB) {
-        int natural = (int) ((boffset - 0.5) * INCH_TO_COORD(1)) - PCB->MaxHeight / 2;
-	int needed  = PrintFab_overhang();
-        fprintf (f, "%% PrintFab overhang natural %d, needed %d\n", natural, needed);
+        Coord natural = boffset - MIL_TO_COORD(500) - PCB->MaxHeight / 2;
+	Coord needed  = PrintFab_overhang ();
+        pcb_fprintf (global.f, "%% PrintFab overhang natural %mi, needed %mi\n", natural, needed);
 	if (needed > natural)
-	  fprintf (f, "0 %d translate\n", needed - natural);
+	  pcb_fprintf (global.f, "0 %mi translate\n", needed - natural);
       }
 
-      if (invert)
+      if (global.invert)
 	{
-	  fprintf (f, "/gray { 1 exch sub setgray } bind def\n");
-	  fprintf (f,
-		   "/rgb { 1 1 3 { pop 1 exch sub 3 1 roll } for setrgbcolor } bind def\n");
+	  fprintf (global.f, "/gray { 1 exch sub setgray } bind def\n");
+	  fprintf (global.f,
+                   "/rgb { 1 1 3 { pop 1 exch sub 3 1 roll } for setrgbcolor } bind def\n");
 	}
       else
 	{
-	  fprintf (f, "/gray { setgray } bind def\n");
-	  fprintf (f, "/rgb { setrgbcolor } bind def\n");
+	  fprintf (global.f, "/gray { setgray } bind def\n");
+	  fprintf (global.f, "/rgb { setrgbcolor } bind def\n");
 	}
 
-      if ((outline && !outline_layer) || invert)
+      if ((global.outline && !global.outline_layer) || global.invert)
 	{
-	  fprintf (f,
-		   "0 setgray 0 setlinewidth 0 0 moveto 0 %d lineto %d %d lineto %d 0 lineto closepath %s\n",
-		   PCB->MaxHeight, PCB->MaxWidth, PCB->MaxHeight, PCB->MaxWidth,
-		   invert ? "fill" : "stroke");
+	  pcb_fprintf (global.f,
+                       "0 setgray 0 setlinewidth 0 0 moveto 0 "
+                       "%mi lineto %mi %mi lineto %mi 0 lineto closepath %s\n",
+                       PCB->MaxHeight, PCB->MaxWidth, PCB->MaxHeight, PCB->MaxWidth,
+                       global.invert ? "fill" : "stroke");
 	}
 
-      if (align_marks)
+      if (global.align_marks)
 	{
-	  corner (0, 0, -1, -1);
-	  corner (PCB->MaxWidth, 0, 1, -1);
-	  corner (PCB->MaxWidth, PCB->MaxHeight, 1, 1);
-	  corner (0, PCB->MaxHeight, -1, 1);
+	  corner (global.f, 0, 0, -1, -1);
+	  corner (global.f, PCB->MaxWidth, 0, 1, -1);
+	  corner (global.f, PCB->MaxWidth, PCB->MaxHeight, 1, 1);
+	  corner (global.f, 0, PCB->MaxHeight, -1, 1);
 	}
 
-      linewidth = -1;
-      lastcap = -1;
-      lastcolor = -1;
+      global.linewidth = -1;
+      use_gc (NULL);  /* reset static vars */
 
-      fprintf (f, "/ts 10000 def\n");
-      fprintf (f, "/ty ts neg def /tx 0 def /Helvetica findfont ts scalefont setfont\n");
-      fprintf (f, "/t { moveto lineto stroke } bind def\n");
-      fprintf (f, "/dr { /y2 exch def /x2 exch def /y1 exch def /x1 exch def\n");
-      fprintf (f, "      x1 y1 moveto x1 y2 lineto x2 y2 lineto x2 y1 lineto closepath stroke } bind def\n");
-      fprintf (f, "/r { /y2 exch def /x2 exch def /y1 exch def /x1 exch def\n");
-      fprintf (f, "     x1 y1 moveto x1 y2 lineto x2 y2 lineto x2 y1 lineto closepath fill } bind def\n");
-      fprintf (f, "/c { 0 360 arc fill } bind def\n");
-      fprintf (f, "/a { gsave setlinewidth translate scale 0 0 1 5 3 roll arc stroke grestore} bind def\n");
-      if (drill_helper)
-	fprintf (f,
-		 "/dh { gsave %f setlinewidth 0 gray %f 0 360 arc stroke grestore} bind def\n",
-		 MIN_PINORVIAHOLE, MIN_PINORVIAHOLE * 3 / 2);
+      fprintf (global.f,
+              "/ts 1 def\n"
+              "/ty ts neg def /tx 0 def /Helvetica findfont ts scalefont setfont\n"
+              "/t { moveto lineto stroke } bind def\n"
+              "/dr { /y2 exch def /x2 exch def /y1 exch def /x1 exch def\n"
+              "      x1 y1 moveto x1 y2 lineto x2 y2 lineto x2 y1 lineto closepath stroke } bind def\n"
+              "/r { /y2 exch def /x2 exch def /y1 exch def /x1 exch def\n"
+              "     x1 y1 moveto x1 y2 lineto x2 y2 lineto x2 y1 lineto closepath fill } bind def\n"
+              "/c { 0 360 arc fill } bind def\n"
+              "/a { gsave setlinewidth translate scale 0 0 1 5 3 roll arc stroke grestore} bind def\n");
+      if (global.drill_helper)
+	pcb_fprintf (global.f,
+                    "/dh { gsave %mi setlinewidth 0 gray %mi 0 360 arc stroke grestore} bind def\n",
+                    (Coord) MIN_PINORVIAHOLE, (Coord) (MIN_PINORVIAHOLE * 3 / 2));
     }
 #if 0
   /* Try to outsmart ps2pdf's heuristics for page rotation, by putting
    * text on all pages -- even if that text is blank */
   if (SL_TYPE (idx) != SL_FAB)
-    fprintf (f,
+    fprintf (global.f,
 	     "gsave tx ty translate 1 -1 scale 0 0 moveto (Layer %s) show grestore newpath /ty ty ts sub def\n",
 	     name);
   else
-    fprintf (f, "gsave tx ty translate 1 -1 scale 0 0 moveto ( ) show grestore newpath /ty ty ts sub def\n");
+    fprintf (global.f, "gsave tx ty translate 1 -1 scale 0 0 moveto ( ) show grestore newpath /ty ty ts sub def\n");
 #endif
 
-  /* If we're printing a copper layer other than the outline layer,
-     and we want to "print outlines", and we have an outline layer,
+  /* If we're printing a layer other than the outline layer, and
+     we want to "print outlines", and we have an outline layer,
      print the outline layer on this layer also.  */
-  if (outline
-      && outline_layer
-      && outline_layer != PCB->Data->Layer+idx
-      && strcmp (name, "outline")
-      && strcmp (name, "route"))
+  if (global.outline &&
+      global.outline_layer != NULL &&
+      global.outline_layer != PCB->Data->Layer+idx &&
+      strcmp (name, "outline") != 0 &&
+      strcmp (name, "route") != 0
+      )
     {
-      DrawLayer (outline_layer, &region);
+      DrawLayer (global.outline_layer, &global.region);
     }
 
   return 1;
@@ -899,7 +1037,7 @@ ps_set_color (hidGC gc, const char *name)
       gc->r = gc->g = gc->b = 255;
       gc->erase = 1;
     }
-  else if (incolor)
+  else if (global.incolor)
     {
       int r, g, b;
       sscanf (name + 1, "%02x%02x%02x", &r, &g, &b);
@@ -922,7 +1060,7 @@ ps_set_line_cap (hidGC gc, EndCapStyle style)
 }
 
 static void
-ps_set_line_width (hidGC gc, int width)
+ps_set_line_width (hidGC gc, Coord width)
 {
   gc->width = width;
 }
@@ -942,16 +1080,24 @@ ps_set_draw_faded (hidGC gc, int faded)
 static void
 use_gc (hidGC gc)
 {
+  static int lastcap = -1;
+  static int lastcolor = -1;
+
+  if (gc == NULL)
+    {
+      lastcap = lastcolor = -1;
+      return;
+    }
   if (gc->me_pointer != &ps_hid)
     {
       fprintf (stderr, "Fatal: GC from another HID passed to ps HID\n");
       abort ();
     }
-  if (linewidth != gc->width)
+  if (global.linewidth != gc->width)
     {
-      fprintf (f, "%d setlinewidth\n",
-	       gc->width + (gc->erase ? -2 : 2) * bloat);
-      linewidth = gc->width;
+      pcb_fprintf (global.f, "%mi setlinewidth\n",
+                   gc->width + (gc->erase ? -2 : 2) * global.bloat);
+      global.linewidth = gc->width;
     }
   if (lastcap != gc->cap)
     {
@@ -967,15 +1113,15 @@ use_gc (hidGC gc)
 	  c = 2;
 	  break;
 	}
-      fprintf (f, "%d setlinecap %d setlinejoin\n", c, c);
+      fprintf (global.f, "%d setlinecap %d setlinejoin\n", c, c);
       lastcap = gc->cap;
     }
 #define CBLEND(gc) (((gc->r)<<24)|((gc->g)<<16)|((gc->b)<<8)|(gc->faded))
   if (lastcolor != CBLEND (gc))
     {
-      if (is_drill || is_mask)
+      if (global.is_drill || global.is_mask)
 	{
-	  fprintf (f, "%d gray\n", gc->erase ? 0 : 1);
+	  fprintf (global.f, "%d gray\n", gc->erase ? 0 : 1);
 	  lastcolor = 0;
 	}
       else
@@ -986,31 +1132,31 @@ use_gc (hidGC gc)
 	  b = gc->b;
 	  if (gc->faded)
 	    {
-	      r = antifade_ratio * 255 + fade_ratio * r;
-	      g = antifade_ratio * 255 + fade_ratio * g;
-	      b = antifade_ratio * 255 + fade_ratio * b;
+	      r = (1 - global.fade_ratio) * 255 + global.fade_ratio * r;
+	      g = (1 - global.fade_ratio) * 255 + global.fade_ratio * g;
+	      b = (1 - global.fade_ratio) * 255 + global.fade_ratio * b;
 	    }
 	  if (gc->r == gc->g && gc->g == gc->b)
-	    fprintf (f, "%g gray\n", r / 255.0);
+	    fprintf (global.f, "%g gray\n", r / 255.0);
 	  else
-	    fprintf (f, "%g %g %g rgb\n", r / 255.0, g / 255.0, b / 255.0);
+	    fprintf (global.f, "%g %g %g rgb\n", r / 255.0, g / 255.0, b / 255.0);
 	  lastcolor = CBLEND (gc);
 	}
     }
 }
 
 static void
-ps_draw_rect (hidGC gc, int x1, int y1, int x2, int y2)
+ps_draw_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   use_gc (gc);
-  fprintf (f, "%d %d %d %d dr\n", x1, y1, x2, y2);
+  pcb_fprintf (global.f, "%mi %mi %mi %mi dr\n", x1, y1, x2, y2);
 }
 
-static void ps_fill_rect (hidGC gc, int x1, int y1, int x2, int y2);
-static void ps_fill_circle (hidGC gc, int cx, int cy, int radius);
+static void ps_fill_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2);
+static void ps_fill_circle (hidGC gc, Coord cx, Coord cy, Coord radius);
 
 static void
-ps_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
+ps_draw_line (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
 #if 0
   /* If you're etching your own paste mask, this will reduce the
@@ -1019,7 +1165,7 @@ ps_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
   if (is_paste && gc->width > 2500 && gc->cap == Square_Cap
       && (x1 == x2 || y1 == y2))
     {
-      int t, w;
+      Coord t, w;
       if (x1 > x2)
 	{ t = x1; x1 = x2; x2 = t; }
       if (y1 > y2)
@@ -1031,7 +1177,7 @@ ps_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
 #endif
   if (x1 == x2 && y1 == y2)
     {
-      int w = gc->width / 2;
+      Coord w = gc->width / 2;
       if (gc->cap == Square_Cap)
 	ps_fill_rect (gc, x1 - w, y1 - w, x1 + w, y1 + w);
       else
@@ -1039,14 +1185,14 @@ ps_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
       return;
     }
   use_gc (gc);
-  fprintf (f, "%d %d %d %d t\n", x1, y1, x2, y2);
+  pcb_fprintf (global.f, "%mi %mi %mi %mi t\n", x1, y1, x2, y2);
 }
 
 static void
-ps_draw_arc (hidGC gc, int cx, int cy, int width, int height,
-	     int start_angle, int delta_angle)
+ps_draw_arc (hidGC gc, Coord cx, Coord cy, Coord width, Coord height,
+	     Angle start_angle, Angle delta_angle)
 {
-  int sa, ea;
+  Angle sa, ea;
   if (delta_angle > 0)
     {
       sa = start_angle;
@@ -1062,36 +1208,37 @@ ps_draw_arc (hidGC gc, int cx, int cy, int width, int height,
 	  cx, cy, width, height, start_angle, delta_angle, sa, ea);
 #endif
   use_gc (gc);
-  fprintf (f, "%d %d %d %d %d %d %g a\n",
-	   sa, ea,
-	   -width, height, cx, cy, (double) (linewidth + 2 * bloat) / width);
+  pcb_fprintf (global.f, "%ma %ma %mi %mi %mi %mi %g a\n",
+               sa, ea, -width, height, cx, cy,
+               (double) (global.linewidth + 2 * global.bloat) / (double) width);
 }
 
 static void
-ps_fill_circle (hidGC gc, int cx, int cy, int radius)
+ps_fill_circle (hidGC gc, Coord cx, Coord cy, Coord radius)
 {
   use_gc (gc);
-  if (!gc->erase || !is_copper || drillcopper)
+  if (!gc->erase || !global.is_copper || global.drillcopper)
     {
-      if (gc->erase && is_copper && drill_helper
-	  && radius >= PCB->minDrill/4)
-	radius = PCB->minDrill/4;
-      fprintf (f, "%d %d %d c\n", cx, cy, radius + (gc->erase ? -1 : 1) * bloat);
+      if (gc->erase && global.is_copper && global.drill_helper
+	  && radius >= PCB->minDrill / 4)
+	radius = PCB->minDrill / 4;
+      pcb_fprintf (global.f, "%mi %mi %mi c\n",
+                   cx, cy, radius + (gc->erase ? -1 : 1) * global.bloat);
     }
 }
 
 static void
-ps_fill_polygon (hidGC gc, int n_coords, int *x, int *y)
+ps_fill_polygon (hidGC gc, int n_coords, Coord *x, Coord *y)
 {
   int i;
   char *op = "moveto";
   use_gc (gc);
   for (i = 0; i < n_coords; i++)
     {
-      fprintf (f, "%d %d %s\n", x[i], y[i], op);
+      pcb_fprintf (global.f, "%mi %mi %s\n", x[i], y[i], op);
       op = "lineto";
     }
-  fprintf (f, "fill\n");
+  fprintf (global.f, "fill\n");
 }
 
 static void
@@ -1113,29 +1260,29 @@ ps_fill_pcb_polygon (hidGC gc, PolygonType * poly, const BoxType * clip_box)
       op = "moveto";
       do
 	{
-	  fprintf (f, "%d %d %s\n", v->point[0], v->point[1], op);
+	  pcb_fprintf (global.f, "%mi %mi %s\n", v->point[0], v->point[1], op);
 	  op = "lineto";
 	}
       while ((v = v->next) != pl->head.next);
     }
   while ((pl = pl->next) != NULL);
 
-  fprintf (f, "fill\n");
+  fprintf (global.f, "fill\n");
 }
 
 static void
-ps_fill_rect (hidGC gc, int x1, int y1, int x2, int y2)
+ps_fill_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   use_gc (gc);
   if (x1 > x2)
     {
-      int t = x1;
+      Coord t = x1;
       x1 = x2;
       x2 = t;
     }
   if (y1 > y2)
     {
-      int t = y1;
+      Coord t = y1;
       y1 = y2;
       y2 = t;
     }
@@ -1154,7 +1301,9 @@ ps_fill_rect (hidGC gc, int x1, int y1, int x2, int y2)
       return;
     }
 #endif
-  fprintf (f, "%d %d %d %d r\n", x1-bloat, y1-bloat, x2+bloat, y2+bloat);
+  pcb_fprintf (global.f, "%mi %mi %mi %mi r\n",
+               x1 - global.bloat, y1 - global.bloat,
+               x2 + global.bloat, y2 + global.bloat);
 }
 
 HID_Attribute ps_calib_attribute_list[] = {
@@ -1259,24 +1408,24 @@ ps_calibrate_1 (double xval, double yval, int use_command)
 
   if (xval > 0 && yval > 0)
     {
-      if (guess (xval, 4, &calibration_x))
-	if (guess (xval, 15, &calibration_x))
-	  if (guess (xval, 7.5, &calibration_x))
+      if (guess (xval, 4, &global.calibration_x))
+	if (guess (xval, 15, &global.calibration_x))
+	  if (guess (xval, 7.5, &global.calibration_x))
 	    {
 	      if (xval < 2)
 		ps_attribute_list[HA_xcalib].default_val.real_value =
-		  calibration_x = xval;
+		  global.calibration_x = xval;
 	      else
 		Message("X value of %g is too far off.\n"
 			"Expecting it near: 1.0, 4.0, 15.0, 7.5\n", xval);
 	    }
-      if (guess (yval, 4, &calibration_y))
-	if (guess (yval, 20, &calibration_y))
-	  if (guess (yval, 10, &calibration_y))
+      if (guess (yval, 4, &global.calibration_y))
+	if (guess (yval, 20, &global.calibration_y))
+	  if (guess (yval, 10, &global.calibration_y))
 	    {
 	      if (yval < 2)
 		ps_attribute_list[HA_ycalib].default_val.real_value =
-		  calibration_y = yval;
+		  global.calibration_y = yval;
 	      else
 		Message("Y value of %g is too far off.\n"
 			"Expecting it near: 1.0, 4.0, 20.0, 10.0\n", yval);
@@ -1294,7 +1443,7 @@ ps_calibrate_1 (double xval, double yval, int use_command)
 
   if (use_command || strchr (vals[0].str_value, '|'))
     {
-      char *cmd = vals[0].str_value;
+      const char *cmd = vals[0].str_value;
       while (*cmd == ' ' || *cmd == '|')
 	cmd ++;
       ps_cal_file = popen (cmd, "w");
@@ -1375,7 +1524,7 @@ hid_ps_init ()
 
   ps_hid.struct_size        = sizeof (HID);
   ps_hid.name               = "ps";
-  ps_hid.description        = "Postscript export.";
+  ps_hid.description        = "Postscript export";
   ps_hid.exporter           = 1;
   ps_hid.poly_before        = 1;
 

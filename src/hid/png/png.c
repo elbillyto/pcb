@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 
 #include "global.h"
 #include "data.h"
@@ -63,20 +64,20 @@ static void *brush_cache = NULL;
 
 static double bloat = 0;
 static double scale = 1;
-static int x_shift = 0;
-static int y_shift = 0;
+static Coord x_shift = 0;
+static Coord y_shift = 0;
 static int show_solder_side;
 #define SCALE(w)   ((int)((w)/scale + 0.5))
 #define SCALE_X(x) ((int)(((x) - x_shift)/scale))
 #define SCALE_Y(y) ((int)(((show_solder_side ? (PCB->MaxHeight-(y)) : (y)) - y_shift)/scale))
-#define SWAP_IF_SOLDER(a,b) do { int c; if (show_solder_side) { c=a; a=b; b=c; }} while (0)
+#define SWAP_IF_SOLDER(a,b) do { Coord c; if (show_solder_side) { c=a; a=b; b=c; }} while (0)
 
 /* Used to detect non-trivial outlines */
 #define NOT_EDGE_X(x) ((x) != 0 && (x) != PCB->MaxWidth)
 #define NOT_EDGE_Y(y) ((y) != 0 && (y) != PCB->MaxHeight)
 #define NOT_EDGE(x,y) (NOT_EDGE_X(x) || NOT_EDGE_Y(y))
 
-static void png_fill_circle (hidGC gc, int cx, int cy, int radius);
+static void png_fill_circle (hidGC gc, Coord cx, Coord cy, Coord radius);
 
 /* The result of a failed gdImageColorAllocate() call */
 #define BADC -1
@@ -128,6 +129,7 @@ static gdImagePtr photo_copper[MAX_LAYER+2];
 static gdImagePtr photo_silk, photo_mask, photo_drill, *photo_im;
 static gdImagePtr photo_outline;
 static int photo_groups[MAX_LAYER+2], photo_ngroups;
+static int photo_has_inners;
 
 static int doing_outline, have_outline;
 
@@ -135,17 +137,26 @@ static int doing_outline, have_outline;
 #define FMT_jpg "JPEG"
 #define FMT_png "PNG"
 
+/* If this table has no elements in it, then we have no reason to
+   register this HID and will refrain from doing so at the end of this
+   file.  */
+
+#undef HAVE_SOME_FORMAT
+
 static const char *filetypes[] = {
 #ifdef HAVE_GDIMAGEPNG
   FMT_png,
+#define HAVE_SOME_FORMAT 1
 #endif
 
 #ifdef HAVE_GDIMAGEGIF
   FMT_gif,
+#define HAVE_SOME_FORMAT 1
 #endif
 
 #ifdef HAVE_GDIMAGEJPEG
   FMT_jpg,
+#define HAVE_SOME_FORMAT 1
 #endif
 
   NULL
@@ -153,58 +164,161 @@ static const char *filetypes[] = {
 
 HID_Attribute png_attribute_list[] = {
   /* other HIDs expect this to be first.  */
+
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --outfile <string>
+Name of the file to be exported to. Can contain a path.
+@end ftable
+%end-doc
+*/
   {"outfile", "Graphics output file",
    HID_String, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_pngfile 0
 
-  {"dpi", "Scale factor (pixels/inch). 0 to scale to fix specified size",
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --dpi
+Scale factor in pixels/inch. Set to 0 to scale to size specified in the layout.
+@end ftable
+%end-doc
+*/
+  {"dpi", "Scale factor (pixels/inch). 0 to scale to specified size",
    HID_Integer, 0, 1000, {100, 0, 0}, 0, 0},
 #define HA_dpi 1
 
-  {"x-max", "Maximum width (pixels).  0 to not constrain.",
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --x-max
+Width of the png image in pixels. No constraint, when set to 0.
+@end ftable
+%end-doc
+*/
+  {"x-max", "Maximum width (pixels).  0 to not constrain",
    HID_Integer, 0, 10000, {0, 0, 0}, 0, 0},
 #define HA_xmax 2
 
-  {"y-max", "Maximum height (pixels).  0 to not constrain.",
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --y-max
+Height of the png output in pixels. No constraint, when set to 0.
+@end ftable
+%end-doc
+*/
+  {"y-max", "Maximum height (pixels).  0 to not constrain",
    HID_Integer, 0, 10000, {0, 0, 0}, 0, 0},
 #define HA_ymax 3
 
-  {"xy-max", "Maximum width and height (pixels).  0 to not constrain.",
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --xy-max
+Maximum width and height of the PNG output in pixels. No constraint, when set to 0.
+@end ftable
+%end-doc
+*/
+  {"xy-max", "Maximum width and height (pixels).  0 to not constrain",
    HID_Integer, 0, 10000, {0, 0, 0}, 0, 0},
 #define HA_xymax 4
 
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --as-shown
+Export layers as shown on screen.
+@end ftable
+%end-doc
+*/
   {"as-shown", "Export layers as shown on screen",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_as_shown 5
 
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --monochrome
+Convert output to monochrome.
+@end ftable
+%end-doc
+*/
   {"monochrome", "Convert to monochrome",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_mono 6
 
-  {"only-visible", "Limit the bounds of the PNG file to the visible items",
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --only-vivible
+Limit the bounds of the exported PNG image to the visible items.
+@end ftable
+%end-doc
+*/
+  {"only-visible", "Limit the bounds of the PNG image to the visible items",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_only_visible 7
 
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --use-alpha
+Make the background and any holes transparent.
+@end ftable
+%end-doc
+*/
   {"use-alpha", "Make the background and any holes transparent",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_use_alpha 8
 
-  {"format", "Graphics file format",
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --format <string>
+File format to be exported. Parameter @code{<string>} can be @samp{PNG},
+@samp{GIF}, or @samp{JPEG}.
+@end ftable
+%end-doc
+*/
+  {"format", "Export file format",
    HID_Enum, 0, 0, {0, 0, 0}, filetypes, 0},
 #define HA_filetype 9
 
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --png-bloat <num><dim>
+Amount of extra thickness to add to traces, pads, or pin edges. The parameter
+@samp{<num><dim>} is a number, appended by a dimension @samp{mm}, @samp{mil}, or
+@samp{pix}. If no dimension is given, the default dimension is 1/100 mil.
+@end ftable
+%end-doc
+*/
   {"png-bloat", "Amount (in/mm/mil/pix) to add to trace/pad/pin edges (1 = 1/100 mil)",
    HID_String, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_bloat 10
 
-  {"photo-mode", "Photo-realistic mode",
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@cindex photo-mode
+@item --photo-mode
+Export a photo realistic image of the layout.
+@end ftable
+%end-doc
+*/
+  {"photo-mode", "Photo-realistic export mode",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_photo_mode 11
 
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --photo-flip-x
+In photo-realistic mode, export the reverse side of the layout. Left-right flip.
+@end ftable
+%end-doc
+*/
   {"photo-flip-x", "Show reverse side of the board, left-right flip",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_photo_flip_x 12
 
+/* %start-doc options "93 PNG Options"
+@ftable @code
+@item --photo-flip-y
+In photo-realistic mode, export the reverse side of the layout. Up-down flip.
+@end ftable
+%end-doc
+*/
   {"photo-flip-y", "Show reverse side of the board, up-down flip",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_photo_flip_y 13
@@ -301,33 +415,21 @@ layer_sort (const void *va, const void *vb)
   return b - a;
 }
 
-static char *filename;
+static const char *filename;
 static BoxType *bounds;
 static int in_mono, as_shown;
 
 static void
-parse_bloat (char *str)
+parse_bloat (const char *str)
 {
-  double val;
-  char suf[10];
-  bloat = 0.0;
+  UnitList extra_units = {
+    { "pix", scale, 0 },
+    { "px", scale, 0 },
+    { "", 0, 0 }
+  };
   if (str == NULL)
     return;
-  suf[0] = 0;
-  sscanf (str, "%lf %s", &val, suf);
-  if (strcmp (suf, "in") == 0)
-    bloat = INCH_TO_COORD(val);
-  else if (strcmp (suf, "mil") == 0)
-    bloat = MIL_TO_COORD(val);
-  else if (strcmp (suf, "mm") == 0)
-    bloat = MM_TO_COORD(val);
-  else if (strcmp (suf, "um") == 0)
-    bloat = MM_TO_COORD(val) / 1000.0;
-  else if (strcmp (suf, "pix") == 0
-	   || strcmp (suf, "px") == 0)
-    bloat = val * scale;
-  else
-    bloat = val;
+  bloat = GetValueEx (str, NULL, NULL, extra_units, "");
 }
 
 void
@@ -387,12 +489,28 @@ png_hid_export_to_file (FILE * the_file, HID_Attr_Val * options)
 	{
 	  int i, n=0;
 	  SET_FLAG (SHOWMASKFLAG, PCB);
+	  photo_has_inners = 0;
 	  if (comp_layer < solder_layer)
 	    for (i = comp_layer; i <= solder_layer; i++)
-	      photo_groups[n++] = i;
+	      {
+		photo_groups[n++] = i;
+		if (i != comp_layer && i != solder_layer
+		    && ! IsLayerGroupEmpty (i))
+		  photo_has_inners = 1;
+	      }
 	  else
 	    for (i = comp_layer; i >= solder_layer; i--)
-	      photo_groups[n++] = i;
+	      {
+		photo_groups[n++] = i;
+		if (i != comp_layer && i != solder_layer
+		    && ! IsLayerGroupEmpty (i))
+		  photo_has_inners = 1;
+	      }
+	  if (!photo_has_inners)
+	    {
+	      photo_groups[1] = photo_groups[n - 1];
+	      n = 2;
+	    }
 	  photo_ngroups = n;
 
 	  if (photo_flip)
@@ -516,8 +634,9 @@ png_do_export (HID_Attr_Val * options)
   int save_ons[MAX_LAYER + 2];
   int i;
   BoxType *bbox;
-  int w, h;
-  int xmax, ymax, dpi;
+  Coord w, h;
+  Coord xmax, ymax;
+  int dpi;
   const char *fmt;
   bool format_error = false;
 
@@ -1165,7 +1284,7 @@ png_set_line_cap (hidGC gc, EndCapStyle style)
 }
 
 static void
-png_set_line_width (hidGC gc, int width)
+png_set_line_width (hidGC gc, Coord width)
 {
   gc->width = width;
 }
@@ -1291,7 +1410,7 @@ use_gc (hidGC gc)
 }
 
 static void
-png_draw_rect (hidGC gc, int x1, int y1, int x2, int y2)
+png_draw_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   use_gc (gc);
   gdImageRectangle (im,
@@ -1300,24 +1419,12 @@ png_draw_rect (hidGC gc, int x1, int y1, int x2, int y2)
 }
 
 static void
-png_fill_rect (hidGC gc, int x1, int y1, int x2, int y2)
+png_fill_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   use_gc (gc);
   gdImageSetThickness (im, 0);
   linewidth = 0;
 
-  if (x1 > x2)
-    {
-      int t = x1;
-      x2 = x2;
-      x2 = t;
-    }
-  if (y1 > y2)
-    {
-      int t = y1;
-      y2 = y2;
-      y2 = t;
-    }
   y1 -= bloat;
   y2 += bloat;
   SWAP_IF_SOLDER (y1, y2);
@@ -1328,11 +1435,11 @@ png_fill_rect (hidGC gc, int x1, int y1, int x2, int y2)
 }
 
 static void
-png_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
+png_draw_line (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   if (x1 == x2 && y1 == y2)
     {
-      int w = gc->width / 2;
+      Coord w = gc->width / 2;
       if (gc->cap != Square_Cap)
 	png_fill_circle (gc, x1, y1, w);
       else
@@ -1375,13 +1482,15 @@ png_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
        * it as a filled polygon.
        */
       int fg = gdImageColorResolve (im, gc->color->r, gc->color->g,
-				    gc->color->b),
-	w = gc->width, dx = x2 - x1, dy = y2 - y1, dwx, dwy;
+				    gc->color->b);
+      Coord w = gc->width;
+      Coord dwx, dwy;
+
       gdPoint p[4];
-      double l = sqrt (dx * dx + dy * dy) * 2;
+      double l = Distance(x1, y1, x2, y2) * 2;
 
       w += 2 * bloat;
-      dwx = -w / l * dy; dwy =  w / l * dx;
+      dwx = -w / l * (y2 - y1); dwy =  w / l * (x2 - x1);
       p[0].x = SCALE_X (x1 + dwx - dwy); p[0].y = SCALE_Y(y1 + dwy + dwx);
       p[1].x = SCALE_X (x1 - dwx - dwy); p[1].y = SCALE_Y(y1 - dwy + dwx);
       p[2].x = SCALE_X (x2 - dwx + dwy); p[2].y = SCALE_Y(y2 - dwy - dwx);
@@ -1391,10 +1500,23 @@ png_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
 }
 
 static void
-png_draw_arc (hidGC gc, int cx, int cy, int width, int height,
-	      int start_angle, int delta_angle)
+png_draw_arc (hidGC gc, Coord cx, Coord cy, Coord width, Coord height,
+	      Angle start_angle, Angle delta_angle)
 {
-  int sa, ea;
+  Angle sa, ea;
+
+  /*
+   * zero angle arcs need special handling as gd will output either
+   * nothing at all or a full circle when passed delta angle of 0 or 360.
+   */
+  if (delta_angle == 0) {
+    Coord x = (width * cos (start_angle * M_PI / 180));
+    Coord y = (width * sin (start_angle * M_PI / 180));
+    x = cx - x;
+    y = cy + y;
+    png_fill_circle (gc, x, y, gc->width / 2);
+    return;
+  }
 
   /* 
    * in gdImageArc, 0 degrees is to the right and +90 degrees is down
@@ -1418,22 +1540,14 @@ png_draw_arc (hidGC gc, int cx, int cy, int width, int height,
       ea = start_angle;
     }
 
-  have_outline |= doing_outline;
-
   /* 
    * make sure we start between 0 and 360 otherwise gd does
    * strange things
    */
-  while (sa < 0)
-    {
-      sa += 360;
-      ea += 360;
-    }
-  while (sa >= 360)
-    {
-      sa -= 360;
-      ea -= 360;
-    }
+  sa = NormalizeAngle (sa);
+  ea = NormalizeAngle (ea);
+
+  have_outline |= doing_outline;
 
 #if 0
   printf ("draw_arc %d,%d %dx%d %d..%d %d..%d\n",
@@ -1450,9 +1564,9 @@ png_draw_arc (hidGC gc, int cx, int cy, int width, int height,
 }
 
 static void
-png_fill_circle (hidGC gc, int cx, int cy, int radius)
+png_fill_circle (hidGC gc, Coord cx, Coord cy, Coord radius)
 {
-  int my_bloat;
+  Coord my_bloat;
 
   use_gc (gc);
 
@@ -1472,7 +1586,7 @@ png_fill_circle (hidGC gc, int cx, int cy, int radius)
 }
 
 static void
-png_fill_polygon (hidGC gc, int n_coords, int *x, int *y)
+png_fill_polygon (hidGC gc, int n_coords, Coord *x, Coord *y)
 {
   int i;
   gdPoint *points;
@@ -1521,7 +1635,7 @@ hid_png_init ()
 
   png_hid.struct_size = sizeof (HID);
   png_hid.name        = "png";
-  png_hid.description = "GIF/JPEG/PNG export.";
+  png_hid.description = "GIF/JPEG/PNG export";
   png_hid.exporter    = 1;
   png_hid.poly_before = 1;
 
@@ -1545,7 +1659,9 @@ hid_png_init ()
   png_hid.calibrate           = png_calibrate;
   png_hid.set_crosshair       = png_set_crosshair;
 
+#ifdef HAVE_SOME_FORMAT
   hid_register_hid (&png_hid);
 
 #include "png_lists.h"
+#endif
 }

@@ -1,7 +1,5 @@
-/* $Id$ */
-
-#ifndef __RESOURCE_INCLUDED__
-#define __RESOURCE_INCLUDED__ 1
+#ifndef PCB_RESOURCE_H
+#define PCB_RESOURCE_H
 
 #include <stdio.h>
 
@@ -38,9 +36,9 @@ extern "C"
 /* res_parse.y */
 
 /* Pass either filename OR stringtab.  */
-  Resource *resource_parse (char *filename, const char **stringtab);
-  char *resource_value (Resource * res, char *name);
-  Resource *resource_subres (Resource * res, char *name);
+  Resource *resource_parse (const char *filename, const char **stringtab);
+  char *resource_value (const Resource * res, char *name);
+  Resource *resource_subres (const Resource * res, const char *name);
 
   Resource *resource_create (Resource * parent);
   void resource_add_val (Resource * n, char *name, char *value,

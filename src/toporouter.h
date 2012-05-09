@@ -1,9 +1,10 @@
 /*
  *                            COPYRIGHT
  *
- *  Topological Autorouter for 
+ *  Topological Autorouter for
  *  PCB, interactive printed circuit board design
  *  Copyright (C) 2009 Anthony Blake
+ *  Copyright (C) 2009-2011 PCB Contributors (see ChangeLog for details)
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -24,8 +25,8 @@
  *
  */
 
-#ifndef __TOPOROUTER_INCLUDED__
-#define __TOPOROUTER_INCLUDED__
+#ifndef PCB_TOPOROUTER_H
+#define PCH_TOPOROUTER_H
 
 #include <assert.h>
 #include "data.h"
@@ -418,10 +419,7 @@ struct _toporouter_t {
   GList *destboxes, *consumeddestboxes;
 
   /* settings: */
-  guint viamax;
   gdouble viacost;
-  gdouble stublength;
-  gdouble serpintine_half_amplitude;
 
   gdouble wiring_score;
 
@@ -483,4 +481,4 @@ typedef struct {
 
 #define FOREACH_END }} while(0)
 
-#endif /* __TOPOROUTER_INCLUDED__ */
+#endif /* PCB_TOPOROUTER_H */

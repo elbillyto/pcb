@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -33,6 +31,7 @@
 #include "error.h"
 #include "search.h"
 #include "draw.h"
+#include "pcb-printf.h"
 #include "undo.h"
 #include "set.h"
 #include "gui.h"
@@ -44,9 +43,7 @@
 
 #define VIOLATION_PIXMAP_PIXEL_SIZE   100
 #define VIOLATION_PIXMAP_PIXEL_BORDER 5
-#define VIOLATION_PIXMAP_PCB_SIZE     10000
-
-RCSID ("$Id$");
+#define VIOLATION_PIXMAP_PCB_SIZE     MIL_TO_COORD (100)
 
 static GtkWidget *drc_window, *drc_list;
 static GtkListStore *drc_list_model = NULL;
@@ -57,8 +54,11 @@ static gint
 drc_window_configure_event_cb (GtkWidget * widget,
 			       GdkEventConfigure * ev, gpointer data)
 {
-  ghidgui->drc_window_width = widget->allocation.width;
-  ghidgui->drc_window_height = widget->allocation.height;
+  GtkAllocation allocation;
+
+  gtk_widget_get_allocation (widget, &allocation);
+  ghidgui->drc_window_width = allocation.width;
+  ghidgui->drc_window_height = allocation.height;
   ghidgui->config_modified = TRUE;
 
   return FALSE;
@@ -236,7 +236,7 @@ selection_changed_cb (GtkTreeSelection *selection, gpointer user_data)
 	case LINE_TYPE:
 	case ARC_TYPE:
 	case POLYGON_TYPE:
-	  ChangeGroupVisibility (GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1), true, true);
+	  ChangeGroupVisibility (GetLayerNumber (PCB->Data, (LayerType *) ptr1), true, true);
 	}
       DrawObject (object_type, ptr1, ptr2);
     }
@@ -260,7 +260,7 @@ row_activated_cb (GtkTreeView *view, GtkTreePath *path,
   if (violation == NULL)
     return;
 
-  CenterDisplay (violation->x_coord, violation->y_coord, false);
+  CenterDisplay (violation->x_coord, violation->y_coord);
 }
 
 
@@ -274,8 +274,6 @@ enum
   PROP_HAVE_MEASURED,
   PROP_MEASURED_VALUE,
   PROP_REQUIRED_VALUE,
-  PROP_VALUE_DIGITS,
-  PROP_VALUE_UNITS,
   PROP_OBJECT_LIST,
   PROP_PIXMAP
 };
@@ -299,7 +297,6 @@ ghid_drc_violation_finalize (GObject * object)
 
   g_free (violation->title);
   g_free (violation->explanation);
-  g_free (violation->value_units);
   g_free (violation->object_id_list);
   g_free (violation->object_type_list);
   if (violation->pixmap != NULL)
@@ -351,23 +348,16 @@ ghid_drc_violation_set_property (GObject * object, guint property_id,
       violation->y_coord = g_value_get_int (value);
       break;
     case PROP_ANGLE:
-      violation->angle = g_value_get_int (value);
+      violation->angle = g_value_get_double (value);
       break;
     case PROP_HAVE_MEASURED:
-      violation->have_measured = g_value_get_int (value);
+      violation->have_measured = g_value_get_boolean (value);
       break;
     case PROP_MEASURED_VALUE:
-      violation->measured_value = g_value_get_double (value);
+      violation->measured_value = g_value_get_int (value);
       break;
     case PROP_REQUIRED_VALUE:
-      violation->required_value = g_value_get_double (value);
-      break;
-    case PROP_VALUE_DIGITS:
-      violation->value_digits = g_value_get_int (value);
-      break;
-    case PROP_VALUE_UNITS:
-      g_free (violation->value_units);
-      violation->value_units = g_value_dup_string (value);
+      violation->required_value = g_value_get_int (value);
       break;
     case PROP_OBJECT_LIST:
       /* Copy the passed data to make new lists */
@@ -467,7 +457,7 @@ ghid_drc_violation_class_init (GhidViolationRendererClass * klass)
 						     0,
 						     G_PARAM_WRITABLE));
   g_object_class_install_property (gobject_class, PROP_ANGLE,
-				   g_param_spec_int ("angle",
+				   g_param_spec_double ("angle",
 						     "",
 						     "",
 						     G_MININT,
@@ -475,43 +465,27 @@ ghid_drc_violation_class_init (GhidViolationRendererClass * klass)
 						     0,
 						     G_PARAM_WRITABLE));
   g_object_class_install_property (gobject_class, PROP_HAVE_MEASURED,
-				   g_param_spec_int ("have-measured",
+				   g_param_spec_boolean ("have-measured",
+						     "",
+						     "",
+						     0,
+						     G_PARAM_WRITABLE));
+  g_object_class_install_property (gobject_class, PROP_MEASURED_VALUE,
+				   g_param_spec_int ("measured-value",
 						     "",
 						     "",
 						     G_MININT,
 						     G_MAXINT,
-						     0,
-						     G_PARAM_WRITABLE));
-  g_object_class_install_property (gobject_class, PROP_MEASURED_VALUE,
-				   g_param_spec_double ("measured-value",
-						     "",
-						     "",
-						     -G_MAXDOUBLE,
-						     G_MAXDOUBLE,
 						     0.,
 						     G_PARAM_WRITABLE));
   g_object_class_install_property (gobject_class, PROP_REQUIRED_VALUE,
-				   g_param_spec_double ("required-value",
+				   g_param_spec_int ("required-value",
 						     "",
 						     "",
-						     -G_MINDOUBLE,
-						     G_MAXDOUBLE,
+						     G_MININT,
+						     G_MAXINT,
 						     0.,
 						     G_PARAM_WRITABLE));
-  g_object_class_install_property (gobject_class, PROP_VALUE_DIGITS,
-				   g_param_spec_int ("value-digits",
-						     "",
-						     "",
-						     0,
-						     G_MAXINT,
-						     0,
-						     G_PARAM_WRITABLE));
-  g_object_class_install_property (gobject_class, PROP_VALUE_UNITS,
-				   g_param_spec_string ("value-units",
-							"",
-							"",
-							"",
-							G_PARAM_WRITABLE));
   g_object_class_install_property (gobject_class, PROP_OBJECT_LIST,
 				   g_param_spec_pointer ("object-list",
 							 "",
@@ -582,8 +556,6 @@ GhidDrcViolation *ghid_drc_violation_new (DrcViolationType *violation,
 		       "have-measured",    violation->have_measured,
 		       "measured-value",   violation->measured_value,
 		       "required-value",   violation->required_value,
-		       "value-digits",     violation->value_digits,
-		       "value-units",      violation->value_units,
 		       "object-list",      &obj_list,
 		       "pixmap",           pixmap,
 		       NULL);
@@ -654,36 +626,32 @@ ghid_violation_renderer_set_property (GObject * object, guint property_id,
 
   if (renderer->violation->have_measured)
     {
-      markup = g_strdup_printf ("<b>%s (%.*f %s)</b>\n"
+      markup = pcb_g_strdup_printf ("%m+<b>%s (%$mS)</b>\n"
 				"<span size='1024'> </span>\n"
 				"<small>"
 				  "<i>%s</i>\n"
 				  "<span size='5120'> </span>\n"
-				  "Required: %.*f %s"
+				  "Required: %$mS"
 				"</small>",
+                                Settings.grid_unit->allow,
 				renderer->violation->title,
-				renderer->violation->value_digits,
 				renderer->violation->measured_value,
-				renderer->violation->value_units,
 				renderer->violation->explanation,
-				renderer->violation->value_digits,
-				renderer->violation->required_value,
-				renderer->violation->value_units);
+				renderer->violation->required_value);
     }
   else
     {
-      markup = g_strdup_printf ("<b>%s</b>\n"
+      markup = pcb_g_strdup_printf ("%m+<b>%s</b>\n"
 				"<span size='1024'> </span>\n"
 				"<small>"
 				  "<i>%s</i>\n"
 				  "<span size='5120'> </span>\n"
-				  "Required: %.*f %s"
+				  "Required: %$mS"
 				"</small>",
+                                Settings.grid_unit->allow,
 				renderer->violation->title,
 				renderer->violation->explanation,
-				renderer->violation->value_digits,
-				renderer->violation->required_value,
-				renderer->violation->value_units);
+				renderer->violation->required_value);
     }
 
   g_object_set (object, "markup", markup, NULL);
@@ -747,6 +715,7 @@ ghid_violation_renderer_render (GtkCellRenderer      *cell,
 				GtkCellRendererState  flags)
 {
   GdkDrawable *mydrawable;
+  GtkStyle *style = gtk_widget_get_style (widget);
   GhidViolationRenderer *renderer = GHID_VIOLATION_RENDERER (cell);
   GhidDrcViolation *violation = renderer->violation;
   int pixmap_size = VIOLATION_PIXMAP_PIXEL_SIZE - 2 * VIOLATION_PIXMAP_PIXEL_BORDER;
@@ -779,7 +748,7 @@ ghid_violation_renderer_render (GtkCellRenderer      *cell,
 
   mydrawable = GDK_DRAWABLE (violation->pixmap);
 
-  gdk_draw_drawable (window, widget->style->fg_gc[GTK_WIDGET_STATE (widget)],
+  gdk_draw_drawable (window, style->fg_gc[gtk_widget_get_state (widget)],
 		     mydrawable, 0, 0,
 		     cell_area->x + cell_area->width + VIOLATION_PIXMAP_PIXEL_BORDER,
 		     cell_area->y + VIOLATION_PIXMAP_PIXEL_BORDER, -1, -1);
@@ -958,7 +927,7 @@ ghid_drc_window_show (gboolean raise)
 
   gtk_widget_realize (drc_window);
   if (Settings.AutoPlace)
-    gtk_widget_set_uposition (GTK_WIDGET (drc_window), 10, 10);
+    gtk_window_move (GTK_WINDOW (drc_window), 10, 10);
   gtk_widget_show_all (drc_window);
 }
 

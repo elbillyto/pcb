@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -34,8 +32,8 @@
 /* prototypes for r-tree routines.
  */
 
-#ifndef __RTREE_INCLUDED__
-#define __RTREE_INCLUDED__
+#ifndef PCB_RTREE_H
+#define PCB_RTREE_H
 
 #include "global.h"
 
@@ -89,4 +87,5 @@ static inline int r_search_pt (rtree_t * rtree, const PointType * pt,
 int r_region_is_empty (rtree_t * rtree, const BoxType * region);
 
 void __r_dump_tree (struct rtree_node *, int);
+
 #endif

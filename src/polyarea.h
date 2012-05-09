@@ -22,8 +22,8 @@
       (C) 1997 Klamer Schutte (minor patches)
 */
 
-#ifndef	_POLYBOOL_H
-#define	_POLYBOOL_H
+#ifndef	PCB_POLYAREA_H
+#define	PCB_POLYAREA_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,7 +51,7 @@ enum {
 #endif
 
 
-typedef int vertex[2];  /* longing point representation of
+typedef Coord vertex[2];  /* longing point representation of
                              coordinates */
 typedef vertex Vector;
 
@@ -93,16 +93,15 @@ struct VNODE
 typedef struct PLINE PLINE;
 struct PLINE
 {
-    int xmin, ymin, xmax, ymax;
+    Coord xmin, ymin, xmax, ymax;
     PLINE *next;
     VNODE head;
     unsigned int Count;
     double area;
     rtree_t *tree;
-    int is_round;
-    int cx;
-    int cy;
-    int radius;
+    bool is_round;
+    Coord cx, cy;
+    Coord radius;
     struct {
       unsigned int status:3;
       unsigned int orient:1;
@@ -188,4 +187,4 @@ int SavePOLYAREA( POLYAREA *PA, char * fname);
 }
 #endif
 
-#endif /* POLY_H */
+#endif /* PCB_POLYAREA_H */

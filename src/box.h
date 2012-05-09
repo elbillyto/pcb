@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -34,11 +32,13 @@
 /* random box-related utilities.
  */
 
-#ifndef __BOX_H_INCLUDED__
-#define __BOX_H_INCLUDED__
+#ifndef PCB_BOX_H
+#define PCB_BOX_H
 
 #include <assert.h>
 #include "global.h"
+
+#include "misc.h"
 
 typedef enum
 { NORTH = 0, EAST = 1, SOUTH = 2, WEST = 3, NE = 4, SE = 5, SW = 6, NW =
@@ -46,11 +46,11 @@ typedef enum
 
 /* rotates box 90-degrees cw */
 /* that's a strange rotation! */
-#define ROTATEBOX_CW(box) { LocationType t;\
+#define ROTATEBOX_CW(box) { Coord t;\
     t = (box).X1; (box).X1 = -(box).Y2; (box).Y2 = (box).X2;\
     (box).X2 = -(box).Y1; (box).Y1 = t;\
 }
-#define ROTATEBOX_TO_NORTH(box, dir) do { LocationType t;\
+#define ROTATEBOX_TO_NORTH(box, dir) do { Coord t;\
   switch(dir) {\
   case EAST: \
    t = (box).X1; (box).X1 = (box).Y1; (box).Y1 = -(box).X2;\
@@ -65,7 +65,7 @@ typedef enum
   default: assert(0);\
   }\
   } while (0)
-#define ROTATEBOX_FROM_NORTH(box, dir) do { LocationType t;\
+#define ROTATEBOX_FROM_NORTH(box, dir) do { Coord t;\
   switch(dir) {\
   case WEST: \
    t = (box).X1; (box).X1 = (box).Y1; (box).Y1 = -(box).X2;\
@@ -88,7 +88,7 @@ typedef enum
 
 typedef struct cheap_point
 {
-  LocationType X, Y;
+  Coord X, Y;
 } CheapPointType;
 
 
@@ -96,13 +96,13 @@ typedef struct cheap_point
 /* this means that top-left corner is in box, *but bottom-right corner is
  * not*.  */
 static inline bool
-point_in_box (const BoxType * box, LocationType X, LocationType Y)
+point_in_box (const BoxType * box, Coord X, Coord Y)
 {
   return (X >= box->X1) && (Y >= box->Y1) && (X < box->X2) && (Y < box->Y2);
 }
 
 static inline bool
-point_in_closed_box (const BoxType * box, LocationType X, LocationType Y)
+point_in_closed_box (const BoxType * box, Coord X, Coord Y)
 {
   return (X >= box->X1) && (Y >= box->Y1) && (X <= box->X2) && (Y <= box->Y2);
 }
@@ -157,7 +157,7 @@ clip_box (const BoxType * box, const BoxType * clipbox)
 }
 
 static inline BoxType
-shrink_box (const BoxType * box, LocationType amount)
+shrink_box (const BoxType * box, Coord amount)
 {
   BoxType r = *box;
   r.X1 += amount;
@@ -168,7 +168,7 @@ shrink_box (const BoxType * box, LocationType amount)
 }
 
 static inline BoxType
-bloat_box (const BoxType * box, LocationType amount)
+bloat_box (const BoxType * box, Coord amount)
 {
   return shrink_box (box, -amount);
 }
@@ -199,7 +199,7 @@ box_corner (const BoxType * box)
 
 /* construct a box that holds a single point */
 static inline BoxType
-point_box (LocationType X, LocationType Y)
+point_box (Coord X, Coord Y)
 {
   BoxType r;
   r.X1 = X;
@@ -220,13 +220,11 @@ close_box (BoxType * r)
 /* return the square of the minimum distance from a point to some point
  * inside a box.  The box is half-closed!  That is, the top-left corner
  * is considered in the box, but the bottom-right corner is not. */
-static inline float
+static inline double
 dist2_to_box (const CheapPointType * p, const BoxType * b)
 {
   CheapPointType r = closest_point_in_box (p, b);
-  float x_dist = (r.X - p->X);
-  float y_dist = (r.Y - p->Y);
-  return (x_dist * x_dist) + (y_dist * y_dist);
+  return Distance (r.X, r.Y, p->X, p->Y);
 }
 
 #endif /* __BOX_H_INCLUDED__ */

@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  * Some of the X headers are not very friendly in terms of namespace.
  * For example, X.h typedef's Mask but we use Mask in the core of pcb
@@ -40,6 +38,10 @@
 #ifdef HAVE_XRENDER
 #include <X11/extensions/Xrender.h>
 #endif /* HAVE_XRENDER */
+
+#ifdef HAVE_XINERAMA
+#include <X11/extensions/Xinerama.h>
+#endif /* HAVE_XINERAMA */
 
 #undef Mask
 

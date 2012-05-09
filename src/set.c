@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -53,14 +51,14 @@
 #include "error.h"
 #include "find.h"
 #include "misc.h"
+#include "move.h"
 #include "set.h"
 #include "undo.h"
+#include "pcb-printf.h"
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 static int mode_position = 0;
 static int mode_stack[MAX_MODESTACK_DEPTH];
@@ -69,18 +67,21 @@ static int mode_stack[MAX_MODESTACK_DEPTH];
  * sets cursor grid with respect to grid offset values
  */
 void
-SetGrid (double Grid, bool align)
+SetGrid (Coord Grid, bool align)
 {
+  char *grid_string;
   if (Grid >= 1 && Grid <= MAX_GRID)
     {
       if (align)
 	{
-	  PCB->GridOffsetX =
-	    Crosshair.X - (int) (Crosshair.X / Grid) * Grid + 0.5;
-	  PCB->GridOffsetY =
-	    Crosshair.Y - (int) (Crosshair.Y / Grid) * Grid + 0.5;
+	  PCB->GridOffsetX = Crosshair.X % Grid;
+	  PCB->GridOffsetY = Crosshair.Y % Grid;
 	}
       PCB->Grid = Grid;
+      grid_string = pcb_g_strdup_printf ("%mr", Grid);
+      if (grid_string)
+        AttributePut (PCB, "PCB::grid::size", grid_string);
+      g_free (grid_string);
       if (Settings.DrawGrid)
 	Redraw ();
     }
@@ -90,7 +91,7 @@ SetGrid (double Grid, bool align)
  * sets a new line thickness
  */
 void
-SetLineSize (BDimension Size)
+SetLineSize (Coord Size)
 {
   if (Size >= MIN_LINESIZE && Size <= MAX_LINESIZE)
     {
@@ -104,7 +105,7 @@ SetLineSize (BDimension Size)
  * sets a new via thickness
  */
 void
-SetViaSize (BDimension Size, bool Force)
+SetViaSize (Coord Size, bool Force)
 {
   if (Force || (Size <= MAX_PINORVIASIZE &&
 		Size >= MIN_PINORVIASIZE &&
@@ -118,7 +119,7 @@ SetViaSize (BDimension Size, bool Force)
  * sets a new via drilling hole
  */
 void
-SetViaDrillingHole (BDimension Size, bool Force)
+SetViaDrillingHole (Coord Size, bool Force)
 {
   if (Force || (Size <= MAX_PINORVIASIZE &&
 		Size >= MIN_PINORVIAHOLE &&
@@ -141,7 +142,7 @@ pcb_use_route_style (RouteStyleType * rst)
  * sets a keepaway width
  */
 void
-SetKeepawayWidth (BDimension Width)
+SetKeepawayWidth (Coord Width)
 {
   if (Width <= MAX_LINESIZE)
     {
@@ -153,7 +154,7 @@ SetKeepawayWidth (BDimension Width)
  * sets a text scaling
  */
 void
-SetTextScale (Dimension Scale)
+SetTextScale (int Scale)
 {
   if (Scale <= MAX_TEXTSCALE && Scale >= MIN_TEXTSCALE)
     {
@@ -284,6 +285,13 @@ SetMode (int Mode)
       Settings.Mode = Mode;
       AdjustAttachedObjects ();
     }
+  /* Cancel rubberband move */
+  else if (Settings.Mode == MOVE_MODE)
+    MoveObjectAndRubberband (Crosshair.AttachedObject.Type,
+                             Crosshair.AttachedObject.Ptr1,
+                             Crosshair.AttachedObject.Ptr2,
+                             Crosshair.AttachedObject.Ptr3,
+                             0, 0);
   else
     {
       if (Settings.Mode == ARC_MODE || Settings.Mode == LINE_MODE)
@@ -335,7 +343,7 @@ SetRouteStyle (char *name)
 }
 
 void
-SetLocalRef (LocationType X, LocationType Y, bool Showing)
+SetLocalRef (Coord X, Coord Y, bool Showing)
 {
   static MarkType old;
   static int count = 0;

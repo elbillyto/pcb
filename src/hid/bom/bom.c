@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -14,6 +12,7 @@
 #include "data.h"
 #include "error.h"
 #include "misc.h"
+#include "pcb-printf.h"
 
 #include "hid.h"
 #include "hid/common/hidnogui.h"
@@ -23,27 +22,50 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 static HID_Attribute bom_options[] = {
-  {"bomfile", "BOM output file",
+/* %start-doc options "8 BOM Creation"
+@ftable @code
+@item --bomfile <string>
+Name of the BOM output file.
+@end ftable
+%end-doc
+*/
+  {"bomfile", "Name of the BOM output file",
    HID_String, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_bomfile 0
-  {"xyfile", "XY output file",
+/* %start-doc options "8 BOM Creation"
+@ftable @code
+@item --xyfile <string>
+Name of the XY output file.
+@end ftable
+%end-doc
+*/
+  {"xyfile", "Name of the XY output file",
    HID_String, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_xyfile 1
-  {"xy-in-mm", "XY dimensions in mm instead of mils",
+
+/* %start-doc options "8 BOM Creation"
+@ftable @code
+@item --xy-unit <unit>
+Unit of XY dimensions. Defaults to mil.
+@end ftable
+%end-doc
+*/
+  {"xy-unit", "XY units",
+   HID_Unit, 0, 0, {-1, 0, 0}, NULL, 0},
+#define HA_unit 2
+  {"xy-in-mm", ATTR_UNDOCUMENTED,
    HID_Boolean, 0, 0, {0, 0, 0}, 0, 0},
-#define HA_xymm 2
+#define HA_xymm 3
 };
 
 #define NUM_OPTIONS (sizeof(bom_options)/sizeof(bom_options[0]))
 
 static HID_Attr_Val bom_values[NUM_OPTIONS];
 
-static char *bom_filename;
-static char *xy_filename;
-static int xy_dim_type;
+static const char *bom_filename;
+static const char *xy_filename;
+static const Unit *xy_unit;
 
 typedef struct _StringList
 {
@@ -63,11 +85,21 @@ typedef struct _BomList
 static HID_Attribute *
 bom_get_export_options (int *n)
 {
-   static char *last_bom_filename = 0;
-   static char *last_xy_filename = 0;
+  static char *last_bom_filename = 0;
+  static char *last_xy_filename = 0;
+  static int last_unit_value = -1;
+
+  if (bom_options[HA_unit].default_val.int_value == last_unit_value)
+    {
+      if (Settings.grid_unit)
+        bom_options[HA_unit].default_val.int_value = Settings.grid_unit->index;
+      else
+        bom_options[HA_unit].default_val.int_value = get_unit_struct ("mil")->index;
+      last_unit_value = bom_options[HA_unit].default_val.int_value;
+    }
   if (PCB) {
-	derive_default_filename(PCB->Filename, &bom_options[HA_bomfile], ".bom", &last_bom_filename);
-	derive_default_filename(PCB->Filename, &bom_options[HA_xyfile ], ".xy" , &last_xy_filename );
+    derive_default_filename(PCB->Filename, &bom_options[HA_bomfile], ".bom", &last_bom_filename);
+    derive_default_filename(PCB->Filename, &bom_options[HA_xyfile ], ".xy" , &last_xy_filename );
   }
 
   if (n)
@@ -274,10 +306,11 @@ static int
 PrintBOM (void)
 {
   char utcTime[64];
-  double x, y, theta = 0.0, user_x, user_y;
+  Coord x, y;
+  double theta = 0.0;
   double sumx, sumy;
   double pin1x = 0.0, pin1y = 0.0, pin1angle = 0.0;
-  double pin2x = 0.0, pin2y = 0.0, pin2angle;
+  double pin2x = 0.0, pin2y = 0.0;
   int found_pin1;
   int found_pin2;
   int pin_cnt;
@@ -300,18 +333,12 @@ PrintBOM (void)
     const char *fmt = "%c UTC";
     strftime (utcTime, sizeof (utcTime), fmt, gmtime (&currenttime));
   }
-  fprintf (fp, "# $Id");
-  fprintf (fp, "$\n");
   fprintf (fp, "# PcbXY Version 1.0\n");
   fprintf (fp, "# Date: %s\n", utcTime);
   fprintf (fp, "# Author: %s\n", pcb_author ());
   fprintf (fp, "# Title: %s - PCB X-Y\n", UNKNOWN (PCB->Name));
   fprintf (fp, "# RefDes, Description, Value, X, Y, rotation, top/bottom\n");
-  if (xy_dim_type) {
-    fprintf (fp, "# X,Y in mm.  rotation in degrees.\n");
-  } else {
-    fprintf (fp, "# X,Y in mils.  rotation in degrees.\n");
-  }
+  fprintf (fp, "# X,Y in %s.  rotation in degrees.\n", xy_unit->in_suffix);
   fprintf (fp, "# --------------------------------------------\n");
 
   /*
@@ -362,7 +389,6 @@ PrintBOM (void)
 	{
 	  pin2x = (double) pin->X;
 	  pin2y = (double) pin->Y;
-	  pin2angle = 0.0;	/* pins have no notion of angle */
 	  found_pin2 = 1;
 	}
     }
@@ -391,8 +417,6 @@ PrintBOM (void)
 	{
 	  pin2x = (double) (pad->Point1.X + pad->Point2.X) / 2.0;
 	  pin2y = (double) (pad->Point1.Y + pad->Point2.Y) / 2.0;
-	  pin2angle = (180.0 / M_PI) * atan2 (pad->Point1.Y - pad->Point2.Y,
-					      pad->Point2.X - pad->Point1.X);
 	  found_pin2 = 1;
 	}
 
@@ -452,23 +476,9 @@ PrintBOM (void)
 	value = CleanBOMString ((char *)UNKNOWN (VALUE_NAME (element)));
 
  	y = PCB->MaxHeight - y;
- 	if (xy_dim_type) {
- 	  /* dimensions in mm */
- 	  user_x = 0.000254 * x;
- 	  user_y = 0.000254 * y;
- 	} else {
- 	  /* dimensions in mils */
- 	  user_x = 0.01 * x;
- 	  user_y = 0.01 * y;
- 	}
-	fprintf (fp, "%s,\"%s\",\"%s\",%.2f,%.2f,%g,%s\n",
-		 name, descr, value,
-#if 0
-		 (double) element->MarkX, (double) element->MarkY,
-#else
-		 user_x, user_y,
-#endif
-		 theta, FRONT (element) == 1 ? "top" : "bottom");
+	pcb_fprintf (fp, "%m+%s,\"%s\",\"%s\",%mS,%.2mS,%g,%s\n",
+		     xy_unit->allow, name, descr, value, x, y,
+		     theta, FRONT (element) == 1 ? "top" : "bottom");
 	free (name);
 	free (descr);
 	free (value);
@@ -488,8 +498,6 @@ PrintBOM (void)
       return 1;
     }
 
-  fprintf (fp, "# $Id");
-  fprintf (fp, "$\n");
   fprintf (fp, "# PcbBOM Version 1.0\n");
   fprintf (fp, "# Date: %s\n", utcTime);
   fprintf (fp, "# Author: %s\n", pcb_author ());
@@ -525,7 +533,11 @@ bom_do_export (HID_Attr_Val * options)
   if (!xy_filename)
     xy_filename = "pcb-out.xy";
 
-  xy_dim_type = options[HA_xymm].int_value;
+  if (options[HA_unit].int_value == -1)
+    xy_unit = options[HA_xymm].int_value ? get_unit_struct ("mm")
+                                         : get_unit_struct ("mil");
+  else
+    xy_unit = &get_unit_list ()[options[HA_unit].int_value];
   PrintBOM ();
 }
 

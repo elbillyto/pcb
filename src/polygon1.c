@@ -102,7 +102,7 @@ int vect_inters2 (Vector A, Vector B, Vector C, Vector D, Vector S1,
 #undef DEBUG_ANGLE
 #undef DEBUG
 #ifdef DEBUG
-#define DEBUGP(...) fprintf(stderr, ## __VA_ARGS__)
+#define DEBUGP(...) pcb_fprintf(stderr, ## __VA_ARGS__)
 #else
 #define DEBUGP(...)
 #endif
@@ -134,7 +134,7 @@ pline_dump (VNODE * v)
   do
     {
       n = v->next;
-      fprintf (stderr, "Line [%d %d %d %d 10 10 \"%s\"]\n",
+      pcb_fprintf (stderr, "Line [%#mS %#mS %#mS %#mS 10 10 \"%s\"]\n",
 	       v->point[0], v->point[1],
 	       n->point[0], n->point[1], theState (v));
     }
@@ -254,7 +254,7 @@ new_descriptor (VNODE * a, char poly, char side)
   l->angle = ang;
   assert (ang >= 0.0 && ang <= 4.0);
 #ifdef DEBUG_ANGLE
-  DEBUGP ("node on %c at (%d,%d) assigned angle %g on side %c\n", poly,
+  DEBUGP ("node on %c at %#mD assigned angle %g on side %c\n", poly,
 	  a->point[0], a->point[1], ang, side);
 #endif
   return l;
@@ -637,7 +637,7 @@ seg_in_seg (const BoxType * b, void *cl)
       if (new_node != NULL)
 	{
 #ifdef DEBUG_INTERSECT
-	  DEBUGP ("new intersection on segment \"i\" at (%d, %d)\n",
+	  DEBUGP ("new intersection on segment \"i\" at %#mD\n",
 	          cnt > 1 ? s2[0] : s1[0], cnt > 1 ? s2[1] : s1[1]);
 #endif
 	  i->node_insert_list =
@@ -649,7 +649,7 @@ seg_in_seg (const BoxType * b, void *cl)
       if (new_node != NULL)
 	{
 #ifdef DEBUG_INTERSECT
-	  DEBUGP ("new intersection on segment \"s\" at (%d, %d)\n",
+	  DEBUGP ("new intersection on segment \"s\" at %#mD\n",
 	          cnt > 1 ? s2[0] : s1[0], cnt > 1 ? s2[1] : s1[1]);
 #endif
 	  i->node_insert_list =
@@ -1056,7 +1056,7 @@ print_labels (PLINE * a)
 
   do
     {
-      DEBUGP ("(%d,%d)->(%d,%d) labeled %s\n", c->point[0], c->point[1],
+      DEBUGP ("%#mD->%#mD labeled %s\n", c->point[0], c->point[1],
 	      c->next->point[0], c->next->point[1], theState (c));
     }
   while ((c = c->next) != &a->head);
@@ -1182,7 +1182,7 @@ InsCntr (jmp_buf * e, PLINE * c, POLYAREA ** dst)
     }
   newp->contours = c;
   newp->contour_tree = r_create_tree (NULL, 0, 0);
-  r_insert_entry (newp->contour_tree, (BoxTypePtr) c, 0);
+  r_insert_entry (newp->contour_tree, (BoxType *) c, 0);
   c->next = NULL;
 }				/* InsCntr */
 
@@ -1434,7 +1434,7 @@ InsertHoles (jmp_buf * e, POLYAREA * dest, PLINE ** src)
 	  /* link at front of hole list */
 	  curh->next = container->next;
 	  container->next = curh;
-	  r_insert_entry (pa_info->pa->contour_tree, (BoxTypePtr) curh, 0);
+	  r_insert_entry (pa_info->pa->contour_tree, (BoxType *) curh, 0);
 
 	}
     }
@@ -1568,8 +1568,7 @@ jump (VNODE ** cur, DIRECTION * cdir, J_Rule rule)
       return TRUE;
     }
 #ifdef DEBUG_JUMP
-  DEBUGP ("jump entering node at (%d, %d)\n", (*cur)->point[0],
-	  (*cur)->point[1]);
+  DEBUGP ("jump entering node at %$mD\n", (*cur)->point[0], (*cur)->point[1]);
 #endif
   if (*cdir == FORW)
     d = (*cur)->cvc_prev->prev;
@@ -1589,10 +1588,10 @@ jump (VNODE ** cur, DIRECTION * cdir, J_Rule rule)
 	    {
 #ifdef DEBUG_JUMP
 	      if (newone == FORW)
-		DEBUGP ("jump leaving node at (%d, %d)\n",
+		DEBUGP ("jump leaving node at %#mD\n",
 			e->next->point[0], e->next->point[1]);
 	      else
-		DEBUGP ("jump leaving node at (%d, %d)\n",
+		DEBUGP ("jump leaving node at %#mD\n",
 			e->point[0], e->point[1]);
 #endif
 	      *cur = d->parent;
@@ -1633,7 +1632,7 @@ Gather (VNODE * start, PLINE ** result, J_Rule v_rule, DIRECTION initdir)
 	  poly_InclVertex ((*result)->head.prev, newn);
 	}
 #ifdef DEBUG_GATHER
-      DEBUGP ("gather vertex at (%d, %d)\n", cur->point[0], cur->point[1]);
+      DEBUGP ("gather vertex at %#mD\n", cur->point[0], cur->point[1]);
 #endif
       /* Now mark the edge as included.  */
       newn = (dir == FORW ? cur : cur->prev);
@@ -1981,7 +1980,7 @@ M_POLYAREA_update_primary (jmp_buf * e, POLYAREA ** pieces,
   POLYAREA *anext;
   PLINE *curc, *next, *prev;
   BoxType box;
-  int inv_inside = 0;
+  /* int inv_inside = 0; */
   int del_inside = 0;
   int del_outside = 0;
   int finished;
@@ -1999,7 +1998,7 @@ M_POLYAREA_update_primary (jmp_buf * e, POLYAREA ** pieces,
       del_inside = 1;
       break;
     case PBO_XOR:		/* NOT IMPLEMENTED OR USED */
-      inv_inside = 1;
+      /* inv_inside = 1; */
       assert (0);
       break;
     }
@@ -2491,7 +2490,7 @@ VNODE *
 poly_CreateNode (Vector v)
 {
   VNODE *res;
-  register int *c;
+  Coord *c;
 
   assert (v);
   res = (VNODE *) calloc (1, sizeof (VNODE));
@@ -2650,7 +2649,9 @@ void
 poly_InvContour (PLINE * c)
 {
   VNODE *cur, *next;
+#ifndef NDEBUG
   int r;
+#endif
 
   assert (c != NULL);
   cur = &c->head;
@@ -2665,8 +2666,13 @@ poly_InvContour (PLINE * c)
   c->Flags.orient ^= 1;
   if (c->tree)
     {
-      r = r_search (c->tree, NULL, NULL, flip_cb, NULL);
+#ifndef NDEBUG
+      r =
+#endif
+        r_search (c->tree, NULL, NULL, flip_cb, NULL);
+#ifndef NDEBUG
       assert (r == c->Count);
+#endif
     }
 }
 
@@ -2765,7 +2771,7 @@ poly_Copy1 (POLYAREA * dst, const POLYAREA * src)
     {
       if (!poly_CopyContour (last, cur))
 	return FALSE;
-      r_insert_entry (dst->contour_tree, (BoxTypePtr) * last, 0);
+      r_insert_entry (dst->contour_tree, (BoxType *) * last, 0);
       last = &(*last)->next;
     }
   return TRUE;
@@ -2825,7 +2831,7 @@ poly_InclContour (POLYAREA * p, PLINE * c)
       p->contours->next = c;
       c->next = tmp;
     }
-  r_insert_entry (p->contour_tree, (BoxTypePtr) c, 0);
+  r_insert_entry (p->contour_tree, (BoxType *) c, 0);
   return TRUE;
 }
 
@@ -3257,7 +3263,7 @@ poly_Valid (POLYAREA * p)
       do
 	{
 	  n = v->next;
-	  fprintf (stderr, "Line [%d %d %d %d 100 100 \"\"]\n",
+	  pcb_fprintf (stderr, "Line [%#mS %#mS %#mS %#mS 100 100 \"\"]\n",
 		   v->point[0], v->point[1], n->point[0], n->point[1]);
 	}
       while ((v = v->next) != &p->contours->head);
@@ -3282,7 +3288,7 @@ poly_Valid (POLYAREA * p)
 	  do
 	    {
 	      n = v->next;
-	      fprintf (stderr, "Line [%d %d %d %d 100 100 \"\"]\n",
+	      pcb_fprintf (stderr, "Line [%#mS %#mS %#mS %#mS 100 100 \"\"]\n",
 		       v->point[0], v->point[1], n->point[0], n->point[1]);
 	    }
 	  while ((v = v->next) != &c->head);

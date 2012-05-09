@@ -1,6 +1,3 @@
-## $Id$
-##
-
 ## XXX the tools should probably be cleaned up a bit and installed
 ## in ${exec_prefix}/bin  (by bin_SCRIPTS and bin_PROGRAMS)
 
@@ -21,7 +18,8 @@ TOOLS= \
 	tgo2pcb.tcl \
 	MergePCBPS \
 	Merge_dimPCBPS \
-	PCB2HPGL 
+	PCB2HPGL \
+	pcbdiff
 
 DIST_SCM= \
 	gnet-pcbfwd.scm

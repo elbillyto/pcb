@@ -1,5 +1,4 @@
 \input texinfo    @c -*-texinfo-*-
-@comment RCS: $Id$
 @comment %**start of header
 @setfilename pcb.info
 @settitle Pcb
@@ -85,6 +84,7 @@ board layout system.
 * Regular Expressions::    Searching for elements with regular expressions
 * Standard Drill Sizes::   Tables of standard drill sizes
 * Centroid File Format::   Details of the centroid (x-y) output file
+* Annotation File Format:: Details of the back annotation output file
 * Action Reference::       Documentation for all available actions
 * Glossary::               Glossary
 * Index::                  The Index.
@@ -199,7 +199,8 @@ Boerge Strand (borges@@ifi.uio.no)
 Andre M. Hedrick (hedrick@@Astro.Dyer.Vanderbilt.Edu)
 @end display
 
-@exdent who provided all sorts of help including porting @pcb{} to
+@noindent
+who provided all sorts of help including porting @pcb{} to
 several operating systems and platforms, bug fixes, library enhancement,
 user interface suggestions and more. In addition to these people,
 many others donated time for bug-fixing and
@@ -519,12 +520,9 @@ and a new line started where the first one ended.
 You can abandon the new starting point in favor
 of another by pressing @emph{Ctrl-Btn1}, or
 @emph{Btn3}, but don't use @emph{Btn2}.
-The undo function (@emph{U} key or @samp{undo last operation}
+The undo function (@emph{U} key or @samp{Undo}
 from the @b{Edit} menu) will take you back
-point by point if you use it while in the line mode. If you drag
-the pointer out of the Layout area while drawing a line, the
-display will auto-scroll (assuming sufficient zoom for scrolling).
-To stop auto-scroll, simply pass the pointer over the panner control.
+point by point if you use it while in the line mode.
 
 @cindex two line mode
 New lines can be restricted to 45 degree angles if desired. You can toggle this
@@ -706,7 +704,8 @@ If you get the error message:
 @display
     can't find default font-symbol-file 'default_font'
 @end display
-@exdent then the font searchpath or filename in the application resource
+@noindent
+then the font searchpath or filename in the application resource
 file is wrong. Be sure that your @code{m4} program supports search paths.
 If not, get @code{GNU m4}.
 For other messages, see @ref{problems}.
@@ -723,6 +722,7 @@ if that works, then @pcb{} hasn't been installed properly.
 * Moving and Copying::
 * Loading and Saving::
 * Printing::               Creating Gerber files or postscript files
+* Exporting::              Exporting a layout.
 * Arrow Tool::             Selecting/Moving objects.
 * Rats Nest::		   Helps you place and route tracks against a netlist.
 * Design Rule Checking::   Check for manufactureability
@@ -737,16 +737,14 @@ if that works, then @pcb{} hasn't been installed properly.
 @node Application Window
 @section The Application Window
 
-The main window consists of six areas:
-the menu at the top, the panner control in the upper left corner, the layer
-controls located below the panner, the tool buttons
+The main window consists of five areas:
+the menu at the top, the layer control in the upper left, the tool buttons
 located below the layer controls, the Layout area to the right of these, and the
 status line at the bottom of the window.
 
 @menu
 * Menu::
 * Status-line and Input-field::  What is the program configuration.
-* Panner Control::               Used to pan the layout view when zoomed in.
 * Layer Controls::               Switch layers on/off; change current one.
 * Tool Selectors::               Select a layout tool.
 * Layout Area::		         Where the layout is drawn.
@@ -786,10 +784,11 @@ This menu offers a choice of loading, saving and printing data, saving
 connection information to a file or quitting the application. Most
 of the entries in the @b{File} menu are self explanatory.
 Selecting
-@samp{print layout} pops up a printer control dialog.
-A selection of several device drivers is available from the printer control
-dialog. Presently @emph{PostScript}, @emph{encapsulated PostScript},
-and @emph{GerberX} are supported. The @emph{GerberX} driver produces
+@samp{Print...} pops up a printer control dialog.
+Several output formats are available from the @samp{Export...} menu item.
+Presently @emph{PostScript}, @emph{encapsulated PostScript},
+and @emph{GerberX} are some of the supported filetypes.
+The @emph{GerberX} driver produces
 all of the files necessary to have the board professionally manufactured.
 The connection saving features in the @b{File} menu produce outputs in an
 arcane format that is not too useful. They do @emph{not} produce netlist
@@ -808,14 +807,24 @@ can also be accomplished with the @emph{U} key and @emph{Shift-R}
 key.  Finally, the @b{Edit} menu allows you to change the names
 of: the layout, the active layer, or text objects on the layout.
 
-@cindex Screen, popup menu
+@cindex Route Styles, popup menu
+@item Routes Style
+The @b{Edit} menu allows you to select a group of line thickness, via diameter, via drill
+size, and clearance (keepaway) (collectively called a "routing style") to be copied to the "active" sizes.
+You can also change the names given to the routing styles and adjust their values from
+this menu.  The "active" sizes are also adjustable from this menu.
+The "active" sizes are shown in the status-line and control the initial size of new vias,
+drilling holes, lines, clearances, text-objects and also the maximum dimensions of the
+board layout.
+
+@cindex View, popup menu
 @cindex displaying element names
 @cindex element, display names of
 @cindex grid, display
 @cindex grid, alignment
 @cindex zoom, setting
-@item Screen
-The @b{Screen} menu supports most functions related to
+@item View
+The @b{View} menu supports most functions related to
 the whole Layout area. There are various entries to change the grid to some popular
 values, the zoom factor, and which kind of element name is displayed.
 You can also re-align the grid origin and turn on and off the display
@@ -825,25 +834,15 @@ possible so that you're sure the grid
 points appear exactly where you want them.
 
 @cindex solder mask, viewing and editing
-The @b{Screen} menu also allows you to turn on and off the
+The @b{View} menu also allows you to turn on and off the
 visibility of the solder-mask layer. When the solder-mask layer
 is made visible it obscures most of the layout, so only turn
 this on when you really want to know what the solder-mask will
 look like. The solder-mask that you see belongs to the
 side of the board you are viewing, which can be changed with
-the @samp{view solder side} option, also found in the @b{Screen} menu.
+the @samp{Flip up/down} option, also found in the @b{View} menu.
 When the solder-mask is displayed, the pin and pad clearance adjustments
 (@pxref{Line Objects}) alter the size of mask cut-outs.
-
-@cindex Sizes, popup menu
-@item Sizes
-The @b{Sizes} menu allows you to select a group of line thickness, via diameter, via drill
-size, and clearance (keepaway) (collectively called a "routing style") to be copied to the "active" sizes.
-You can also change the names given to the routing styles and adjust their values from
-this menu.  The "active" sizes are also adjustable from this menu.
-The "active" sizes are shown in the status-line and control the initial size of new vias,
-drilling holes, lines, clearances, text-objects and also the maximum dimensions of the
-board layout.
 
 @cindex Settings, popup menu
 @cindex unique names
@@ -852,10 +851,7 @@ board layout.
 @cindex clearance, for new lines
 @item Settings
 The @b{Settings} menu controls several operating configuration
-parameters. The @samp{edit layer groups} entry brings up a dialog
-that allows you to change the way layers are grouped. Layer grouping
-is described in @ref{Layer Objects}. The @samp{all-direction lines}
-entry controls
+parameters. The @samp{all-direction lines} entry controls
 the clipping of lines to 45-degree angles. You can also control
 whether moving individual objects causes the attached lines to
 "rubber band" with the move or not from the @b{Settings} menu. Another
@@ -893,7 +889,7 @@ by name using unix @ref{Regular Expressions}.
 @item Buffer
 From the @b{Buffer} menu you may select one out of five
 buffers to use, rotate or clear its contents or save the buffer contents
-to a file. You can also use the @samp{break buffer element to pieces} entry
+to a file. You can also use the @samp{break buffer elements to pieces} entry
 to de-compose an element into pieces for editing.
 Note: only objects with visibility turned on are pasted to the layout. If
 you have something in a buffer, then change which side of the board you
@@ -955,7 +951,7 @@ the list of connections desired.
 
 Now that you're familiar with the various menus, it's time
 to try some things out. From the @b{File} menu choose
-@samp{load layout}, navigate to the tutorial folder, then
+@samp{Open...}, navigate to the tutorial folder, then
 load the file @samp{tut1.pcb}.
 
 
@@ -1017,53 +1013,6 @@ are the distance and angle from the mark to the cross hair. The values displayed
 are always in units of 0.001 inch (1 mil).
 Pressing @emph{Ctrl-M} again turns the marker off.
 
-@node Panner Control
-@subsection The Panner Control
-@cindex Panner control
-@cindex View, adjusting
-
-The panner control, located at the upper left side of the window, is used to
-adjust what portion of the layout is seen in the Layout area. The outer
-rectangle of the panner represents the whole layout (extended to have the
-panner aspect ratio), while the inner control rectangle represents the
-portion seen through the Layout area. Slowly drag this part around with
-the mouse (@emph{Btn1}) to see how it pans the layout. Release the panner
-control, but leave the pointer within the outer most rectangle of the
-control. Now hit a few keyboard arrow keys. Each arrow key moves the region
-seen one-half window size in the arrow direction. If you want to see a
-portion of the layout that is off the top of the screen, you need to
-drag the panner up, or hit the up arrow key.
-
-Move the pointer back into the Layout area.
-Increase the zoom by hitting the @emph{Z} key. See how the inner part of
-the panner becomes smaller to reflect that you are viewing a smaller
-part of the layout. Now zoom out by hitting @emph{Shift-Z}. If you
-hit the arrow key with the pointer in the Layout area, it moves
-the pointer rather than scrolling the window. In general the keyboard
-shortcuts depend on which region of @code{Pcb's} window the pointer
-is over. For the most part, the key strokes in this manual refer to
-the case when the pointer is in the Layout area. You can do fine
-scrolling in the Layout area by dragging it directly with the
-Panner tool. Press the @emph{Escape} key to select the panner tool.
-Now drag in the layout area with @emph{Btn1} down. You can scroll the drawing
-window while the pointer is inside it with @emph{Mod-Arrow}
-keys.
-
-If you are moving or drawing an object and go beyond the drawing
-window borders, the window will auto-scroll. If you want to stop
-the auto-scrolling while the pointer is outside the Layout area,
-simply pass the pointer briefly over the panner control area, or
-a menu button.
-
-Another way to navigate around a layout is with @emph{Shift-Btn3}.
-When pressed down, the layout will zoom so the whole extent of
-objects is visible, and will return to the previous zoom when
-you release the button, but will be centered at the cross hair
-position where the button is released. You can do this while in
-the middle of drawing an object. Try it now to center near
-U7.
-
-
 @node Layer Controls
 @subsection The Layer Controls
 @cindex layer controls
@@ -1071,7 +1020,7 @@ U7.
 @cindex layers, changing which is active
 @cindex change active layer
 
-The layer control panel, located below the panner control, is used to turn on
+The layer control panel, located in the upper left, is used to turn on
 and off the display of layer groups and to select the active drawing layer.
 If a layer hasn't been named, the label "@emph{(unknown)}" is used as the default.
 If this happens, it probably means the application resources are not installed
@@ -1146,7 +1095,6 @@ Every tool gives the cursor a unique shape that identifies it.
 The tool selector buttons themselves are icons that illustrate their function.
 Each layout tool can also be selected from the keyboard:
 @example
-    @emph{Escape} key   Panner tool
     @emph{F1} key       Via tool
     @emph{F2} key       Line tool
     @emph{F3} key       Arc tool
@@ -1343,8 +1291,7 @@ can be used to select (on the layout) everything that is connected
 (or is supposed to be connected) to the net. If you click on a
 connection in the connection list, it will select/deselect
 the corresponding pin or pad in the layout and also center the layout
-window where it is located. If you "Find" (@samp{lookup connection
-to object} in the @b{Connects} menu [also @emph{F} key]), a pin
+window where it is located. If you "Find" (@samp{lookup connection} in the @b{Connects} menu [also @emph{F} key]), a pin
 or pad it will also choose the net and connection in the netlist window
 if it exists in the netlist.
 
@@ -1676,7 +1623,7 @@ the location of the other pins.  Next make a solder-side layer the active
 layer from the @emph{active-layer} popup menu.  Now draw the outline of
 the element using lines and arcs.  When you're done, select everything that
 makes up the element with a box selection (@emph{<Btn3Down> drag,
-<Btn3Up>}). Now select "cut selection to buffer" from the @emph{Buffer}
+<Btn3Up>}). Now select "cut to buffer" from the @emph{Buffer}
 menu. Position the cursor over the center of pin 1 and press the left
 button to load the data into the buffer.
 Finally select "convert buffer to element" from the @emph{Buffer} menu.
@@ -1792,7 +1739,7 @@ Saving also is available from the @emph{File} menu, either with or
 without supplying a filename. @pcb{} reuses the last
 filename if you do not pass a new one to the save routine.
 
-To load an existing layout either select @emph{load layout data} from the
+To load an existing layout either select @emph{Open...} from the
 @emph{File} menu or use @kbd{:l filename}. A file select box pops up if you
 don't specify a filename. Merging existing layouts into the new one is
 supported either by the @emph{File} menu or by @kbd{:m filename}.
@@ -1950,6 +1897,143 @@ duplicating the code and putting some @code{translate} commands in front.
 Note, the normal @code{PostScript} units are 1/72 inch.
 @end table
 
+@node Exporting
+@section Exporting a layout
+@cindex Exporting a layout
+@vindex Exporting a layout
+
+To export a layout choose @emph{Export layout} from the @emph{File} menu, then
+select the desired exporter.
+
+@menu
+* bom::                Bill of materials.
+* gcode::              G-code.
+* gerber::             Gerber.
+* nelma::              Nelma.
+* png::		       Image.
+* ps::		       Postscript.
+* eps::		       Eps.
+@end menu
+
+@node bom
+@subsection Bill of materials (bom)
+@cindex bom
+@cindex bill of materials
+
+Produces a bill of materials (BOM) file and a centroid (XY) file.
+
+@node gcode
+@subsection G-code (gcode)
+@cindex gcode
+@cindex g-code
+@cindex cnc
+
+The gcode exporter can generate RS274/NGC G-CODE files to be used with a CNC mill to
+produce pcb's by mechanically removing copper from the perimeter of all elements.
+
+The elements are enlarged in order to compensate for the cutting tool size so
+that the remaining copper corresponds to the original size; however all
+polygons are left unchanged and will end up being a little smaller; this is not a
+problem because the electrical connection is done with traces, which are correctly
+enlarged.
+
+A .cnc file is generated for every copper layer, with the bottom layer mirrored so
+that the milling is done right; of course it's not possible to produce directly
+multi-layer (more than 2) pcb's with this method, but the cnc files for
+intermediate layers are generated anyways.
+
+A drill file is also generated, and it contains all drills regardless of the hole
+size; the drilling sequence is optimized in order to require the least amount of
+movement.
+
+The export function generates an intermediate raster image before extracting the contour
+of copper elements, and this image is saved as well (in .png format) for inspection.
+
+When the spacing between two elements is less than the tool diameter they will merge
+and no isolation will be cut between them; the control image should be checked for
+this behaviour.
+
+Possible workarounds are: increasing spacing, decreasing the tool size, increasing
+the intermediate image resolution.
+
+To maximize the chance of producing correct pcb's it would be better to increase
+the DRC clearance to at least the tool diameter and use traces as thick as possible;
+the rule is: use the largest element that will not prevent the isolation cut.
+
+The exporter parameters are:
+
+@table @b
+@item basename
+base name for generated files
+
+@item dpi
+intermediate image resolution; affects precision when extracting contours
+
+@item mill depth
+should be the copper depth
+
+@item safe z
+Z value when moving between polygons
+
+@item tool radius
+copper elements are enlarged by this amount
+
+@item drill depth
+depth of drills
+
+@item measurement unit
+for all parameters above, can be mm,um,inch,mil; g-code is always mm or inch
+@end table
+
+All .cnc files specify Z values as parameters, so that it's easy to
+change them without the need to run the exporter again.
+
+Operation was verified with the EMC2 g-code interpreter.
+
+Following is a sample layout that is converted with default settings:
+@center @image{gcode,,,Sample Layout,png}
+
+The control image shows that the spacing is sufficient:
+@center @image{gcode_control_img,,,Control Image,png}
+
+The final tool path follows the perimeter of all elements:
+@center @image{gcode_tool_path,,,Resulting Tool Path,png}
+
+@node gerber
+@subsection Gerber (gerber)
+@cindex gerber
+
+Produces RS274-X (a.k.a. gerber) photo plot files and Excellon drill files.
+
+@node nelma
+@subsection Nelma (nelma)
+@cindex nelma
+
+Numerical analysis package export.
+
+@node png
+@subsection Image (png)
+@cindex png
+@cindex image export
+
+Produces GIF/JPEG/PNG image files.
+
+@node ps
+@subsection Postscript (ps)
+@cindex ps
+@cindex postscript
+
+Export as postscript.
+Can be later converted to pdf.
+
+@node eps
+@subsection Encapsulated Postscript (eps)
+@cindex eps
+@cindex encapsulated postscript
+
+Export as eps (encapsulated postscript) for inclusion in other documents.
+Can be later converted to pdf.
+
 
 @node Connection Lists
 @section Connection Lists
@@ -2054,7 +2138,7 @@ If the layout is already completely wired, nothing will be added, and you will
 get a message that the wiring is complete.
 
 Rat-lines are lines having the special property that they only connect to pins and
-pads at their end points.  Rat-lines are drawn on the screen with a stippled pattern
+pads at their end points.  Rat-lines may be drawn differently to other lines
 to make them easier to identify since they have special behavior and cannot
 remain in a completed layout.
 Rat-lines are added in the minimum length straight-line tree pattern
@@ -2532,295 +2616,47 @@ see what actions are available.
 @cindex starting @pcb{}
 @cindex command-line options
 
-There are several resources which may be set or reset in addition to the
+The synopsis of the pcb command is:
+
+@code{pcb [OPTION ...] [LAYOUT-FILE.pcb]} to start the application in GUI mode,
+
+@noindent or
+
+@code{pcb [-h | -V | --copyright]} for a list of options, version, and copyright,
+
+@noindent or
+
+@code{pcb -p [OPTION ...] [LAYOUT-FILE.pcb]} to print a layout,
+
+@noindent or
+
+@code{pcb -x HID [OPTION ...] [LAYOUT-FILE.pcb]} to export.
+
+@noindent Possible values for the parameter @samp{HID} are:
+ @table @samp
+   @item bom
+    Export a bill of materials
+   @item gcode
+    Export to G-Code
+   @item gerber
+    Export RS-274X (Gerber)
+   @item nelma
+    Numerical analysis package export
+   @item png
+    export GIF/JPEG/PNG
+   @item ps
+    export postscript
+   @item eps
+    export encapsulated postscript
+@end table
+
+@noindent There are several resources which may be set or reset in addition to the
 standard toolkit command-line options. For a complete list refer to
 @ref{Resources}.
 
-The synopsis is:
 
-@code{pcb [-option ...] [-toolkit_option ...] [layout-file]}
+@include options.texi
 
-or
-
-@code{pcb -specialoption}
-
-@menu
-* Options::                @pcb{} command-line options.
-* Special Options::        Version and copyright information.
-@end menu
-
-@node Options
-@section Options
-
-@table @samp
-
-@vindex allDirectionLines
-@cindex line clipping
-@cindex clipping of lines
-@findex -alldirections
-@findex +alldirections
-@item -alldirections/+alldirections
-Disables or enables line clipping to 45 degree angles. Overwrites the
-resource @emph{allDirectionLines}.
-
-@vindex backgroundImage
-@cindex background
-@findex -background
-@item -background file
-Selects a PPM file to be displayed as the board background (for tracing).
-See backgroundImage in @ref{Resources} for details.
-
-@vindex backupInterval
-@cindex backup
-@findex -backup
-@item -backup value
-Time between two backups in seconds. Passing zero disables the backup feature.
-Overwrites the resource @emph{backupInterval}.
-
-@vindex charactersPerLine
-@cindex characters per line
-@cindex length of outputline
-@cindex outputline, length of
-@findex -c
-@item -c value
-Number of characters per output line. The resource @emph{charactersPerLine} is
-overwritten.
-
-@vindex fontFile
-@vindex default font
-@findex -fontfile
-@cindex default font
-@cindex symbols
-@item -fontfile filename
-The default set of symbols (font) for a new layout is read from this file.
-All directories as defined by the resource @emph{fontPath} are scanned
-for the file. The scan is only performed if the filename doesn't contain
-a directory component. The @emph{fontFile} resource is changed.
-
-@vindex elementCommand
-@findex -lelement
-@cindex element, command
-@cindex element, files
-@cindex loading elements
-@cindex preprocessing element data
-@cindex unix command
-@item -lelement command-line
-Sets the command to be executed when an element is loaded from a file to the
-paste buffer. The command may contain %f and %p to pass the requested filename
-and the searchpath to the command. It must write the data to its
-standard output. The related resource is @emph{elementCommand}.
-
-@vindex fileCommand
-@findex -lfile
-@cindex file load command
-@cindex layout files
-@cindex loading layouts
-@cindex preprocessing layout data
-@cindex unix command
-@item -lfile command-line
-Sets the command to be executed when a new layout is loaded from a file.
-The command may contain %f and %p to pass the requested filename
-and the searchpath to the command. It must write the data to its
-standard output. The related resource is @emph{fileCommand}.
-
-@vindex fontCommand
-@cindex font command
-@cindex font files
-@cindex loading fonts
-@cindex loading symbols
-@cindex preprocessing font data
-@cindex unix command
-@findex -lfont
-@item -lfont command-line
-Sets the command to be executed when a font is loaded from a file.
-The command may contain %f and %p to pass the requested filename
-and the searchpath to the command. It must write the data to its
-standard output. The related resource is @emph{fontCommand}.
-
-@vindex layerGroups
-@cindex layers, groups
-@cindex groups
-@findex -lg
-@item -lg layergroups
-This option overwrites the resource @emph{layerGroups}. See its description
-for more information. The value is used for new layouts only.
-
-@vindex libraryFilename
-@findex -libname
-@cindex library name
-@item -libname filename
-The default filename for the library. Overwrites the resource
-@emph{libraryFilename}.
-
-@vindex libraryPath
-@findex -libpath
-@cindex library search path
-@item -libpath path
-The default search path for the the library. Overwrites the resource
-@emph{libraryPath}.
-
-@vindex libraryCommand
-@cindex library command
-@cindex loading elements
-@cindex preprocessing element data
-@cindex unix command
-@findex -llib
-@item -llib command-line
-Sets the command to be executed when an element is loaded from the library.
-The command may contain %f and %p to pass the requested filename
-and the searchpath to the command. %a is replaces by the three arguments
-@emph{template}, @emph{value} and @emph{package}. The command must write
-the data to its standard output. The related resource is @emph{libraryCommand}.
-
-@vindex libraryContentsCommand
-@cindex library contents command
-@cindex listing libraries
-@cindex unix command
-@findex -llibcont
-@item -llibcont command-line
-The command lists the contents of the library.
-The command may contain %f and %p to pass the library filename
-and the searchpath to the command. Also refer to @ref{Library File}
-and @ref{Library Contents File}.
-The related resource is @emph{libraryContentsCommand}.
-
-@cindex log window
-@cindex messages
-@findex -loggeometry
-@item -loggeometry geometry
-Determines the geometry of the log window.
-
-@vindex pinoutNameLength
-@findex -pnl
-@cindex namelength of pins
-@cindex pin, name of
-@cindex length of a pin name
-@item -pnl value
-Restricts the displayed length of the name of a pin in the pinout window to
-the passed value. See also, the resource @emph{pinoutNameLength}.
-
-@vindex pinoutZoom
-@cindex pinout, zoomfactor of display
-@cindex zoom of pinout window
-@findex -pz
-@item -pz value
-Sets the zoom factor for the pinout window according to the formula:
-scale = 1:(2 power value). The related resource is @emph{pinoutZoom}.
-
-@vindex resetAfterElement
-@findex -reset
-@findex +reset
-@cindex connections, reseting after element
-@cindex reseting found connections
-@item -reset/+reset
-If enabled, all connections are reset after each element is scanned.
-This feature is only used while scanning connections to all elements.
-See also, @emph{resetAfterElement}.
-
-@vindex ringBellWhenFinished
-@findex -ring
-@findex +ring
-@cindex keyboard bell
-@item -ring/+ring
-Overrides the resource @emph{ringBellWhenFinished}. If enabled, the bell
-sounds when connection searching has finished.
-
-@vindex routeStyle
-@findex -rs
-@cindex routing style
-@item -rs string
-Overrides the resource @emph{routeStyle}. The string defines a colon
-separated list of route styles. The route styles consist of a
-comma separated list of name, line thickness, via diameter, and via drill size.
-e.g. "Fat,50,100,40:Skinny,8,35,20:75Ohm,110,110,20"
-
-@vindex saveLastCommand
-@cindex saving last entered user command
-@cindex inputfield, saving entered command-line
-@findex -s
-@findex +s
-@item -s/+s
-Enables/Disables the saving of the previous commandline. Overrides the
-@emph{saveLastCommand} resource.
-
-@vindex saveInTMP
-@findex -save
-@findex +save
-@cindex backup
-@cindex saving layouts
-@cindex preventing loss of data
-@cindex temporary files
-@cindex /tmp
-@cindex directory /tmp
-@item -save/+save
-See the resource description of @emph{saveInTMP} for details.
-
-@vindex saveCommand
-@cindex file save command
-@cindex layout files
-@cindex saving layouts
-@cindex postprocessing layout data
-@cindex unix command
-@findex -sfile
-@item -sfile command-line
-Sets the command to be executed when an layout file is saved.
-The command may contain %f which is replaced by the filename. The command
-must read its data from the standard input.
-The resource @emph{saveCommand} is overwritten.
-
-@vindex scriptFilename
-@findex -script
-@cindex startup actions script
-@item -script filename
-Specifies a script file containing PCB actions to be executed
-upon startup.  Overwrites the resource
-@emph{scriptFilename}.
-
-@vindex size
-@cindex size of a layout
-@cindex layout size
-@findex -size
-@item -size <width>x<height>
-Overrides the resource @emph{size} which determines the maximum size
-of a layout.
-
-@vindex volume
-@cindex speaker volume
-@cindex volume of speaker
-@findex -v
-@item -v value
-Sets the volume of the X speaker. The value is passed to @code{XBell()} and
-must be in the range -100..100.
-
-@end table
-
-
-@node Special Options
-@section Special Options
-
-There are some special options available in addition to normal command line
-options. Each of these must be the only option specified on a command line.
-The available special options are:
-
-@table @samp
-
-@findex -copyright
-@findex --copyright
-@cindex copyright
-@item -copyright
-Prints out the copyright notice and terminates.
-
-@findex -version
-@cindex release, current
-@cindex version, current
-@item -version
-Prints out the version ID and terminates.
-
-@findex -help
-@item -help
-Prints out the usage message and terminates.
-
-@end table
 
 
 @c --------------------------- chapter 5 -------------------------------
@@ -2898,22 +2734,13 @@ default (this may have been changed at compilation time via the
 @code{BACKUP_NAME}
 variable in @file{globalconfig.h}).
 @emph{%i} is replaced by the process ID.
-See also, the command-line option @emph{-backup}.
+See also, the command-line option @emph{--backup-interval}.
 
 @vindex bloat
 @cindex bloat
 @cindex drc
 @item Bloat (dimension)
 Specifies the minimum spacing design rule in mils.
-
-@vindex charactersPerLine
-@cindex characters per line
-@cindex linelength
-@cindex list of connections
-@item charactersPerLine (int)
-@pcb{} uses this value to determine the page width when creating lists.
-N, the number of characters per line, defaults to @emph{80}.
-See also, the command-line option @emph{-c}.
 
 @vindex connectedColor
 @cindex colors
@@ -2959,7 +2786,7 @@ to its standard output. The default value is
     M4PATH="%p";export M4PATH;echo 'include(%f)' | m4
 @end example
 Using the GNU version of @code{m4} is highly recommended.
-See also, the command-line option @emph{-lelement}.
+See also, the command-line option @emph{--element-command}.
 
 @vindex elementPath
 @cindex searchpath for element files
@@ -2989,7 +2816,7 @@ and the current search path (%p). The default value is:
 @example
     cat %f
 @end example
-See also, the command-line option @emph{-lfile}.
+See also, the command-line option @emph{--file-command}.
 
 @vindex filePath
 @cindex searchpath for layout files
@@ -3020,7 +2847,7 @@ output. This command defaults to
 @example
     cat %f
 @end example
-See also, the command-line option @emph{-lfont}.
+See also, the command-line option @emph{--font-command}.
 
 @vindex fontFile
 @cindex default font
@@ -3031,7 +2858,6 @@ in the directories as defined by the resource @emph{fontPath}.
 Searching is only performed if the filename does not contain a directory
 component.
 The default filename is @file{default_font}.
-See also, the command-line option @emph{-fontfile}.
 
 @vindex fontPath
 @cindex searchpath for font files
@@ -3063,7 +2889,7 @@ create its own colormap. The default setting is @emph{XtDefaultForeground}.
 @vindex invisibleObjectsColor
 @cindex colors
 @cindex element, color
-@item elementColor (color)
+@item invisibleObjectsColor (color)
 Elements located on the opposite side of the board are drawn in this color.
 The default is @emph{XtDefaultForeground}.
 
@@ -3085,7 +2911,6 @@ layer numbers (1..MAX_LAYER). All layers within one group are switched on/off
 together. The default setting is @emph{1:2:3:...:MAX_LAYER} which means
 all layers are handled separately. Grouping layers one to three looks like
 @emph{1,2,3:4:...:MAX_LAYER}
-See also, the command-line option @emph{-lg}.
 
 @vindex layerName
 @cindex layer, name of
@@ -3189,7 +3014,6 @@ value. The values are preset to @emph{XtdefaultFont}.
 This resource limits the number of characters which are displayed for
 pin names in the pinout window. By default the string length is limited
 to @emph{eight} characters per name.
-See also, the command-line option @emph{-pnl}.
 
 @vindex pinoutOffsetX
 @vindex pinoutOffsetY
@@ -3216,7 +3040,6 @@ They default to @emph{X:50} and @emph{Y:0}.
 Sets the zoom factor for the pinout window according to the formula:
 scale = 1:(2 power value). Its default value is @emph{two} which results in
 a @emph{1:4} scale.
-See also, the command-line option @emph{-pz}.
 
 @vindex printCommand
 @cindex printing
@@ -3253,14 +3076,13 @@ If set to @emph{true}, all found connections will be reset before a new
 element is scanned. This will produce long lists when scanning the whole
 layout for connections. The resource is set to @emph{false} by default.
 The feature is only used while looking up connections of all elements.
-See also, the command-line option @emph{-reset, +reset}.
 
 @vindex ringBellWhenFinished
 @cindex keyboard bell
 @item ringBellWhenFinished (boolean)
 Whether to ring the bell (the default) when a possibly lengthy operation
 has finished or not.
-See also, the command-line option @emph{-ring, +ring}.
+See also, the command-line option @emph{--ring-bell-finished}.
 
 @vindex routeStyle
 @cindex routing style
@@ -3269,7 +3091,7 @@ Default values for the menu of routing styles (seen in the sizes menu).
 The string is a comma separated list of name, line thickness,
 via diameter, and via drill size.
 e.g. "Fat,50,100,40:Skinny,8,35,20:75Ohm,110,110,20"
-See also, the command-line option @emph{-rs} and @emph{Sizes Menu}
+See also, the command-line option @emph{--route-styles} and @emph{Sizes Menu}
 
 @vindex rubberBandMode
 @cindex move
@@ -3293,7 +3115,7 @@ its standard input.  The default command is:
 @example
     cat - > %f
 @end example
-See also, the command-line option @emph{-sfile}.
+See also, the command-line option @emph{--save-command}.
 
 @vindex saveInTMP
 @cindex backup
@@ -3311,7 +3133,7 @@ with the @code{EMERGENCY_NAME} variable in @file{globalconfig.h}.
 @emph{%i} is replaced by the process ID.
 As an example, loading a new layout when the old one hasn't been saved would
 use this resource.
-See also, the command-line option @emph{-save, +save}.
+See also, the command-line option @emph{--save-in-tmp}.
 
 @vindex saveLastCommand
 @cindex saving last entered user command
@@ -3319,7 +3141,7 @@ See also, the command-line option @emph{-save, +save}.
 @item saveLastCommand (boolean)
 Enables the saving of the last entered user command. The option is
 @emph{disabled} by default.
-See also, the command-line option @emph{-s, +s}.
+See also, the command-line option @emph{--save-last-command}.
 
 @vindex shrink
 @cindex shrink
@@ -3454,7 +3276,7 @@ Adds rat-lines to the layout using the loaded netlist file (see the @emph{:rn},
 line thickness shown in the status line.
 Only missing connectivity is added by the
 AddRats command so if, for example, the layout is complete nothing will be added.
-Rat lines are drawn on the screen with a stippled pattern
+Rat lines may be drawn different to other lines on the screen
 to make them easier to identify since they cannot appear in a completed layout.
 The rat-lines are added in the minimum length straight-line tree pattern
 (always ending on pins or pads) that satisfies the missing connectivity in the circuit.
@@ -4355,7 +4177,7 @@ The following sections provide the necessary information about the syntax of
 the files.
 Netlist files are not created by @pcb{}, but it does use them. For information
 on the format of a netlist file see the @emph{:rn},
-@ref{User Commands}. Rat lines are added on the current layer using the current
+@ref{User Commands}.
 The commands described allow you to add almost any additional
 functionality you may need. Examples are compressed read and write access as
 well as archives. The commands themselves are defined by the resources
@@ -4508,7 +4330,8 @@ Netlists read by @pcb{} must have this simple text form:
 netname [style] NAME-PINNUM NAME2-PINNUM2 NAME3-PINNUM3 ... [\]
 @end example
 
-@exdent for each net on the layout.
+@noindent
+for each net on the layout.
 where "netname" is the name of the net which must be unique for each
 net, [style] is an optional route-style name,
 NAME is the layout-name name given to an element,
@@ -5066,7 +4889,7 @@ save the new footprint to a file.
 @item In the @pcb{} program, instantiate the footprint you wish to modify.
 @item Using the selection tool, select the footprint.
 @item Now left-click on the selected element, this brings up a popup menu, choose
-"Cut Selection to Buffer" from the popup menu.
+"Cut to Buffer" from the popup menu.
 @item Under the buffer menu, choose "break buffer element to pieces",
 and then left-click to place the broken apart footprint to an open area of
 the layout.  Note that you must use the items under the buffer menu, the
@@ -5689,18 +5512,19 @@ resources can be used to set the font, color, and spacing of buttons.
 As a convenience, ``fg'' can be used as an abbreviation for ``foreground''.
 
 Within the menu's resource file, Pcb will look for a few key named
-subresources.  At the moment, the only one it looks for is one called
-@code{MainMenu}.  This will be used for the main menu bar.  In the
-future, other named subresources will be used for popup resources.
+subresources.  At the moment, there are just two key named subresources.
+@code{MainMenu} will be used for the main menu bar and @code{Mouse} will be
+used to define mouse actions.  In the future, other named subresources will
+be used for popup resources.
 
 Given all this, a small sample @file{pcb-menu.res} would be:
 
 @example
 MainMenu = @{
   @{File
-    @{"Load layout" Load(Layout)@}
+    @{"Open..." Load(Layout)@}
     -
-    @{"Quit Program" Quit() fg=red font=10x20@}
+    @{"Quit" Quit() fg=red font=10x20@}
   @}
 @}
 @end example
@@ -5731,13 +5555,6 @@ application itself.  The master file for all this is the file
 @file{src/pcb-menu.res} in the Pcb source tree.  This master source is
 used to create the internal menu definition as well as being installed
 in @file{$pcblibdir}.
-
-You can view the internal menu definition (the default) by running
-@file{pcb} with the @code{-dumpmenu} option, like this:
-
-@example
-pcb -dumpmenu
-@end example
 
 @c --------------------------- Appendix C -------------------------------
 @node Regular Expressions
@@ -5776,7 +5593,7 @@ Matches 0 or 1 instances of preceding character.
 Matches any single character other than the newline character.
 
 @item |
-The vertical vertical bar is the alternation operator. It combines two
+The vertical bar is the alternation operator. It combines two
 regular expressions. The result matches if either of them matches.
 
 @item \
@@ -5894,16 +5711,14 @@ R34, but not D34
 @section File Format
 The centroid output file is in a standard comma seperated values (CSV)
 format.  Comment lines begin with a ``#''.  The output file contains a
-header with an RCS Id tag (useful for those who will check the file
-into a version control system), a version number for the file format,
-some comments containing the author and title of the board, and a
-comment describing the remainder of the file format.
+header with a version number for the file format, some comments
+containing the author and title of the board, and a comment describing
+the remainder of the file format.
 
 An example centroid file is shown below.
 
 @example
 
-# @verb{ $ }Id@verb{ $ }
 # PcbXY Version 1.0
 # Date: Fri Jul 22 03:40:08 2005 UTC
 # Author: PCB User
@@ -5949,6 +5764,73 @@ examined to see which quadrant it is located in.  The same rules apply
 for the definitions of rotation.  In other words, when pin #1 is at
 the centroid of the part and pin #2 is in the upper left quadrant, the
 rotation is declared to be zero degrees.
+
+@c --------------------------- Appendix -- Annotation File Format ----------------------
+@node Annotation File Format
+@appendix Annotation File Format
+@cindex annotation file format
+@cindex backannotation file format
+
+@section Overview
+
+@section File Format
+The annotation output file an ASCII file that can be used to communicate 
+layout changes that affect the netlist back to a schematic tool.  Currently
+the only place this file is used is if when the Renumber() action is called
+within Pcb.  Renumber() will renumber all the reference designators (instance
+names) in the layout.  The result of the renumbering will be written out to 
+an annotation file which can be used to propagate the changes to the schematic
+sources.  See @ref{Renumber Action} for details on the Renumber() action.  If you
+are using gschem (part of gEDA/gaf) as your schematic entry tool then refer
+to pcb_backannotate(1) for details on how to use the annotation file to make
+the changes to the schematics.
+
+The annotation file format is fairly simple.  Each line consists of a command followed
+by arguments.  Blank lines and lines consisting of only whitespace are ignored.
+There are no line continuations.
+
+An example annotation file is shown below.
+@example
+
+*COMMENT* PCB Annotation File
+*FILEVERSION* 20061031
+*RENAME* "C17" "C1"
+*RENAME* "U5" "U1"
+*RENAME* "U6" "U2"
+*RENAME* "C21" "C2"
+*RENAME* "R14" "R1"
+*RENAME* "C7" "C3"
+*RENAME* "C8" "C4"
+*RENAME* "C6" "C5"
+
+@end example
+
+@subsection *COMMENT*
+Command for a comment.  The text of a comment is ignored by tools which process
+the annotation file.
+@cartouche
+@format
+*COMMENT* text
+@end format
+@end cartouche
+
+@subsection *FILEVERSION*
+Indicates what version of the annotation file is in use.  The date code corresponds to the 
+date when the current version was added to the Pcb sources.  
+@cartouche
+@format
+*FILEVERSION* datecode
+@end format
+@end cartouche
+
+@subsection *RENAME*
+Renames an element.  The arguments are enclosed in double quotes and are the original name
+and the new name.
+@cartouche
+@format
+*RENAME* ``old'' ``new''
+@end format
+@end cartouche
 
 @c --------------------------- Appendix -- Actions ----------------------
 @node Action Reference

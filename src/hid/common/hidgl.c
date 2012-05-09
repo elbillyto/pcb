@@ -38,17 +38,24 @@
  *   http://www.opengl.org/registry/ABI/
  */
 #define GL_GLEXT_PROTOTYPES 1
-#include <GL/gl.h>
-#include <GL/glu.h>
+#ifdef HAVE_OPENGL_GL_H
+#   include <OpenGL/gl.h>
+#else
+#   include <GL/gl.h>
+#endif
+
+#ifdef HAVE_OPENGL_GLU_H
+#   include <OpenGL/glu.h>
+#else
+#   include <GL/glu.h>
+#endif
 
 #include "action.h"
 #include "crosshair.h"
 #include "data.h"
-#include "draw.h"
 #include "error.h"
 #include "global.h"
 #include "mymem.h"
-#include "draw.h"
 #include "clip.h"
 
 #include "hid.h"
@@ -110,27 +117,27 @@ hidgl_draw_grid (BoxType *drawn_area)
 {
   static GLfloat *points = 0;
   static int npoints = 0;
-  int x1, y1, x2, y2, n, i;
+  Coord x1, y1, x2, y2, n, i;
   double x, y;
 
   if (!Settings.DrawGrid)
     return;
 
-  x1 = GRIDFIT_X (MAX (0, drawn_area->X1), PCB->Grid);
-  y1 = GRIDFIT_Y (MAX (0, drawn_area->Y1), PCB->Grid);
-  x2 = GRIDFIT_X (MIN (PCB->MaxWidth, drawn_area->X2), PCB->Grid);
-  y2 = GRIDFIT_Y (MIN (PCB->MaxHeight, drawn_area->Y2), PCB->Grid);
+  x1 = GridFit (MAX (0, drawn_area->X1), PCB->Grid, PCB->GridOffsetX);
+  y1 = GridFit (MAX (0, drawn_area->Y1), PCB->Grid, PCB->GridOffsetY);
+  x2 = GridFit (MIN (PCB->MaxWidth, drawn_area->X2), PCB->Grid, PCB->GridOffsetX);
+  y2 = GridFit (MIN (PCB->MaxHeight, drawn_area->Y2), PCB->Grid, PCB->GridOffsetY);
 
   if (x1 > x2)
     {
-      int tmp = x1;
+      Coord tmp = x1;
       x1 = x2;
       x2 = tmp;
     }
 
   if (y1 > y2)
     {
-      int tmp = y1;
+      Coord tmp = y1;
       y1 = y2;
       y2 = tmp;
     }
@@ -177,7 +184,7 @@ int calc_slices (float pix_radius, float sweep_angle)
 
 #define MIN_TRIANGLES_PER_CAP 3
 #define MAX_TRIANGLES_PER_CAP 90
-static void draw_cap (double width, int x, int y, double angle, double scale)
+static void draw_cap (Coord width, Coord x, Coord y, Angle angle, double scale)
 {
   float last_capx, last_capy;
   float capx, capy;
@@ -205,10 +212,10 @@ static void draw_cap (double width, int x, int y, double angle, double scale)
 }
 
 void
-hidgl_draw_line (int cap, double width, int x1, int y1, int x2, int y2, double scale)
+hidgl_draw_line (int cap, Coord width, Coord x1, Coord y1, Coord x2, Coord y2, double scale)
 {
   double angle;
-  float deltax, deltay, length;
+  double deltax, deltay, length;
   float wdx, wdy;
   int circular_caps = 0;
   int hairline = 0;
@@ -226,7 +233,6 @@ hidgl_draw_line (int cap, double width, int x1, int y1, int x2, int y2, double s
 
   if (length == 0) {
     /* Assume the orientation of the line is horizontal */
-    angle = 0;
     wdx = -width / 2.;
     wdy = 0;
     length = 1.;
@@ -235,15 +241,9 @@ hidgl_draw_line (int cap, double width, int x1, int y1, int x2, int y2, double s
   } else {
     wdy = deltax * width / 2. / length;
     wdx = -deltay * width / 2. / length;
-
-    if (deltay == 0.)
-      angle = (deltax < 0) ? 270. : 90.;
-    else
-      angle = 180. / M_PI * atanl (deltax / deltay);
-
-    if (deltay < 0)
-      angle += 180.;
   }
+
+  angle = -180. / M_PI * atan2 (deltay, deltax);
 
   switch (cap) {
     case Trace_Cap:
@@ -271,16 +271,16 @@ hidgl_draw_line (int cap, double width, int x1, int y1, int x2, int y2, double s
   /* Don't bother capping hairlines */
   if (circular_caps && !hairline)
     {
-      draw_cap (width, x1, y1, angle, scale);
-      draw_cap (width, x2, y2, angle + 180., scale);
+      draw_cap (width, x1, y1, angle + 90., scale);
+      draw_cap (width, x2, y2, angle - 90., scale);
     }
 }
 
 #define MIN_SLICES_PER_ARC 6
 #define MAX_SLICES_PER_ARC 360
 void
-hidgl_draw_arc (double width, int x, int y, int rx, int ry,
-                int start_angle, int delta_angle, double scale)
+hidgl_draw_arc (Coord width, Coord x, Coord y, Coord rx, Coord ry,
+                Angle start_angle, Angle delta_angle, double scale)
 {
   float last_inner_x, last_inner_y;
   float last_outer_x, last_outer_y;
@@ -357,7 +357,7 @@ hidgl_draw_arc (double width, int x, int y, int rx, int ry,
 }
 
 void
-hidgl_draw_rect (int x1, int y1, int x2, int y2)
+hidgl_draw_rect (Coord x1, Coord y1, Coord x2, Coord y2)
 {
   glBegin (GL_LINE_LOOP);
   glVertex3f (x1, y1, global_depth);
@@ -369,7 +369,7 @@ hidgl_draw_rect (int x1, int y1, int x2, int y2)
 
 
 void
-hidgl_fill_circle (int vx, int vy, int vr, double scale)
+hidgl_fill_circle (Coord vx, Coord vy, Coord vr, double scale)
 {
 #define MIN_TRIANGLES_PER_CIRCLE 6
 #define MAX_TRIANGLES_PER_CIRCLE 360
@@ -514,11 +514,11 @@ myVertex (GLdouble *vertex_data)
         }
     }
   else
-    printf ("Vertex recieved with unknown type\n");
+    printf ("Vertex received with unknown type\n");
 }
 
 void
-hidgl_fill_polygon (int n_coords, int *x, int *y)
+hidgl_fill_polygon (int n_coords, Coord *x, Coord *y)
 {
   int i;
   GLUtesselator *tobj;
@@ -529,10 +529,10 @@ hidgl_fill_polygon (int n_coords, int *x, int *y)
   vertices = malloc (sizeof(GLdouble) * n_coords * 3);
 
   tobj = gluNewTess ();
-  gluTessCallback(tobj, GLU_TESS_BEGIN, myBegin);
-  gluTessCallback(tobj, GLU_TESS_VERTEX, myVertex);
-  gluTessCallback(tobj, GLU_TESS_COMBINE, myCombine);
-  gluTessCallback(tobj, GLU_TESS_ERROR, myError);
+  gluTessCallback(tobj, GLU_TESS_BEGIN,   (_GLUfuncptr)myBegin);
+  gluTessCallback(tobj, GLU_TESS_VERTEX,  (_GLUfuncptr)myVertex);
+  gluTessCallback(tobj, GLU_TESS_COMBINE, (_GLUfuncptr)myCombine);
+  gluTessCallback(tobj, GLU_TESS_ERROR,   (_GLUfuncptr)myError);
 
   gluTessBeginPolygon (tobj, NULL);
   gluTessBeginContour (tobj);
@@ -646,10 +646,10 @@ hidgl_fill_pcb_polygon (PolygonType *poly, const BoxType *clip_box, double scale
 
   info.vertices = malloc (sizeof(GLdouble) * vertex_count * 3);
   info.tobj = gluNewTess ();
-  gluTessCallback(info.tobj, GLU_TESS_BEGIN, myBegin);
-  gluTessCallback(info.tobj, GLU_TESS_VERTEX, myVertex);
-  gluTessCallback(info.tobj, GLU_TESS_COMBINE, myCombine);
-  gluTessCallback(info.tobj, GLU_TESS_ERROR, myError);
+  gluTessCallback(info.tobj, GLU_TESS_BEGIN,   (_GLUfuncptr)myBegin);
+  gluTessCallback(info.tobj, GLU_TESS_VERTEX,  (_GLUfuncptr)myVertex);
+  gluTessCallback(info.tobj, GLU_TESS_COMBINE, (_GLUfuncptr)myCombine);
+  gluTessCallback(info.tobj, GLU_TESS_ERROR,   (_GLUfuncptr)myError);
 
   glPushAttrib (GL_STENCIL_BUFFER_BIT);                 /* Save the write mask etc.. for final restore */
   glEnable (GL_STENCIL_TEST);
@@ -693,7 +693,7 @@ hidgl_fill_pcb_polygon (PolygonType *poly, const BoxType *clip_box, double scale
 }
 
 void
-hidgl_fill_rect (int x1, int y1, int x2, int y2)
+hidgl_fill_rect (Coord x1, Coord y1, Coord x2, Coord y2)
 {
   hidgl_ensure_triangle_space (&buffer, 2);
   hidgl_add_triangle (&buffer, x1, y1, x1, y2, x2, y2);

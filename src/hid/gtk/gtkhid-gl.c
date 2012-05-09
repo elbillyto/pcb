@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -17,8 +15,14 @@
  * in order to get prototypes:
  *   http://www.opengl.org/registry/ABI/
  */
+
 #define GL_GLEXT_PROTOTYPES 1
-#include <GL/gl.h>
+#ifdef HAVE_OPENGL_GL_H
+#   include <OpenGL/gl.h>
+#else
+#   include <GL/gl.h>
+#endif
+
 #include <gtk/gtkgl.h>
 #include "hid/common/hidgl.h"
 #include "hid/common/draw_helpers.h"
@@ -26,9 +30,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
-
 
 extern HID ghid_hid;
 
@@ -47,6 +48,15 @@ typedef struct render_priv {
   int subcomposite_stencil_bit;
   char *current_colorname;
   double current_alpha_mult;
+
+  /* Feature for leading the user to a particular location */
+  guint lead_user_timeout;
+  GTimer *lead_user_timer;
+  bool lead_user;
+  Coord lead_user_radius;
+  Coord lead_user_x;
+  Coord lead_user_y;
+
 } render_priv;
 
 
@@ -56,11 +66,14 @@ typedef struct hid_gc_struct
 
   const char *colorname;
   double alpha_mult;
-  gint width;
+  Coord width;
   gint cap, join;
-  gchar xor;
 }
 hid_gc_struct;
+
+
+static void draw_lead_user (render_priv *priv);
+
 
 static void
 start_subcomposite (void)
@@ -179,7 +192,7 @@ ghid_make_gc (void)
 }
 
 static void
-ghid_draw_grid (BoxTypePtr drawn_area)
+ghid_draw_grid (BoxType *drawn_area)
 {
   if (Vz (PCB->Grid) < MIN_GRID_DISTANCE)
     return;
@@ -342,8 +355,6 @@ typedef struct
 {
   int color_set;
   GdkColor color;
-  int xor_set;
-  GdkColor xor_color;
   double red;
   double green;
   double blue;
@@ -406,20 +417,6 @@ set_gl_color_for_gc (hidGC gc)
           cc->blue  = cc->color.blue  / 65535.;
           cc->color_set = 1;
         }
-      if (gc->xor)
-        {
-          if (!cc->xor_set)
-            {
-              cc->xor_color.red = cc->color.red ^ gport->bg_color.red;
-              cc->xor_color.green = cc->color.green ^ gport->bg_color.green;
-              cc->xor_color.blue = cc->color.blue ^ gport->bg_color.blue;
-              gdk_color_alloc (gport->colormap, &cc->xor_color);
-              cc->red   = cc->color.red   / 65535.;
-              cc->green = cc->color.green / 65535.;
-              cc->blue  = cc->color.blue  / 65535.;
-              cc->xor_set = 1;
-            }
-        }
       r = cc->red;
       g = cc->green;
       b = cc->blue;
@@ -469,7 +466,7 @@ ghid_set_line_cap (hidGC gc, EndCapStyle style)
 }
 
 void
-ghid_set_line_width (hidGC gc, int width)
+ghid_set_line_width (hidGC gc, Coord width)
 {
   gc->width = width;
 }
@@ -491,7 +488,7 @@ ghid_set_draw_faded (hidGC gc, int faded)
 }
 
 void
-ghid_set_line_cap_angle (hidGC gc, int x1, int y1, int x2, int y2)
+ghid_set_line_cap_angle (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   printf ("ghid_set_line_cap_angle() -- not implemented\n");
 }
@@ -521,25 +518,25 @@ use_gc (hidGC gc)
 }
 
 void
-ghid_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
+ghid_draw_line (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   USE_GC (gc);
 
-  hidgl_draw_line (gc->cap, gc->width, x1, y1, x2, y2, gport->zoom);
+  hidgl_draw_line (gc->cap, gc->width, x1, y1, x2, y2, gport->view.coord_per_px);
 }
 
 void
-ghid_draw_arc (hidGC gc, int cx, int cy, int xradius, int yradius,
-                         int start_angle, int delta_angle)
+ghid_draw_arc (hidGC gc, Coord cx, Coord cy, Coord xradius, Coord yradius,
+                         Angle start_angle, Angle delta_angle)
 {
   USE_GC (gc);
 
   hidgl_draw_arc (gc->width, cx, cy, xradius, yradius,
-                  start_angle, delta_angle, gport->zoom);
+                  start_angle, delta_angle, gport->view.coord_per_px);
 }
 
 void
-ghid_draw_rect (hidGC gc, int x1, int y1, int x2, int y2)
+ghid_draw_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   USE_GC (gc);
 
@@ -548,16 +545,16 @@ ghid_draw_rect (hidGC gc, int x1, int y1, int x2, int y2)
 
 
 void
-ghid_fill_circle (hidGC gc, int cx, int cy, int radius)
+ghid_fill_circle (hidGC gc, Coord cx, Coord cy, Coord radius)
 {
   USE_GC (gc);
 
-  hidgl_fill_circle (cx, cy, radius, gport->zoom);
+  hidgl_fill_circle (cx, cy, radius, gport->view.coord_per_px);
 }
 
 
 void
-ghid_fill_polygon (hidGC gc, int n_coords, int *x, int *y)
+ghid_fill_polygon (hidGC gc, int n_coords, Coord *x, Coord *y)
 {
   USE_GC (gc);
 
@@ -569,7 +566,7 @@ ghid_fill_pcb_polygon (hidGC gc, PolygonType *poly, const BoxType *clip_box)
 {
   USE_GC (gc);
 
-  hidgl_fill_pcb_polygon (poly, clip_box, gport->zoom);
+  hidgl_fill_pcb_polygon (poly, clip_box, gport->view.coord_per_px);
 }
 
 void
@@ -582,7 +579,7 @@ ghid_thindraw_pcb_polygon (hidGC gc, PolygonType *poly, const BoxType *clip_box)
 }
 
 void
-ghid_fill_rect (hidGC gc, int x1, int y1, int x2, int y2)
+ghid_fill_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   USE_GC (gc);
 
@@ -624,119 +621,99 @@ ghid_notify_mark_change (bool changes_complete)
 }
 
 static void
-draw_right_cross (gint x, gint y)
+draw_right_cross (gint x, gint y, gint z)
 {
-  glVertex2i (x, 0);
-  glVertex2i (x, gport->height);
-  glVertex2i (0, y);
-  glVertex2i (gport->width, y);
+  glVertex3i (x, 0, z);
+  glVertex3i (x, PCB->MaxHeight, z);
+  glVertex3i (0, y, z);
+  glVertex3i (PCB->MaxWidth, y, z);
 }
 
 static void
-draw_slanted_cross (gint x, gint y)
+draw_slanted_cross (gint x, gint y, gint z)
 {
   gint x0, y0, x1, y1;
 
-  x0 = x + (gport->height - y);
-  x0 = MAX(0, MIN (x0, gport->width));
+  x0 = x + (PCB->MaxHeight - y);
+  x0 = MAX(0, MIN (x0, PCB->MaxWidth));
   x1 = x - y;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + (gport->width - x);
-  y0 = MAX(0, MIN (y0, gport->height));
+  x1 = MAX(0, MIN (x1, PCB->MaxWidth));
+  y0 = y + (PCB->MaxWidth - x);
+  y0 = MAX(0, MIN (y0, PCB->MaxHeight));
   y1 = y - x;
-  y1 = MAX(0, MIN (y1, gport->height));
-  glVertex2i (x0, y0);
-  glVertex2i (x1, y1);
+  y1 = MAX(0, MIN (y1, PCB->MaxHeight));
+  glVertex3i (x0, y0, z);
+  glVertex3i (x1, y1, z);
 
-  x0 = x - (gport->height - y);
-  x0 = MAX(0, MIN (x0, gport->width));
+  x0 = x - (PCB->MaxHeight - y);
+  x0 = MAX(0, MIN (x0, PCB->MaxWidth));
   x1 = x + y;
-  x1 = MAX(0, MIN (x1, gport->width));
+  x1 = MAX(0, MIN (x1, PCB->MaxWidth));
   y0 = y + x;
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - (gport->width - x);
-  y1 = MAX(0, MIN (y1, gport->height));
-  glVertex2i (x0, y0);
-  glVertex2i (x1, y1);
+  y0 = MAX(0, MIN (y0, PCB->MaxHeight));
+  y1 = y - (PCB->MaxWidth - x);
+  y1 = MAX(0, MIN (y1, PCB->MaxHeight));
+  glVertex3i (x0, y0, z);
+  glVertex3i (x1, y1, z);
 }
 
 static void
-draw_dozen_cross (gint x, gint y)
+draw_dozen_cross (gint x, gint y, gint z)
 {
   gint x0, y0, x1, y1;
   gdouble tan60 = sqrt (3);
 
-  x0 = x + (gport->height - y) / tan60;
-  x0 = MAX(0, MIN (x0, gport->width));
+  x0 = x + (PCB->MaxHeight - y) / tan60;
+  x0 = MAX(0, MIN (x0, PCB->MaxWidth));
   x1 = x - y / tan60;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + (gport->width - x) * tan60;
-  y0 = MAX(0, MIN (y0, gport->height));
+  x1 = MAX(0, MIN (x1, PCB->MaxWidth));
+  y0 = y + (PCB->MaxWidth - x) * tan60;
+  y0 = MAX(0, MIN (y0, PCB->MaxHeight));
   y1 = y - x * tan60;
-  y1 = MAX(0, MIN (y1, gport->height));
-  glVertex2i (x0, y0);
-  glVertex2i (x1, y1);
+  y1 = MAX(0, MIN (y1, PCB->MaxHeight));
+  glVertex3i (x0, y0, z);
+  glVertex3i (x1, y1, z);
 
-  x0 = x + (gport->height - y) * tan60;
-  x0 = MAX(0, MIN (x0, gport->width));
+  x0 = x + (PCB->MaxHeight - y) * tan60;
+  x0 = MAX(0, MIN (x0, PCB->MaxWidth));
   x1 = x - y * tan60;
-  x1 = MAX(0, MIN (x1, gport->width));
-  y0 = y + (gport->width - x) / tan60;
-  y0 = MAX(0, MIN (y0, gport->height));
+  x1 = MAX(0, MIN (x1, PCB->MaxWidth));
+  y0 = y + (PCB->MaxWidth - x) / tan60;
+  y0 = MAX(0, MIN (y0, PCB->MaxHeight));
   y1 = y - x / tan60;
-  y1 = MAX(0, MIN (y1, gport->height));
-  glVertex2i (x0, y0);
-  glVertex2i (x1, y1);
+  y1 = MAX(0, MIN (y1, PCB->MaxHeight));
+  glVertex3i (x0, y0, z);
+  glVertex3i (x1, y1, z);
 
-  x0 = x - (gport->height - y) / tan60;
-  x0 = MAX(0, MIN (x0, gport->width));
+  x0 = x - (PCB->MaxHeight - y) / tan60;
+  x0 = MAX(0, MIN (x0, PCB->MaxWidth));
   x1 = x + y / tan60;
-  x1 = MAX(0, MIN (x1, gport->width));
+  x1 = MAX(0, MIN (x1, PCB->MaxWidth));
   y0 = y + x * tan60;
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - (gport->width - x) * tan60;
-  y1 = MAX(0, MIN (y1, gport->height));
-  glVertex2i (x0, y0);
-  glVertex2i (x1, y1);
+  y0 = MAX(0, MIN (y0, PCB->MaxHeight));
+  y1 = y - (PCB->MaxWidth - x) * tan60;
+  y1 = MAX(0, MIN (y1, PCB->MaxHeight));
+  glVertex3i (x0, y0, z);
+  glVertex3i (x1, y1, z);
 
-  x0 = x - (gport->height - y) * tan60;
-  x0 = MAX(0, MIN (x0, gport->width));
+  x0 = x - (PCB->MaxHeight - y) * tan60;
+  x0 = MAX(0, MIN (x0, PCB->MaxWidth));
   x1 = x + y * tan60;
-  x1 = MAX(0, MIN (x1, gport->width));
+  x1 = MAX(0, MIN (x1, PCB->MaxWidth));
   y0 = y + x / tan60;
-  y0 = MAX(0, MIN (y0, gport->height));
-  y1 = y - (gport->width - x) / tan60;
-  y1 = MAX(0, MIN (y1, gport->height));
-  glVertex2i (x0, y0);
-  glVertex2i (x1, y1);
+  y0 = MAX(0, MIN (y0, PCB->MaxHeight));
+  y1 = y - (PCB->MaxWidth - x) / tan60;
+  y1 = MAX(0, MIN (y1, PCB->MaxHeight));
+  glVertex3i (x0, y0, z);
+  glVertex3i (x1, y1, z);
 }
 
 static void
-draw_crosshair (gint x, gint y)
+draw_crosshair (render_priv *priv)
 {
-  static enum crosshair_shape prev = Basic_Crosshair_Shape;
-
-  draw_right_cross (x, y);
-  if (prev == Union_Jack_Crosshair_Shape)
-    draw_slanted_cross (x, y);
-  if (prev == Dozen_Crosshair_Shape)
-    draw_dozen_cross (x, y);
-  prev = Crosshair.shape;
-}
-
-#define VCW 16
-#define VCD 8
-
-void
-ghid_show_crosshair (gboolean paint_new_location)
-{
-  gint x, y;
-  gboolean draw_markers;
+  gint x, y, z;
   static int done_once = 0;
   static GdkColor cross_color;
-
-  if (!paint_new_location)
-    return;
 
   if (!done_once)
     {
@@ -744,47 +721,27 @@ ghid_show_crosshair (gboolean paint_new_location)
       /* FIXME: when CrossColor changed from config */
       ghid_map_color_string (Settings.CrossColor, &cross_color);
     }
-  x = DRAW_X (gport->x_crosshair);
-  y = DRAW_Y (gport->y_crosshair);
+
+  x = gport->crosshair_x;
+  y = gport->crosshair_y;
+  z = 0;
 
   glEnable (GL_COLOR_LOGIC_OP);
   glLogicOp (GL_XOR);
-
-  hidgl_flush_triangles (&buffer);
 
   glColor3f (cross_color.red / 65535.,
              cross_color.green / 65535.,
              cross_color.blue / 65535.);
 
-  if (x >= 0 && paint_new_location)
-    {
-      glBegin (GL_LINES);
-      draw_crosshair (x, y);
-      glEnd ();
-    }
+  glBegin (GL_LINES);
 
-  draw_markers = ghidgui->auto_pan_on && have_crosshair_attachments ();
-  if (x >= 0 && paint_new_location && draw_markers)
-    {
-      glBegin (GL_QUADS);
-      glVertex2i (0,                  y - VCD);
-      glVertex2i (0,                  y - VCD + VCW);
-      glVertex2i (VCD,                y - VCD + VCW);
-      glVertex2i (VCD,                y - VCD);
-      glVertex2i (gport->width,       y - VCD);
-      glVertex2i (gport->width,       y - VCD + VCW);
-      glVertex2i (gport->width - VCD, y - VCD + VCW);
-      glVertex2i (gport->width - VCD, y - VCD);
-      glVertex2i (x - VCD,            0);
-      glVertex2i (x - VCD,            VCD);
-      glVertex2i (x - VCD + VCW,      VCD);
-      glVertex2i (x - VCD + VCW,      0);
-      glVertex2i (x - VCD,            gport->height - VCD);
-      glVertex2i (x - VCD,            gport->height);
-      glVertex2i (x - VCD + VCW,      gport->height);
-      glVertex2i (x - VCD + VCW,      gport->height - VCD);
-      glEnd ();
-    }
+  draw_right_cross (x, y, z);
+  if (Crosshair.shape == Union_Jack_Crosshair_Shape)
+    draw_slanted_cross (x, y, z);
+  if (Crosshair.shape == Dozen_Crosshair_Shape)
+    draw_dozen_cross (x, y, z);
+
+  glEnd ();
 
   glDisable (GL_COLOR_LOGIC_OP);
 }
@@ -812,6 +769,14 @@ ghid_init_renderer (int *argc, char ***argv, GHidPort *port)
   ghid_hid.end_layer = ghid_end_layer;
   ghid_hid.fill_pcb_polygon = ghid_fill_pcb_polygon;
   ghid_hid.thindraw_pcb_polygon = ghid_thindraw_pcb_polygon;
+}
+
+void
+ghid_shutdown_renderer (GHidPort *port)
+{
+  ghid_cancel_lead_user ();
+  g_free (port->render_priv);
+  port->render_priv = NULL;
 }
 
 void
@@ -875,7 +840,11 @@ ghid_drawing_area_expose_cb (GtkWidget *widget,
                              GdkEventExpose *ev,
                              GHidPort *port)
 {
+  render_priv *priv = port->render_priv;
+  GtkAllocation allocation;
   BoxType region;
+
+  gtk_widget_get_allocation (widget, &allocation);
 
   ghid_start_drawing (port);
 
@@ -890,19 +859,27 @@ ghid_drawing_area_expose_cb (GtkWidget *widget,
   glEnable (GL_BLEND);
   glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  glViewport (0, 0, widget->allocation.width, widget->allocation.height);
+  glViewport (0, 0, allocation.width, allocation.height);
 
   glEnable (GL_SCISSOR_TEST);
   glScissor (ev->area.x,
-             widget->allocation.height - ev->area.height - ev->area.y,
+             allocation.height - ev->area.height - ev->area.y,
              ev->area.width, ev->area.height);
 
   glMatrixMode (GL_PROJECTION);
   glLoadIdentity ();
-  glOrtho (0, widget->allocation.width, widget->allocation.height, 0, 0, 100);
+  glOrtho (0, allocation.width, allocation.height, 0, 0, 100);
   glMatrixMode (GL_MODELVIEW);
   glLoadIdentity ();
   glTranslatef (0.0f, 0.0f, -Z_NEAR);
+
+  glScalef ((port->view.flip_x ? -1. : 1.) / port->view.coord_per_px,
+            (port->view.flip_y ? -1. : 1.) / port->view.coord_per_px,
+            ((port->view.flip_x == port->view.flip_y) ? 1. : -1.) / port->view.coord_per_px);
+  glTranslatef (port->view.flip_x ? port->view.x0 - PCB->MaxWidth  :
+                             -port->view.x0,
+                port->view.flip_y ? port->view.y0 - PCB->MaxHeight :
+                             -port->view.y0, 0);
 
   glEnable (GL_STENCIL_TEST);
   glClearColor (port->offlimits_color.red / 65535.,
@@ -924,18 +901,14 @@ ghid_drawing_area_expose_cb (GtkWidget *widget,
   region.Y1 = MIN (Py (ev->area.y), Py (ev->area.y + ev->area.height + 1));
   region.Y2 = MAX (Py (ev->area.y), Py (ev->area.y + ev->area.height + 1));
 
+  region.X1 = MAX (0, MIN (PCB->MaxWidth,  region.X1));
+  region.X2 = MAX (0, MIN (PCB->MaxWidth,  region.X2));
+  region.Y1 = MAX (0, MIN (PCB->MaxHeight, region.Y1));
+  region.Y2 = MAX (0, MIN (PCB->MaxHeight, region.Y2));
+
   glColor3f (port->bg_color.red / 65535.,
              port->bg_color.green / 65535.,
              port->bg_color.blue / 65535.);
-
-  glPushMatrix ();
-  glScalef ((ghid_flip_x ? -1. : 1.) / port->zoom,
-            (ghid_flip_y ? -1. : 1.) / port->zoom,
-            (ghid_flip_x == ghid_flip_y) ? 1. : -1.);
-  glTranslatef (ghid_flip_x ? port->view_x0 - PCB->MaxWidth  :
-                             -port->view_x0,
-                ghid_flip_y ? port->view_y0 - PCB->MaxHeight :
-                             -port->view_y0, 0);
 
   glBegin (GL_QUADS);
   glVertex3i (0,             0,              0);
@@ -958,11 +931,11 @@ ghid_drawing_area_expose_cb (GtkWidget *widget,
   DrawAttached ();
   DrawMark ();
   hidgl_flush_triangles (&buffer);
-  glPopMatrix ();
 
-  ghid_show_crosshair (TRUE);
-
+  draw_crosshair (priv);
   hidgl_flush_triangles (&buffer);
+
+  draw_lead_user (priv);
 
   ghid_end_drawing (port);
 
@@ -994,37 +967,37 @@ ghid_pinout_preview_expose (GtkWidget *widget,
   GdkGLContext* pGlContext = gtk_widget_get_gl_context (widget);
   GdkGLDrawable* pGlDrawable = gtk_widget_get_gl_drawable (widget);
   GhidPinoutPreview *pinout = GHID_PINOUT_PREVIEW (widget);
-  double save_zoom;
-  int da_w, da_h;
-  int save_left, save_top;
+  GtkAllocation allocation;
+  view_data save_view;
   int save_width, save_height;
-  int save_view_width, save_view_height;
+  Coord save_max_width;
+  Coord save_max_height;
   double xz, yz;
 
-  save_zoom = gport->zoom;
+  save_view = gport->view;
   save_width = gport->width;
   save_height = gport->height;
-  save_left = gport->view_x0;
-  save_top = gport->view_y0;
-  save_view_width = gport->view_width;
-  save_view_height = gport->view_height;
+  save_max_width = PCB->MaxWidth;
+  save_max_height = PCB->MaxHeight;
 
   /* Setup zoom factor for drawing routines */
 
-  gdk_window_get_geometry (widget->window, 0, 0, &da_w, &da_h, 0);
-  xz = (double) pinout->x_max / da_w;
-  yz = (double) pinout->y_max / da_h;
+  gtk_widget_get_allocation (widget, &allocation);
+  xz = (double) pinout->x_max / allocation.width;
+  yz = (double) pinout->y_max / allocation.height;
   if (xz > yz)
-    gport->zoom = xz;
+    gport->view.coord_per_px = xz;
   else
-    gport->zoom = yz;
+    gport->view.coord_per_px = yz;
 
-  gport->width = da_w;
-  gport->height = da_h;
-  gport->view_width = da_w * gport->zoom;
-  gport->view_height = da_h * gport->zoom;
-  gport->view_x0 = (pinout->x_max - gport->view_width) / 2;
-  gport->view_y0 = (pinout->y_max - gport->view_height) / 2;
+  gport->width = allocation.width;
+  gport->height = allocation.height;
+  gport->view.width = allocation.width * gport->view.coord_per_px;
+  gport->view.height = allocation.height * gport->view.coord_per_px;
+  gport->view.x0 = (pinout->x_max - gport->view.width) / 2;
+  gport->view.y0 = (pinout->y_max - gport->view.height) / 2;
+  PCB->MaxWidth = pinout->x_max;
+  PCB->MaxHeight = pinout->y_max;
 
   /* make GL-context "current" */
   if (!gdk_gl_drawable_gl_begin (pGlDrawable, pGlContext)) {
@@ -1035,16 +1008,16 @@ ghid_pinout_preview_expose (GtkWidget *widget,
   glEnable (GL_BLEND);
   glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  glViewport (0, 0, widget->allocation.width, widget->allocation.height);
+  glViewport (0, 0, allocation.width, allocation.height);
 
   glEnable (GL_SCISSOR_TEST);
   glScissor (ev->area.x,
-             widget->allocation.height - ev->area.height - ev->area.y,
+             allocation.height - ev->area.height - ev->area.y,
              ev->area.width, ev->area.height);
 
   glMatrixMode (GL_PROJECTION);
   glLoadIdentity ();
-  glOrtho (0, widget->allocation.width, widget->allocation.height, 0, 0, 100);
+  glOrtho (0, allocation.width, allocation.height, 0, 0, 100);
   glMatrixMode (GL_MODELVIEW);
   glLoadIdentity ();
   glTranslatef (0.0f, 0.0f, -Z_NEAR);
@@ -1063,12 +1036,14 @@ ghid_pinout_preview_expose (GtkWidget *widget,
   hidgl_init_triangle_array (&buffer);
   ghid_invalidate_current_gc ();
   glPushMatrix ();
-  glScalef ((ghid_flip_x ? -1. : 1.) / gport->zoom,
-            (ghid_flip_y ? -1. : 1.) / gport->zoom, 1);
-  glTranslatef (ghid_flip_x ? gport->view_x0 - PCB->MaxWidth  :
-                             -gport->view_x0,
-                ghid_flip_y ? gport->view_y0 - PCB->MaxHeight :
-                             -gport->view_y0, 0);
+  glScalef ((gport->view.flip_x ? -1. : 1.) / gport->view.coord_per_px,
+            (gport->view.flip_y ? -1. : 1.) / gport->view.coord_per_px,
+            ((gport->view.flip_x == gport->view.flip_y) ? 1. : -1.) / gport->view.coord_per_px);
+  glTranslatef (gport->view.flip_x ? gport->view.x0 - PCB->MaxWidth  :
+                                    -gport->view.x0,
+                gport->view.flip_y ? gport->view.y0 - PCB->MaxHeight :
+                                    -gport->view.y0, 0);
+
   hid_expose_callback (&ghid_hid, NULL, &pinout->element);
   hidgl_flush_triangles (&buffer);
   glPopMatrix ();
@@ -1082,13 +1057,11 @@ ghid_pinout_preview_expose (GtkWidget *widget,
   gport->render_priv->in_context = false;
   gdk_gl_drawable_gl_end (pGlDrawable);
 
-  gport->zoom = save_zoom;
+  gport->view = save_view;
   gport->width = save_width;
   gport->height = save_height;
-  gport->view_x0 = save_left;
-  gport->view_y0 = save_top;
-  gport->view_width = save_view_width;
-  gport->view_height = save_view_height;
+  PCB->MaxWidth = save_max_width;
+  PCB->MaxHeight = save_max_height;
 
   return FALSE;
 }
@@ -1102,19 +1075,13 @@ ghid_render_pixmap (int cx, int cy, double zoom, int width, int height, int dept
   GdkGLPixmap *glpixmap;
   GdkGLContext* glcontext;
   GdkGLDrawable* gldrawable;
-  double save_zoom;
-  int save_left, save_top;
+  view_data save_view;
   int save_width, save_height;
-  int save_view_width, save_view_height;
   BoxType region;
 
-  save_zoom = gport->zoom;
+  save_view = gport->view;
   save_width = gport->width;
   save_height = gport->height;
-  save_left = gport->view_x0;
-  save_top = gport->view_y0;
-  save_view_width = gport->view_width;
-  save_view_height = gport->view_height;
 
   /* Setup rendering context for drawing routines
    */
@@ -1126,19 +1093,19 @@ ghid_render_pixmap (int cx, int cy, double zoom, int width, int height, int dept
   pixmap = gdk_pixmap_new (NULL, width, height, depth);
   glpixmap = gdk_pixmap_set_gl_capability (pixmap, glconfig, NULL);
   gldrawable = GDK_GL_DRAWABLE (glpixmap);
-  glcontext = gdk_gl_context_new (gldrawable, NULL, FALSE, GDK_GL_RGBA_TYPE);
+  glcontext = gdk_gl_context_new (gldrawable, NULL, TRUE, GDK_GL_RGBA_TYPE);
 
   /* Setup zoom factor for drawing routines */
 
-  gport->zoom = zoom;
+  gport->view.coord_per_px = zoom;
   gport->width = width;
   gport->height = height;
-  gport->view_width = width * gport->zoom;
-  gport->view_height = height * gport->zoom;
-  gport->view_x0 = ghid_flip_x ? PCB->MaxWidth - cx : cx;
-  gport->view_x0 -= gport->view_height / 2;
-  gport->view_y0 = ghid_flip_y ? PCB->MaxHeight - cy : cy;
-  gport->view_y0 -= gport->view_width  / 2;
+  gport->view.width = width * gport->view.coord_per_px;
+  gport->view.height = height * gport->view.coord_per_px;
+  gport->view.x0 = gport->view.flip_x ? PCB->MaxWidth - cx : cx;
+  gport->view.x0 -= gport->view.height / 2;
+  gport->view.y0 = gport->view.flip_y ? PCB->MaxHeight - cy : cy;
+  gport->view.y0 -= gport->view.width / 2;
 
   /* make GL-context "current" */
   if (!gdk_gl_drawable_gl_begin (gldrawable, glcontext)) {
@@ -1174,16 +1141,24 @@ ghid_render_pixmap (int cx, int cy, double zoom, int width, int height, int dept
   hidgl_init_triangle_array (&buffer);
   ghid_invalidate_current_gc ();
   glPushMatrix ();
-  glScalef ((ghid_flip_x ? -1. : 1.) / gport->zoom,
-            (ghid_flip_y ? -1. : 1.) / gport->zoom, 1);
-  glTranslatef (ghid_flip_x ? gport->view_x0 - PCB->MaxWidth  :
-                             -gport->view_x0,
-                ghid_flip_y ? gport->view_y0 - PCB->MaxHeight :
-                             -gport->view_y0, 0);
+  glScalef ((gport->view.flip_x ? -1. : 1.) / gport->view.coord_per_px,
+            (gport->view.flip_y ? -1. : 1.) / gport->view.coord_per_px,
+            ((gport->view.flip_x == gport->view.flip_y) ? 1. : -1.) / gport->view.coord_per_px);
+  glTranslatef (gport->view.flip_x ? gport->view.x0 - PCB->MaxWidth  :
+                                    -gport->view.x0,
+                gport->view.flip_y ? gport->view.y0 - PCB->MaxHeight :
+                                    -gport->view.y0, 0);
+
   region.X1 = MIN(Px(0), Px(gport->width + 1));
   region.Y1 = MIN(Py(0), Py(gport->height + 1));
   region.X2 = MAX(Px(0), Px(gport->width + 1));
   region.Y2 = MAX(Py(0), Py(gport->height + 1));
+
+  region.X1 = MAX (0, MIN (PCB->MaxWidth,  region.X1));
+  region.X2 = MAX (0, MIN (PCB->MaxWidth,  region.X2));
+  region.Y1 = MAX (0, MIN (PCB->MaxHeight, region.Y1));
+  region.Y2 = MAX (0, MIN (PCB->MaxHeight, region.Y2));
+
   hid_expose_callback (&ghid_hid, &region, NULL);
   hidgl_flush_triangles (&buffer);
   glPopMatrix ();
@@ -1199,13 +1174,9 @@ ghid_render_pixmap (int cx, int cy, double zoom, int width, int height, int dept
   g_object_unref (glconfig);
   g_object_unref (glcontext);
 
-  gport->zoom = save_zoom;
+  gport->view = save_view;
   gport->width = save_width;
   gport->height = save_height;
-  gport->view_x0 = save_left;
-  gport->view_y0 = save_top;
-  gport->view_width = save_view_width;
-  gport->view_height = save_view_height;
 
   return pixmap;
 }
@@ -1215,14 +1186,17 @@ ghid_request_debug_draw (void)
 {
   GHidPort *port = gport;
   GtkWidget *widget = port->drawing_area;
+  GtkAllocation allocation;
+
+  gtk_widget_get_allocation (widget, &allocation);
 
   ghid_start_drawing (port);
 
-  glViewport (0, 0, widget->allocation.width, widget->allocation.height);
+  glViewport (0, 0, allocation.width, allocation.height);
 
   glMatrixMode (GL_PROJECTION);
   glLoadIdentity ();
-  glOrtho (0, widget->allocation.width, widget->allocation.height, 0, 0, 100);
+  glOrtho (0, allocation.width, allocation.height, 0, 0, 100);
   glMatrixMode (GL_MODELVIEW);
   glLoadIdentity ();
   glTranslatef (0.0f, 0.0f, -Z_NEAR);
@@ -1234,13 +1208,13 @@ ghid_request_debug_draw (void)
   glDisable (GL_STENCIL_TEST);
 
   glPushMatrix ();
-  glScalef ((ghid_flip_x ? -1. : 1.) / port->zoom,
-            (ghid_flip_y ? -1. : 1.) / port->zoom,
-            (ghid_flip_x == ghid_flip_y) ? 1. : -1.);
-  glTranslatef (ghid_flip_x ? port->view_x0 - PCB->MaxWidth  :
-                             -port->view_x0,
-                ghid_flip_y ? port->view_y0 - PCB->MaxHeight :
-                             -port->view_y0, 0);
+  glScalef ((port->view.flip_x ? -1. : 1.) / port->view.coord_per_px,
+            (port->view.flip_y ? -1. : 1.) / port->view.coord_per_px,
+            ((gport->view.flip_x == port->view.flip_y) ? 1. : -1.) / gport->view.coord_per_px);
+  glTranslatef (port->view.flip_x ? port->view.x0 - PCB->MaxWidth  :
+                             -port->view.x0,
+                port->view.flip_y ? port->view.y0 - PCB->MaxHeight :
+                             -port->view.y0, 0);
 
   return &ghid_hid;
 }
@@ -1266,4 +1240,123 @@ ghid_finish_debug_draw (void)
   glPopMatrix ();
 
   ghid_end_drawing (gport);
+}
+
+bool
+ghid_event_to_pcb_coords (int event_x, int event_y, Coord *pcb_x, Coord *pcb_y)
+{
+  *pcb_x = EVENT_TO_PCB_X (event_x);
+  *pcb_y = EVENT_TO_PCB_Y (event_y);
+
+  return true;
+}
+
+bool
+ghid_pcb_to_event_coords (Coord pcb_x, Coord pcb_y, int *event_x, int *event_y)
+{
+  *event_x = DRAW_X (pcb_x);
+  *event_y = DRAW_Y (pcb_y);
+
+  return true;
+}
+
+
+#define LEAD_USER_WIDTH           0.2          /* millimeters */
+#define LEAD_USER_PERIOD          (1000 / 20)  /* 20fps (in ms) */
+#define LEAD_USER_VELOCITY        3.           /* millimeters per second */
+#define LEAD_USER_ARC_COUNT       3
+#define LEAD_USER_ARC_SEPARATION  3.           /* millimeters */
+#define LEAD_USER_INITIAL_RADIUS  10.          /* millimetres */
+#define LEAD_USER_COLOR_R         1.
+#define LEAD_USER_COLOR_G         1.
+#define LEAD_USER_COLOR_B         0.
+
+static void
+draw_lead_user (render_priv *priv)
+{
+  int i;
+  double radius = priv->lead_user_radius;
+  double width = MM_TO_COORD (LEAD_USER_WIDTH);
+  double separation = MM_TO_COORD (LEAD_USER_ARC_SEPARATION);
+
+  if (!priv->lead_user)
+    return;
+
+  glPushAttrib (GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT);
+  glEnable (GL_COLOR_LOGIC_OP);
+  glLogicOp (GL_XOR);
+  glColor3f (LEAD_USER_COLOR_R, LEAD_USER_COLOR_G,LEAD_USER_COLOR_B);
+
+
+  /* arcs at the approrpriate radii */
+
+  for (i = 0; i < LEAD_USER_ARC_COUNT; i++, radius -= separation)
+    {
+      if (radius < width)
+        radius += MM_TO_COORD (LEAD_USER_INITIAL_RADIUS);
+
+      /* Draw an arc at radius */
+      hidgl_draw_arc (width, priv->lead_user_x, priv->lead_user_y,
+                      radius, radius, 0, 360, gport->view.coord_per_px);
+    }
+
+  hidgl_flush_triangles (&buffer);
+  glPopAttrib ();
+}
+
+gboolean
+lead_user_cb (gpointer data)
+{
+  render_priv *priv = data;
+  Coord step;
+  double elapsed_time;
+
+  /* Queue a redraw */
+  ghid_invalidate_all ();
+
+  /* Update radius */
+  elapsed_time = g_timer_elapsed (priv->lead_user_timer, NULL);
+  g_timer_start (priv->lead_user_timer);
+
+  step = MM_TO_COORD (LEAD_USER_VELOCITY * elapsed_time);
+  if (priv->lead_user_radius > step)
+    priv->lead_user_radius -= step;
+  else
+    priv->lead_user_radius = MM_TO_COORD (LEAD_USER_INITIAL_RADIUS);
+
+  return TRUE;
+}
+
+void
+ghid_lead_user_to_location (Coord x, Coord y)
+{
+  render_priv *priv = gport->render_priv;
+
+  ghid_cancel_lead_user ();
+
+  priv->lead_user = true;
+  priv->lead_user_x = x;
+  priv->lead_user_y = y;
+  priv->lead_user_radius = MM_TO_COORD (LEAD_USER_INITIAL_RADIUS);
+  priv->lead_user_timeout = g_timeout_add (LEAD_USER_PERIOD, lead_user_cb, priv);
+  priv->lead_user_timer = g_timer_new ();
+}
+
+void
+ghid_cancel_lead_user (void)
+{
+  render_priv *priv = gport->render_priv;
+
+  if (priv->lead_user_timeout)
+    g_source_remove (priv->lead_user_timeout);
+
+  if (priv->lead_user_timer)
+    g_timer_destroy (priv->lead_user_timer);
+
+  if (priv->lead_user)
+    ghid_invalidate_all ();
+
+  priv->lead_user_timeout = 0;
+  priv->lead_user_timer = NULL;
+  priv->lead_user = false;
 }

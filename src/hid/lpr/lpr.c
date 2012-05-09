@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -24,12 +22,21 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 #define CRASH fprintf(stderr, "HID error: pcb called unimplemented PS function %s.\n", __FUNCTION__); abort()
 
 static HID_Attribute base_lpr_options[] = {
-  {"lprcommand", "Command to print",
+
+/* %start-doc options "98 lpr Printing Options"
+@ftable @code
+@item --lprcommand <string>
+Command to use for printing. Defaults to @code{lpr}. This can be used to produce
+PDF output with a virtual PDF printer. Example: @*
+@code{--lprcommand "lp -d CUPS-PDF-Printer"}.
+@end ftable
+@noindent In addition, all @ref{Postscript Export} options are valid.
+%end-doc
+*/
+  {"lprcommand", "Command to use for printing",
    HID_String, 0, 0, {0, 0, 0}, 0, 0},
 #define HA_lprcommand 0
 };
@@ -73,7 +80,7 @@ lpr_do_export (HID_Attr_Val * options)
 {
   FILE *f;
   int i;
-  char *filename;
+  const char *filename;
 
   if (!options)
     {
@@ -95,7 +102,7 @@ lpr_do_export (HID_Attr_Val * options)
 
   ps_hid_export_to_file (f, options);
 
-  fclose (f);
+  pclose (f);
 }
 
 static void
@@ -124,7 +131,7 @@ hid_lpr_init ()
 
   lpr_hid.struct_size         = sizeof (HID);
   lpr_hid.name                = "lpr";
-  lpr_hid.description         = "Postscript print.";
+  lpr_hid.description         = "Postscript print";
   lpr_hid.printer             = 1;
   lpr_hid.poly_before         = 1;
 

@@ -253,9 +253,10 @@ static CFace * cface_new (GtsFace * f,
   v = GTS_SEGMENT (e1)->v1 == v1 ?
     GTS_SEGMENT (e1)->v2 : GTS_SEGMENT (e1)->v1;
 #ifdef NEW
-  if ((cf->flags & CFACE_E1) || (cf->flags & CFACE_E2))
-    g_assert ((vvs = GTS_EDGE (gts_vertices_are_connected (vs->v, v))));
-  else
+  if ((cf->flags & CFACE_E1) || (cf->flags & CFACE_E2)) {
+    vvs = GTS_EDGE (gts_vertices_are_connected (vs->v, v));
+    g_assert (vvs != NULL);
+  } else
 #endif
   vvs = gts_edge_new (klass, v, vs->v);
 
@@ -591,7 +592,8 @@ void gts_split_collapse (GtsSplit * vs,
 
   v1 = GTS_SPLIT_V1 (vs);
   v2 = GTS_SPLIT_V2 (vs);
-  g_assert ((e = GTS_EDGE (gts_vertices_are_connected (v1, v2))));
+  e = GTS_EDGE (gts_vertices_are_connected (v1, v2));
+  g_assert (e != NULL);
 
 #ifdef DEBUG
   fprintf (stderr, "collapsing %p: v1: %p v2: %p v: %p\n", vs, v1, v2, v);
@@ -923,8 +925,8 @@ GtsSplit * gts_split_new (GtsSplitClass * klass,
 			  GtsObject * o2)
 {
   GtsSplit * vs;
-  GtsVertex * v1, * v2;
 #ifndef DYNAMIC_SPLIT
+  GtsVertex * v1, * v2;
   GtsEdge * e;
   GSList * i;
   GtsSplitCFace * cf;
@@ -939,13 +941,14 @@ GtsSplit * gts_split_new (GtsSplitClass * klass,
   vs->v = v;
   vs->v1 = o1;
   vs->v2 = o2;
-  v1 = GTS_SPLIT_V1 (vs);
-  v2 = GTS_SPLIT_V2 (vs);
 #ifdef DYNAMIC_SPLIT
   vs->ncf = 0;
   vs->cfaces = NULL;
 #else
-  g_assert ((e = GTS_EDGE (gts_vertices_are_connected (v1, v2))));
+  v1 = GTS_SPLIT_V1 (vs);
+  v2 = GTS_SPLIT_V2 (vs);
+  e = GTS_EDGE (gts_vertices_are_connected (v1, v2));
+  g_assert (e != NULL);
   i = e->triangles;
   vs->ncf = g_slist_length (i);
   g_assert (vs->ncf > 0);

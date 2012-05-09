@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *
  *                            COPYRIGHT
@@ -90,6 +88,7 @@
 #include "misc.h"
 #include "rtree.h"
 #include "polygon.h"
+#include "pcb-printf.h"
 #include "search.h"
 #include "set.h"
 #include "undo.h"
@@ -100,11 +99,6 @@
 #endif
 
 #undef DEBUG
-
-RCSID ("$Id$");
-
-
-
 
 /* ---------------------------------------------------------------------------
  * some local macros
@@ -126,22 +120,22 @@ RCSID ("$Id$");
 	}
 
 #define	PADLIST_ENTRY(L,I)	\
-	(((PadTypePtr *)PadList[(L)].Data)[(I)])
+	(((PadType **)PadList[(L)].Data)[(I)])
 
 #define	LINELIST_ENTRY(L,I)	\
-	(((LineTypePtr *)LineList[(L)].Data)[(I)])
+	(((LineType **)LineList[(L)].Data)[(I)])
 
 #define	ARCLIST_ENTRY(L,I)	\
-	(((ArcTypePtr *)ArcList[(L)].Data)[(I)])
+	(((ArcType **)ArcList[(L)].Data)[(I)])
 
 #define RATLIST_ENTRY(I)	\
-	(((RatTypePtr *)RatList.Data)[(I)])
+	(((RatType **)RatList.Data)[(I)])
 
 #define	POLYGONLIST_ENTRY(L,I)	\
-	(((PolygonTypePtr *)PolygonList[(L)].Data)[(I)])
+	(((PolygonType **)PolygonList[(L)].Data)[(I)])
 
 #define	PVLIST_ENTRY(I)	\
-	(((PinTypePtr *)PVList.Data)[(I)])
+	(((PinType **)PVList.Data)[(I)])
 
 #define IS_PV_ON_RAT(PV, Rat) \
 	(IsPointOnLineEnd((PV)->X,(PV)->Y, (Rat)))
@@ -152,26 +146,19 @@ RCSID ("$Id$");
 			(PV)->X -MAX(((PV)->Thickness+1)/2 +Bloat,0), (PV)->Y -MAX(((PV)->Thickness+1)/2 +Bloat,0), \
 			(PV)->X +MAX(((PV)->Thickness+1)/2 +Bloat,0), (PV)->Y +MAX(((PV)->Thickness+1)/2 +Bloat,0), \
 			(Arc)) : \
-		IsPointOnArc((PV)->X,(PV)->Y,MAX((PV)->Thickness/2.0 + fBloat,0.0), (Arc)))
+		IsPointOnArc((PV)->X,(PV)->Y,MAX((PV)->Thickness/2.0 + Bloat,0.0), (Arc)))
 
 #define	IS_PV_ON_PAD(PV,Pad) \
 	( IsPointInPad((PV)->X, (PV)->Y, MAX((PV)->Thickness/2 +Bloat,0), (Pad)))
 
-#define LENGTH_TO_HUMAN(value) (Settings.grid_units_mm ? COORD_TO_MM(value) : COORD_TO_MIL(value))
-#define LENGTH_DIGITS (Settings.grid_units_mm ? 4 : 2)
-#define LENGTH_UNITS_STRING (Settings.grid_units_mm ? "mm" : "mils")
-
-
 static DrcViolationType
-*pcb_drc_violation_new (char *title,
-                        char *explanation,
-                        int x, int y,
-                        int angle,
-                        int have_measured,
-                        double measured_value,
-                        double required_value,
-                        int value_digits,
-                        const char *value_units,
+*pcb_drc_violation_new (const char *title,
+                        const char *explanation,
+                        Coord x, Coord y,
+                        Angle angle,
+                        bool have_measured,
+                        Coord measured_value,
+                        Coord required_value,
                         int object_count,
                         long int *object_id_list,
                         int *object_type_list)
@@ -186,8 +173,6 @@ static DrcViolationType
   violation->have_measured = have_measured;
   violation->measured_value = measured_value;
   violation->required_value = required_value;
-  violation->value_digits = value_digits;
-  violation->value_units = value_units;
   violation->object_count = object_count;
   violation->object_id_list = object_id_list;
   violation->object_type_list = object_type_list;
@@ -203,33 +188,28 @@ pcb_drc_violation_free (DrcViolationType *violation)
   free (violation);
 }
 
-static char drc_dialog_message[289] = {0};
+static GString *drc_dialog_message;
 static void
 reset_drc_dialog_message(void)
 {
-  drc_dialog_message[0] = 0;
+  if (drc_dialog_message)
+    g_string_free (drc_dialog_message, FALSE);
+  drc_dialog_message = g_string_new ("");
   if (gui->drc_gui != NULL)
     {
       gui->drc_gui->reset_drc_dialog_message ();
     }
 }
-#ifdef __GNUC__
-static void append_drc_dialog_message(const char *fmt, ...)
- __attribute__ ((format (printf, 1, 2)));
-#endif
 static void
 append_drc_dialog_message(const char *fmt, ...)
 {
-  size_t len = strlen (drc_dialog_message),
-         remained = sizeof (drc_dialog_message) - len - 1;
+  gchar *new_str;
   va_list ap;
   va_start (ap, fmt);
-#ifdef HAVE_VSNPRINTF
-  vsnprintf (drc_dialog_message + len, remained, fmt, ap);
-#else
-  vsprintf (drc_dialog_message + len, fmt, ap);
-#endif
+  new_str = pcb_vprintf (fmt, ap);
+  g_string_append (drc_dialog_message, new_str);
   va_end (ap);
+  g_free (new_str);
 }
 
 static void GotoError (void);
@@ -245,18 +225,18 @@ append_drc_violation (DrcViolationType *violation)
     {
       /* Fallback to formatting the violation message as text */
       append_drc_dialog_message ("%s\n", violation->title);
-      append_drc_dialog_message (_("near (%.*f, %.*f)\n"),
-                                 LENGTH_DIGITS, LENGTH_TO_HUMAN (violation->x),
-                                 LENGTH_DIGITS, LENGTH_TO_HUMAN (violation->y));
+      append_drc_dialog_message (_("%m+near %$mD\n"),
+                                 Settings.grid_unit->allow,
+                                 violation->x, violation->y);
       GotoError ();
     }
 
   if (gui->drc_gui == NULL || gui->drc_gui->log_drc_violations )
     {
       Message (_("WARNING!  Design Rule error - %s\n"), violation->title);
-      Message (_("near location (%.*f, %.*f)\n"),
-               LENGTH_DIGITS, LENGTH_TO_HUMAN (violation->x),
-               LENGTH_DIGITS, LENGTH_TO_HUMAN (violation->y));
+      Message (_("%m+near location %$mD\n"),
+               Settings.grid_unit->allow,
+               violation->x, violation->y);
     }
 }
 /*
@@ -280,7 +260,7 @@ throw_drc_dialog(void)
     {
       /* Fallback to formatting the violation message as text */
       append_drc_dialog_message (DRC_CONTINUE);
-      r = gui->confirm_dialog (drc_dialog_message, DRC_CANCEL, DRC_NEXT);
+      r = gui->confirm_dialog (drc_dialog_message->str, DRC_CANCEL, DRC_NEXT);
       reset_drc_dialog_message();
     }
   return r;
@@ -298,14 +278,12 @@ typedef struct
   Cardinal Location,            /* currently used position */
     DrawLocation, Number,       /* number of objects in list */
     Size;
-}
-ListType, *ListTypePtr;
+} ListType;
 
 /* ---------------------------------------------------------------------------
  * some local identifiers
  */
-static float fBloat = 0.0;
-static LocationType Bloat = 0;
+static Coord Bloat = 0;
 static int TheFlag = FOUNDFLAG;
 static int OldFlag = FOUNDFLAG;
 static void *thing_ptr1, *thing_ptr2, *thing_ptr3;
@@ -325,34 +303,34 @@ static bool LookupLOConnectionsToPVList (bool);
 static bool LookupLOConnectionsToLOList (bool);
 static bool LookupPVConnectionsToLOList (bool);
 static bool LookupPVConnectionsToPVList (void);
-static bool LookupLOConnectionsToLine (LineTypePtr, Cardinal, bool);
-static bool LookupLOConnectionsToPad (PadTypePtr, Cardinal);
-static bool LookupLOConnectionsToPolygon (PolygonTypePtr, Cardinal);
-static bool LookupLOConnectionsToArc (ArcTypePtr, Cardinal);
-static bool LookupLOConnectionsToRatEnd (PointTypePtr, Cardinal);
-static bool IsRatPointOnLineEnd (PointTypePtr, LineTypePtr);
-static bool ArcArcIntersect (ArcTypePtr, ArcTypePtr);
+static bool LookupLOConnectionsToLine (LineType *, Cardinal, bool);
+static bool LookupLOConnectionsToPad (PadType *, Cardinal);
+static bool LookupLOConnectionsToPolygon (PolygonType *, Cardinal);
+static bool LookupLOConnectionsToArc (ArcType *, Cardinal);
+static bool LookupLOConnectionsToRatEnd (PointType *, Cardinal);
+static bool IsRatPointOnLineEnd (PointType *, LineType *);
+static bool ArcArcIntersect (ArcType *, ArcType *);
 static bool PrepareNextLoop (FILE *);
-static bool PrintElementConnections (ElementTypePtr, FILE *, bool);
+static bool PrintElementConnections (ElementType *, FILE *, bool);
 static bool ListsEmpty (bool);
 static bool DoIt (bool, bool);
-static void PrintElementNameList (ElementTypePtr, FILE *);
-static void PrintConnectionElementName (ElementTypePtr, FILE *);
-static void PrintConnectionListEntry (char *, ElementTypePtr,
+static void PrintElementNameList (ElementType *, FILE *);
+static void PrintConnectionElementName (ElementType *, FILE *);
+static void PrintConnectionListEntry (char *, ElementType *,
                                       bool, FILE *);
 static void PrintPadConnections (Cardinal, FILE *, bool);
 static void PrintPinConnections (FILE *, bool);
-static bool PrintAndSelectUnusedPinsAndPadsOfElement (ElementTypePtr,
+static bool PrintAndSelectUnusedPinsAndPadsOfElement (ElementType *,
                                                          FILE *);
 static void DrawNewConnections (void);
 static void DumpList (void);
-static void LocateError (LocationType *, LocationType *);
+static void LocateError (Coord *, Coord *);
 static void BuildObjectList (int *, long int **, int **);
 static void GotoError (void);
 static bool DRCFind (int, void *, void *, void *);
 static bool ListStart (int, void *, void *, void *);
-static bool LOTouchesLine (LineTypePtr Line, Cardinal LayerGroup);
-static bool PVTouchesLine (LineTypePtr line);
+static bool LOTouchesLine (LineType *Line, Cardinal LayerGroup);
+static bool PVTouchesLine (LineType *line);
 static bool SetThing (int, void *, void *, void *);
 
 /* ---------------------------------------------------------------------------
@@ -360,19 +338,19 @@ static bool SetThing (int, void *, void *, void *);
  * struct starts with a line struct. See global.h for details
  */
 bool
-LinePadIntersect (LineTypePtr Line, PadTypePtr Pad)
+LinePadIntersect (LineType *Line, PadType *Pad)
 {
-  return LineLineIntersect ((Line), (LineTypePtr)Pad);
+  return LineLineIntersect ((Line), (LineType *)Pad);
 }
 
 bool
-ArcPadIntersect (ArcTypePtr Arc, PadTypePtr Pad)
+ArcPadIntersect (ArcType *Arc, PadType *Pad)
 {
-  return LineArcIntersect ((LineTypePtr) (Pad), (Arc));
+  return LineArcIntersect ((LineType *) (Pad), (Arc));
 }
 
 static bool
-ADD_PV_TO_LIST (PinTypePtr Pin)
+ADD_PV_TO_LIST (PinType *Pin)
 {
   if (User)
     AddObjectToFlagUndoList (Pin->Element ? PIN_TYPE : VIA_TYPE,
@@ -391,7 +369,7 @@ ADD_PV_TO_LIST (PinTypePtr Pin)
 }
 
 static bool
-ADD_PAD_TO_LIST (Cardinal L, PadTypePtr Pad)
+ADD_PAD_TO_LIST (Cardinal L, PadType *Pad)
 {
   if (User)
     AddObjectToFlagUndoList (PAD_TYPE, Pad->Element, Pad, Pad);
@@ -409,7 +387,7 @@ ADD_PAD_TO_LIST (Cardinal L, PadTypePtr Pad)
 }
 
 static bool
-ADD_LINE_TO_LIST (Cardinal L, LineTypePtr Ptr)
+ADD_LINE_TO_LIST (Cardinal L, LineType *Ptr)
 {
   if (User)
     AddObjectToFlagUndoList (LINE_TYPE, LAYER_PTR (L), (Ptr), (Ptr));
@@ -427,7 +405,7 @@ ADD_LINE_TO_LIST (Cardinal L, LineTypePtr Ptr)
 }
 
 static bool
-ADD_ARC_TO_LIST (Cardinal L, ArcTypePtr Ptr)
+ADD_ARC_TO_LIST (Cardinal L, ArcType *Ptr)
 {
   if (User)
     AddObjectToFlagUndoList (ARC_TYPE, LAYER_PTR (L), (Ptr), (Ptr));
@@ -445,7 +423,7 @@ ADD_ARC_TO_LIST (Cardinal L, ArcTypePtr Ptr)
 }
 
 static bool
-ADD_RAT_TO_LIST (RatTypePtr Ptr)
+ADD_RAT_TO_LIST (RatType *Ptr)
 {
   if (User)
     AddObjectToFlagUndoList (RATLINE_TYPE, (Ptr), (Ptr), (Ptr));
@@ -463,7 +441,7 @@ ADD_RAT_TO_LIST (RatTypePtr Ptr)
 }
 
 static bool
-ADD_POLYGON_TO_LIST (Cardinal L, PolygonTypePtr Ptr)
+ADD_POLYGON_TO_LIST (Cardinal L, PolygonType *Ptr)
 {
   if (User)
     AddObjectToFlagUndoList (POLYGON_TYPE, LAYER_PTR (L), (Ptr), (Ptr));
@@ -481,23 +459,22 @@ ADD_POLYGON_TO_LIST (Cardinal L, PolygonTypePtr Ptr)
 }
 
 bool
-PinLineIntersect (PinTypePtr PV, LineTypePtr Line)
+PinLineIntersect (PinType *PV, LineType *Line)
 {
   /* IsLineInRectangle already has Bloat factor */
   return TEST_FLAG (SQUAREFLAG,
-                    PV) ? IsLineInRectangle (PV->X - (PV->Thickness + 1) / 2,
-                                             PV->Y - (PV->Thickness + 1) / 2,
-                                             PV->X + (PV->Thickness + 1) / 2,
-                                             PV->Y + (PV->Thickness + 1) / 2,
+                    PV) ? IsLineInRectangle (PV->X - (PIN_SIZE (PV) + 1) / 2,
+                                             PV->Y - (PIN_SIZE (PV) + 1) / 2,
+                                             PV->X + (PIN_SIZE (PV) + 1) / 2,
+                                             PV->Y + (PIN_SIZE (PV) + 1) / 2,
                                              Line) : IsPointInPad (PV->X,
                                                                     PV->Y,
-                                                                    MAX (PV->
-                                                                         Thickness
+								   MAX (PIN_SIZE (PV)
                                                                          /
                                                                          2.0 +
-                                                                         fBloat,
+                                                                         Bloat,
                                                                          0.0),
-                                                                    (PadTypePtr)Line);
+                                                                    (PadType *)Line);
 }
 
 
@@ -517,7 +494,7 @@ SetThing (int type, void *ptr1, void *ptr2, void *ptr3)
 }
 
 bool
-BoxBoxIntersection (BoxTypePtr b1, BoxTypePtr b2)
+BoxBoxIntersection (BoxType *b1, BoxType *b2)
 {
   if (b2->X2 < b1->X1 || b2->X1 > b1->X2)
     return false;
@@ -527,19 +504,19 @@ BoxBoxIntersection (BoxTypePtr b1, BoxTypePtr b2)
 }
 
 static bool
-PadPadIntersect (PadTypePtr p1, PadTypePtr p2)
+PadPadIntersect (PadType *p1, PadType *p2)
 {
-  return LinePadIntersect ((LineTypePtr) p1, p2);
+  return LinePadIntersect ((LineType *) p1, p2);
 }
-      
+
 static inline bool
-PV_TOUCH_PV (PinTypePtr PV1, PinTypePtr PV2)
+PV_TOUCH_PV (PinType *PV1, PinType *PV2)
 {
-  float t1, t2;
+  double t1, t2;
   BoxType b1, b2;
 
-  t1 = MAX (PV1->Thickness / 2.0 + fBloat, 0);
-  t2 = MAX (PV2->Thickness / 2.0 + fBloat, 0);
+  t1 = MAX (PV1->Thickness / 2.0 + Bloat, 0);
+  t2 = MAX (PV2->Thickness / 2.0 + Bloat, 0);
   if (IsPointOnPin (PV1->X, PV1->Y, t1, PV2)
       || IsPointOnPin (PV2->X, PV2->Y, t2, PV1))
     return true;
@@ -614,7 +591,7 @@ InitComponentLookup (void)
   for (i = 0; i < 2; i++)
     {
       /* allocate memory for working list */
-      PadList[i].Data = (void **)calloc (NumberOfPads[i], sizeof (PadTypePtr));
+      PadList[i].Data = (void **)calloc (NumberOfPads[i], sizeof (PadType *));
 
       /* clear some struct members */
       PadList[i].Location = 0;
@@ -636,17 +613,17 @@ InitLayoutLookup (void)
   /* initialize line arc and polygon data */
   for (i = 0; i < max_copper_layer; i++)
     {
-      LayerTypePtr layer = LAYER_PTR (i);
+      LayerType *layer = LAYER_PTR (i);
 
       if (layer->LineN)
         {
           /* allocate memory for line pointer lists */
-          LineList[i].Data = (void **)calloc (layer->LineN, sizeof (LineTypePtr));
+          LineList[i].Data = (void **)calloc (layer->LineN, sizeof (LineType *));
           LineList[i].Size = layer->LineN;
         }
       if (layer->ArcN)
         {
-          ArcList[i].Data = (void **)calloc (layer->ArcN, sizeof (ArcTypePtr));
+          ArcList[i].Data = (void **)calloc (layer->ArcN, sizeof (ArcType *));
           ArcList[i].Size = layer->ArcN;
         }
 
@@ -654,7 +631,7 @@ InitLayoutLookup (void)
       /* allocate memory for polygon list */
       if (layer->PolygonN)
         {
-          PolygonList[i].Data = (void **)calloc (layer->PolygonN, sizeof (PolygonTypePtr));
+          PolygonList[i].Data = (void **)calloc (layer->PolygonN, sizeof (PolygonType *));
           PolygonList[i].Size = layer->PolygonN;
         }
 
@@ -679,13 +656,13 @@ InitLayoutLookup (void)
   else
     TotalV = 0;
   /* allocate memory for 'new PV to check' list and clear struct */
-  PVList.Data = (void **)calloc (TotalP + TotalV, sizeof (PinTypePtr));
+  PVList.Data = (void **)calloc (TotalP + TotalV, sizeof (PinType *));
   PVList.Size = TotalP + TotalV;
   PVList.Location = 0;
   PVList.DrawLocation = 0;
   PVList.Number = 0;
   /* Initialize ratline data */
-  RatList.Data = (void **)calloc (PCB->Data->RatN, sizeof (RatTypePtr));
+  RatList.Data = (void **)calloc (PCB->Data->RatN, sizeof (RatType *));
   RatList.Size = PCB->Data->RatN;
   RatList.Location = 0;
   RatList.DrawLocation = 0;
@@ -702,10 +679,11 @@ struct pv_info
 static int
 LOCtoPVline_callback (const BoxType * b, void *cl)
 {
-  LineTypePtr line = (LineTypePtr) b;
+  LineType *line = (LineType *) b;
   struct pv_info *i = (struct pv_info *) cl;
 
-  if (!TEST_FLAG (TheFlag, line) && PinLineIntersect (&i->pv, line))
+  if (!TEST_FLAG (TheFlag, line) && PinLineIntersect (&i->pv, line) &&
+      !TEST_FLAG (HOLEFLAG, &i->pv))
     {
       if (ADD_LINE_TO_LIST (i->layer, line))
         longjmp (i->env, 1);
@@ -716,10 +694,11 @@ LOCtoPVline_callback (const BoxType * b, void *cl)
 static int
 LOCtoPVarc_callback (const BoxType * b, void *cl)
 {
-  ArcTypePtr arc = (ArcTypePtr) b;
+  ArcType *arc = (ArcType *) b;
   struct pv_info *i = (struct pv_info *) cl;
 
-  if (!TEST_FLAG (TheFlag, arc) && IS_PV_ON_ARC (&i->pv, arc))
+  if (!TEST_FLAG (TheFlag, arc) && IS_PV_ON_ARC (&i->pv, arc) &&
+      !TEST_FLAG (HOLEFLAG, &i->pv))
     {
       if (ADD_ARC_TO_LIST (i->layer, arc))
         longjmp (i->env, 1);
@@ -730,10 +709,11 @@ LOCtoPVarc_callback (const BoxType * b, void *cl)
 static int
 LOCtoPVpad_callback (const BoxType * b, void *cl)
 {
-  PadTypePtr pad = (PadTypePtr) b;
+  PadType *pad = (PadType *) b;
   struct pv_info *i = (struct pv_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pad) && IS_PV_ON_PAD (&i->pv, pad) &&
+      !TEST_FLAG (HOLEFLAG, &i->pv) &&
       ADD_PAD_TO_LIST (TEST_FLAG (ONSOLDERFLAG, pad) ? SOLDER_LAYER :
                        COMPONENT_LAYER, pad))
     longjmp (i->env, 1);
@@ -743,7 +723,7 @@ LOCtoPVpad_callback (const BoxType * b, void *cl)
 static int
 LOCtoPVrat_callback (const BoxType * b, void *cl)
 {
-  RatTypePtr rat = (RatTypePtr) b;
+  RatType *rat = (RatType *) b;
   struct pv_info *i = (struct pv_info *) cl;
 
   if (!TEST_FLAG (TheFlag, rat) && IS_PV_ON_RAT (&i->pv, rat) &&
@@ -754,7 +734,7 @@ LOCtoPVrat_callback (const BoxType * b, void *cl)
 static int
 LOCtoPVpoly_callback (const BoxType * b, void *cl)
 {
-  PolygonTypePtr polygon = (PolygonTypePtr) b;
+  PolygonType *polygon = (PolygonType *) b;
   struct pv_info *i = (struct pv_info *) cl;
 
   /* if the pin doesn't have a therm and polygon is clearing
@@ -763,19 +743,19 @@ LOCtoPVpoly_callback (const BoxType * b, void *cl)
    * because it might not be inside the polygon, or it could
    * be on an edge such that it doesn't actually touch.
    */
-  if (!TEST_FLAG (TheFlag, polygon) && (TEST_THERM (i->layer, &i->pv)
-                                        || !TEST_FLAG (CLEARPOLYFLAG,
-                                                       polygon)
+  if (!TEST_FLAG (TheFlag, polygon) && !TEST_FLAG (HOLEFLAG, &i->pv) &&
+                                       (TEST_THERM (i->layer, &i->pv) ||
+                                        !TEST_FLAG (CLEARPOLYFLAG,
+                                                    polygon)
                                         || !i->pv.Clearance))
     {
-      float wide = 0.5 * i->pv.Thickness + fBloat;
-      wide = MAX (wide, 0);
+      double wide = MAX (0.5 * i->pv.Thickness + Bloat, 0);
       if (TEST_FLAG (SQUAREFLAG, &i->pv))
         {
-          LocationType x1 = i->pv.X - (i->pv.Thickness + 1 + Bloat) / 2;
-          LocationType x2 = i->pv.X + (i->pv.Thickness + 1 + Bloat) / 2;
-          LocationType y1 = i->pv.Y - (i->pv.Thickness + 1 + Bloat) / 2;
-          LocationType y2 = i->pv.Y + (i->pv.Thickness + 1 + Bloat) / 2;
+          Coord x1 = i->pv.X - (i->pv.Thickness + 1 + Bloat) / 2;
+          Coord x2 = i->pv.X + (i->pv.Thickness + 1 + Bloat) / 2;
+          Coord y1 = i->pv.Y - (i->pv.Thickness + 1 + Bloat) / 2;
+          Coord y2 = i->pv.Y + (i->pv.Thickness + 1 + Bloat) / 2;
           if (IsRectangleInPolygon (x1, y1, x2, y2, polygon)
               && ADD_POLYGON_TO_LIST (i->layer, polygon))
             longjmp (i->env, 1);
@@ -822,6 +802,8 @@ LookupLOConnectionsToPVList (bool AndRats)
       /* now all lines, arcs and polygons of the several layers */
       for (layer = 0; layer < max_copper_layer; layer++)
         {
+          if (LAYER_PTR (layer)->no_drc)
+             continue;
           info.layer = layer;
           /* add touching lines */
           if (setjmp (info.env) == 0)
@@ -875,7 +857,7 @@ LookupLOConnectionsToLOList (bool AndRats)
     {
       lineposition[i] = LineList[i].Location;
       polyposition[i] = PolygonList[i].Location;
-      arcposition[i] = ArcList[i].Location;
+      arcposition[i]  = ArcList[i].Location;
     }
   for (i = 0; i < 2; i++)
     padposition[i] = PadList[i].Location;
@@ -961,18 +943,13 @@ LookupLOConnectionsToLOList (bool AndRats)
        * may have changed the prior lists
        */
       done = !AndRats || ratposition >= RatList.Number;
-      for (layer = 0; layer < max_copper_layer + 2; layer++)
-        {
-          if (layer < max_copper_layer)
-            done = done &&
-              lineposition[layer] >= LineList[layer].Number
-              && arcposition[layer] >= ArcList[layer].Number
-              && polyposition[layer] >= PolygonList[layer].Number;
-          else
-            done = done
-              && padposition[layer - max_copper_layer] >=
-              PadList[layer - max_copper_layer].Number;
-        }
+      done = done && padposition[0] >= PadList[0].Number &&
+                     padposition[1] >= PadList[1].Number;
+      for (layer = 0; layer < max_copper_layer; layer++)
+        done = done &&
+               lineposition[layer] >= LineList[layer].Number &&
+               arcposition[layer]  >= ArcList[layer].Number &&
+               polyposition[layer] >= PolygonList[layer].Number;
     }
   while (!done);
   return (false);
@@ -981,12 +958,12 @@ LookupLOConnectionsToLOList (bool AndRats)
 static int
 pv_pv_callback (const BoxType * b, void *cl)
 {
-  PinTypePtr pin = (PinTypePtr) b;
+  PinType *pin = (PinType *) b;
   struct pv_info *i = (struct pv_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pin) && PV_TOUCH_PV (&i->pv, pin))
     {
-      if (TEST_FLAG (HOLEFLAG, pin))
+      if (TEST_FLAG (HOLEFLAG, pin) || TEST_FLAG (HOLEFLAG, &i->pv))
         {
           SET_FLAG (WARNFLAG, pin);
           Settings.RatWarn = true;
@@ -995,7 +972,7 @@ pv_pv_callback (const BoxType * b, void *cl)
           else
             Message (_("WARNING: Hole too close to via.\n"));
         }
-      if (ADD_PV_TO_LIST (pin))
+      else if (ADD_PV_TO_LIST (pin))
         longjmp (i->env, 1);
     }
   return 0;
@@ -1048,7 +1025,7 @@ struct lo_info
 static int
 pv_line_callback (const BoxType * b, void *cl)
 {
-  PinTypePtr pv = (PinTypePtr) b;
+  PinType *pv = (PinType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pv) && PinLineIntersect (pv, &i->line))
@@ -1059,7 +1036,7 @@ pv_line_callback (const BoxType * b, void *cl)
           Settings.RatWarn = true;
           Message (_("WARNING: Hole too close to line.\n"));
         }
-      if (ADD_PV_TO_LIST (pv))
+      else if (ADD_PV_TO_LIST (pv))
         longjmp (i->env, 1);
     }
   return 0;
@@ -1068,7 +1045,7 @@ pv_line_callback (const BoxType * b, void *cl)
 static int
 pv_pad_callback (const BoxType * b, void *cl)
 {
-  PinTypePtr pv = (PinTypePtr) b;
+  PinType *pv = (PinType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pv) && IS_PV_ON_PAD (pv, &i->pad))
@@ -1079,7 +1056,7 @@ pv_pad_callback (const BoxType * b, void *cl)
           Settings.RatWarn = true;
           Message (_("WARNING: Hole too close to pad.\n"));
         }
-      if (ADD_PV_TO_LIST (pv))
+      else if (ADD_PV_TO_LIST (pv))
         longjmp (i->env, 1);
     }
   return 0;
@@ -1088,7 +1065,7 @@ pv_pad_callback (const BoxType * b, void *cl)
 static int
 pv_arc_callback (const BoxType * b, void *cl)
 {
-  PinTypePtr pv = (PinTypePtr) b;
+  PinType *pv = (PinType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pv) && IS_PV_ON_ARC (pv, &i->arc))
@@ -1099,7 +1076,7 @@ pv_arc_callback (const BoxType * b, void *cl)
           Settings.RatWarn = true;
           Message (_("WARNING: Hole touches arc.\n"));
         }
-      if (ADD_PV_TO_LIST (pv))
+      else if (ADD_PV_TO_LIST (pv))
         longjmp (i->env, 1);
     }
   return 0;
@@ -1108,35 +1085,36 @@ pv_arc_callback (const BoxType * b, void *cl)
 static int
 pv_poly_callback (const BoxType * b, void *cl)
 {
-  PinTypePtr pv = (PinTypePtr) b;
+  PinType *pv = (PinType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
-  /* note that holes in polygons are ok */
-  if (!TEST_FLAG (TheFlag, pv) && (TEST_THERM (i->layer, pv) ||
+  /* note that holes in polygons are ok, so they don't generate warnings. */
+  if (!TEST_FLAG (TheFlag, pv) && !TEST_FLAG (HOLEFLAG, pv) &&
+                                  (TEST_THERM (i->layer, pv) ||
                                    !TEST_FLAG (CLEARPOLYFLAG, &i->polygon) ||
                                    !pv->Clearance))
     {
       if (TEST_FLAG (SQUAREFLAG, pv))
         {
-          LocationType x1, x2, y1, y2;
-          x1 = pv->X - (pv->Thickness + 1 + Bloat) / 2;
-          x2 = pv->X + (pv->Thickness + 1 + Bloat) / 2;
-          y1 = pv->Y - (pv->Thickness + 1 + Bloat) / 2;
-          y2 = pv->Y + (pv->Thickness + 1 + Bloat) / 2;
+          Coord x1, x2, y1, y2;
+          x1 = pv->X - (PIN_SIZE (pv) + 1 + Bloat) / 2;
+          x2 = pv->X + (PIN_SIZE (pv) + 1 + Bloat) / 2;
+          y1 = pv->Y - (PIN_SIZE (pv) + 1 + Bloat) / 2;
+          y2 = pv->Y + (PIN_SIZE (pv) + 1 + Bloat) / 2;
           if (IsRectangleInPolygon (x1, y1, x2, y2, &i->polygon)
               && ADD_PV_TO_LIST (pv))
             longjmp (i->env, 1);
         }
       else if (TEST_FLAG (OCTAGONFLAG, pv))
         {
-          POLYAREA *oct = OctagonPoly (pv->X, pv->Y, pv->Thickness / 2);
+          POLYAREA *oct = OctagonPoly (pv->X, pv->Y, PIN_SIZE (pv) / 2);
           if (isects (oct, &i->polygon, true) && ADD_PV_TO_LIST (pv))
             longjmp (i->env, 1);
         }
       else
         {
           if (IsPointInPolygon
-              (pv->X, pv->Y, pv->Thickness * 0.5 + fBloat, &i->polygon)
+              (pv->X, pv->Y, PIN_SIZE (pv) * 0.5 + Bloat, &i->polygon)
               && ADD_PV_TO_LIST (pv))
             longjmp (i->env, 1);
         }
@@ -1147,7 +1125,7 @@ pv_poly_callback (const BoxType * b, void *cl)
 static int
 pv_rat_callback (const BoxType * b, void *cl)
 {
-  PinTypePtr pv = (PinTypePtr) b;
+  PinType *pv = (PinType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   /* rats can't cause DRC so there is no early exit */
@@ -1169,6 +1147,8 @@ LookupPVConnectionsToLOList (bool AndRats)
   /* loop over all layers */
   for (layer = 0; layer < max_copper_layer; layer++)
     {
+      if (LAYER_PTR (layer)->no_drc)
+                       continue;
       /* do nothing if there are no PV's */
       if (TotalP + TotalV == 0)
         {
@@ -1294,7 +1274,7 @@ LookupPVConnectionsToLOList (bool AndRats)
 int
 pv_touch_callback (const BoxType * b, void *cl)
 {
-  PinTypePtr pin = (PinTypePtr) b;
+  PinType *pin = (PinType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pin) && PinLineIntersect (pin, &i->line))
@@ -1303,7 +1283,7 @@ pv_touch_callback (const BoxType * b, void *cl)
 }
 
 static bool
-PVTouchesLine (LineTypePtr line)
+PVTouchesLine (LineType *line)
 {
   struct lo_info info;
 
@@ -1325,7 +1305,7 @@ PVTouchesLine (LineTypePtr line)
 
 /* reduce arc start angle and delta to 0..360 */
 static void
-normalize_angles (int *sa, int *d)
+normalize_angles (Angle *sa, Angle *d)
 {
   if (*d < 0)
     {
@@ -1334,44 +1314,30 @@ normalize_angles (int *sa, int *d)
     }
   if (*d > 360) /* full circle */
     *d = 360;
-  if (*sa < 0)
-    *sa = 360 - ((-*sa) % 360);
-  if (*sa >= 360)
-    *sa %= 360;
+  *sa = NormalizeAngle (*sa);
 }
 
 static int
-radius_crosses_arc (double x, double y, ArcTypePtr arc)
+radius_crosses_arc (double x, double y, ArcType *arc)
 {
   double alpha = atan2 (y - arc->Y, -x + arc->X) * RAD_TO_DEG;
-  int sa = arc->StartAngle, d = arc->Delta;
+  Angle sa = arc->StartAngle, d = arc->Delta;
 
   normalize_angles (&sa, &d);
   if (alpha < 0)
     alpha += 360;
-  if ((double)sa <= alpha)
-    return (double)(sa + d) >= alpha;
-  return (double)(sa + d - 360) >= alpha;
+  if (sa <= alpha)
+    return (sa + d) >= alpha;
+  return (sa + d - 360) >= alpha;
 }
 
 static void
-get_arc_ends (double *box, ArcTypePtr arc)
+get_arc_ends (Coord *box, ArcType *arc)
 {
-  double ca, sa, angle;
-
-  angle  = arc->StartAngle;
-  angle *= M180;
-  ca = cos (angle);
-  sa = sin (angle);
-  box[0] = arc->X - arc->Width * ca;
-  box[1] = arc->Y + arc->Height * sa;
-
-  angle  = arc->StartAngle + arc->Delta;
-  angle *= M180;
-  ca = cos (angle);
-  sa = sin (angle);
-  box[2] = arc->X - arc->Width * ca;
-  box[3] = arc->Y + arc->Height * sa;
+  box[0] = arc->X - arc->Width  * cos (M180 * arc->StartAngle);
+  box[1] = arc->Y + arc->Height * sin (M180 * arc->StartAngle);
+  box[2] = arc->X - arc->Width  * cos (M180 * (arc->StartAngle + arc->Delta));
+  box[3] = arc->Y + arc->Height * sin (M180 * (arc->StartAngle + arc->Delta));
 }
 /* ---------------------------------------------------------------------------
  * check if two arcs intersect
@@ -1399,73 +1365,63 @@ get_arc_ends (double *box, ArcTypePtr arc)
  *
  */
 static bool
-ArcArcIntersect (ArcTypePtr Arc1, ArcTypePtr Arc2)
+ArcArcIntersect (ArcType *Arc1, ArcType *Arc2)
 {
   double x, y, dx, dy, r1, r2, a, d, l, t, t1, t2, dl;
-  LocationType pdx, pdy;
-  double box[4];
+  Coord pdx, pdy;
+  Coord box[8];
 
-  t = 0.5 * Arc1->Thickness + fBloat;
-  if (t < 0) /* too thin arc */
-    return (false);
+  t  = 0.5 * Arc1->Thickness + Bloat;
   t2 = 0.5 * Arc2->Thickness;
-  t1 = t2 + fBloat;
-  if (t1 < 0) /* too thin arc */
-    return (false);
-  /* try the end points first */
-  get_arc_ends (box, Arc1);
-  if (IsPointOnArc ((float) box[0], (float) box[1], (float)t, Arc2)
-      || IsPointOnArc ((float) box[2], (float) box[3], (float)t, Arc2))
-    return (true);
+  t1 = t2 + Bloat;
 
-  get_arc_ends (box, Arc2);
-  if (IsPointOnArc ((float) box[0], (float) box[1], (float)t1, Arc1)
-      || IsPointOnArc ((float) box[2], (float) box[3], (float)t1, Arc1))
-    return (true);
+  /* too thin arc */
+  if (t < 0 || t1 < 0)
+    return false;
+
+  /* try the end points first */
+  get_arc_ends (&box[0], Arc1);
+  get_arc_ends (&box[4], Arc2);
+  if (IsPointOnArc (box[0], box[1], t, Arc2)
+      || IsPointOnArc (box[2], box[3], t, Arc2)
+      || IsPointOnArc (box[4], box[5], t, Arc1)
+      || IsPointOnArc (box[6], box[7], t, Arc1))
+    return true;
+
   pdx = Arc2->X - Arc1->X;
   pdy = Arc2->Y - Arc1->Y;
-  l = pdx * pdx + pdy * pdy;
+  dl = Distance (Arc1->X, Arc1->Y, Arc2->X, Arc2->Y);
   /* concentric arcs, simpler intersection conditions */
-  if (l < 0.5)
+  if (dl < 0.5)
     {
       if ((Arc1->Width - t >= Arc2->Width - t2
-           && Arc1->Width - t <=
-           Arc2->Width + t2)
-          || (Arc1->Width + t >=
-              Arc2->Width - t2 && Arc1->Width + t <= Arc2->Width + t2))
+           && Arc1->Width - t <= Arc2->Width + t2)
+          || (Arc1->Width + t >= Arc2->Width - t2
+              && Arc1->Width + t <= Arc2->Width + t2))
         {
-	  int sa1 = Arc1->StartAngle, d1 = Arc1->Delta;
-	  int sa2 = Arc2->StartAngle, d2 = Arc2->Delta;
+	  Angle sa1 = Arc1->StartAngle, d1 = Arc1->Delta;
+	  Angle sa2 = Arc2->StartAngle, d2 = Arc2->Delta;
 	  /* NB the endpoints have already been checked,
 	     so we just compare the angles */
 
 	  normalize_angles (&sa1, &d1);
 	  normalize_angles (&sa2, &d2);
-	  /* cases like sa1 == sa2 are catched when checking the endpoints */
+	  /* sa1 == sa2 was caught when checking endpoints */
 	  if (sa1 > sa2)
-	    {
-	      if (sa1 < sa2 + d2)
-		return (true);
-	      if (sa1 + d1 > 360 && sa1 + d1 - 360 > sa2)
-		return (true);
-	    }
+            if (sa1 < sa2 + d2 || sa1 + d1 - 360 > sa2)
+              return true;
 	  if (sa2 > sa1)
-	    {
-	      if (sa2 < sa1 + d1)
-		return (true);
-	      if (sa2 + d2 > 360 && sa2 + d2 - 360 > sa1)
-		return (true);
-	    }
+	    if (sa2 < sa1 + d1 || sa2 + d2 - 360 > sa1)
+              return true;
         }
-      return (false);
+      return false;
     }
   r1 = Arc1->Width;
   r2 = Arc2->Width;
-  dl = sqrt (l);
-  if (dl > r1 + r2 || dl + r1 < r2
-      || dl + r2 < r1) /* arcs centerlines are too far or too near */
+  /* arcs centerlines are too far or too near */
+  if (dl > r1 + r2 || dl + r1 < r2 || dl + r2 < r1)
     {
-      /* check the nearst to the other arc center point */
+      /* check the nearest to the other arc's center point */
       dx = pdx * r1 / dl;
       dy = pdy * r1 / dl;
       if (dl + r1 < r2) /* Arc1 inside Arc2 */
@@ -1475,9 +1431,8 @@ ArcArcIntersect (ArcTypePtr Arc1, ArcTypePtr Arc2)
 	}
 
       if (radius_crosses_arc (Arc1->X + dx, Arc1->Y + dy, Arc1)
-	  && IsPointOnArc ((float)(Arc1->X + dx), (float)(Arc1->Y + dy),
-			   (float)t, Arc2))
-	return (true);
+	  && IsPointOnArc (Arc1->X + dx, Arc1->Y + dy, t, Arc2))
+	return true;
 
       dx = - pdx * r2 / dl;
       dy = - pdy * r2 / dl;
@@ -1488,12 +1443,12 @@ ArcArcIntersect (ArcTypePtr Arc1, ArcTypePtr Arc2)
 	}
 
       if (radius_crosses_arc (Arc2->X + dx, Arc2->Y + dy, Arc2)
-	  && IsPointOnArc ((float)(Arc2->X + dx), (float)(Arc2->Y + dy),
-			   (float)t1, Arc1))
-	return (true);
-      return (false);
+	  && IsPointOnArc (Arc2->X + dx, Arc2->Y + dy, t1, Arc1))
+	return true;
+      return false;
     }
 
+  l = dl * dl;
   r1 *= r1;
   r2 *= r2;
   a = 0.5 * (r1 - r2 + l) / l;
@@ -1510,26 +1465,26 @@ ArcArcIntersect (ArcTypePtr Arc1, ArcTypePtr Arc2)
   dx = d * pdx;
   dy = d * pdy;
   if (radius_crosses_arc (x + dy, y - dx, Arc1)
-      && IsPointOnArc ((float)(x + dy), (float)(y - dx), (float)t, Arc2))
-    return (true);
+      && IsPointOnArc (x + dy, y - dx, t, Arc2))
+    return true;
   if (radius_crosses_arc (x + dy, y - dx, Arc2)
-      && IsPointOnArc ((float)(x + dy), (float)(y - dx), (float)t1, Arc1))
-    return (true);
+      && IsPointOnArc (x + dy, y - dx, t1, Arc1))
+    return true;
 
   if (radius_crosses_arc (x - dy, y + dx, Arc1)
-      && IsPointOnArc ((float)(x - dy), (float)(y + dx), (float)t, Arc2))
-    return (true);
+      && IsPointOnArc (x - dy, y + dx, t, Arc2))
+    return true;
   if (radius_crosses_arc (x - dy, y + dx, Arc2)
-      && IsPointOnArc ((float)(x - dy), (float)(y + dx), (float)t1, Arc1))
-    return (true);
-  return (false);
+      && IsPointOnArc (x - dy, y + dx, t1, Arc1))
+    return true;
+  return false;
 }
 
 /* ---------------------------------------------------------------------------
  * Tests if point is same as line end point
  */
 static bool
-IsRatPointOnLineEnd (PointTypePtr Point, LineTypePtr Line)
+IsRatPointOnLineEnd (PointType *Point, LineType *Line)
 {
   if ((Point->X == Line->Point1.X
        && Point->Y == Line->Point1.Y)
@@ -1539,23 +1494,21 @@ IsRatPointOnLineEnd (PointTypePtr Point, LineTypePtr Line)
 }
 
 static void 
-form_slanted_rectangle(PointType p[4],LineTypePtr l)
+form_slanted_rectangle (PointType p[4], LineType *l)
 /* writes vertices of a squared line */
 {
-   int dX= l->Point2.X - l->Point1.X, dY = l->Point2.Y - l->Point1.Y, 
-     w = l->Thickness;
-   double dwx, dwy;
-   if (dY == 0)
+   double dwx = 0, dwy = 0;
+   if (l->Point1.Y == l->Point2.Y)
+     dwx = l->Thickness / 2.0;
+   else if (l->Point1.X == l->Point2.X)
+     dwy = l->Thickness / 2.0;
+   else 
      {
-       dwx = w / 2; dwy = 0;
-     }
-    else if (dX == 0)
-     {
-       dwx = 0; dwy = w / 2;
-     }
-    else 
-     {double r = sqrt (dX * (double) dX + dY * (double) dY) * 2;
-       dwx = w / r * dX; dwy =  w / r * dY;
+       Coord dX = l->Point2.X - l->Point1.X;
+       Coord dY = l->Point2.Y - l->Point1.Y;
+       double r = Distance (l->Point1.X, l->Point1.Y, l->Point2.X, l->Point2.Y);
+       dwx = l->Thickness / 2.0 / r * dX;
+       dwy = l->Thickness / 2.0 / r * dY;
      }
     p[0].X = l->Point1.X - dwx + dwy; p[0].Y = l->Point1.Y - dwy - dwx;
     p[1].X = l->Point1.X - dwx - dwy; p[1].Y = l->Point1.Y - dwy + dwx;
@@ -1618,169 +1571,83 @@ form_slanted_rectangle(PointType p[4],LineTypePtr l)
  *
  */
 bool
-LineLineIntersect (LineTypePtr Line1, LineTypePtr Line2)
+LineLineIntersect (LineType *Line1, LineType *Line2)
 {
-  register float dx, dy, dx1, dy1, s, r;
+  double s, r;
+  double line1_dx, line1_dy, line2_dx, line2_dy,
+         point1_dx, point1_dy;
   if (TEST_FLAG (SQUAREFLAG, Line1))/* pretty reckless recursion */
     {
-      PointType p[4];form_slanted_rectangle(p,Line1);
-      return IsLineInQuadrangle(p,Line2);
+      PointType p[4];
+      form_slanted_rectangle (p, Line1);
+      return IsLineInQuadrangle (p, Line2);
     }
   /* here come only round Line1 because IsLineInQuadrangle()
      calls LineLineIntersect() with first argument rounded*/
   if (TEST_FLAG (SQUAREFLAG, Line2))
     {
-      PointType p[4];form_slanted_rectangle(p,Line2);
-      return IsLineInQuadrangle(p,Line1);
+      PointType p[4];
+      form_slanted_rectangle (p, Line2);
+      return IsLineInQuadrangle (p, Line1);
     }
   /* now all lines are round */
 
-#if 0
-  if (Line1->BoundingBox.X1 - Bloat > Line2->BoundBoxing.X2
-      || Line1->BoundingBox.X2 + Bloat < Line2->BoundingBox.X1
-      || Line1->BoundingBox.Y1 - Bloat < Line2->BoundingBox.Y2
-      || Line1->BoundingBox.Y2 + Bloat < Line2->BoundingBox.Y1)
-    return false;
-#endif
+  /* Check endpoints: this provides a quick exit, catches
+   *  cases where the "real" lines don't intersect but the
+   *  thick lines touch, and ensures that the dx/dy business
+   *  below does not cause a divide-by-zero. */
+  if (IsPointInPad (Line2->Point1.X, Line2->Point1.Y,
+                    MAX (Line2->Thickness / 2 + Bloat, 0),
+                    (PadType *) Line1)
+       || IsPointInPad (Line2->Point2.X, Line2->Point2.Y,
+                        MAX (Line2->Thickness / 2 + Bloat, 0),
+                        (PadType *) Line1)
+       || IsPointInPad (Line1->Point1.X, Line1->Point1.Y,
+                        MAX (Line1->Thickness / 2 + Bloat, 0),
+                        (PadType *) Line2)
+       || IsPointInPad (Line1->Point2.X, Line1->Point2.Y,
+                        MAX (Line1->Thickness / 2 + Bloat, 0),
+                        (PadType *) Line2))
+    return true;
 
   /* setup some constants */
-  dx = (float) (Line1->Point2.X - Line1->Point1.X);
-  dy = (float) (Line1->Point2.Y - Line1->Point1.Y);
-  dx1 = (float) (Line1->Point1.X - Line2->Point1.X);
-  dy1 = (float) (Line1->Point1.Y - Line2->Point1.Y);
-  s = dy1 * dx - dx1 * dy;
+  line1_dx = Line1->Point2.X - Line1->Point1.X;
+  line1_dy = Line1->Point2.Y - Line1->Point1.Y;
+  line2_dx = Line2->Point2.X - Line2->Point1.X;
+  line2_dy = Line2->Point2.Y - Line2->Point1.Y;
+  point1_dx = Line1->Point1.X - Line2->Point1.X;
+  point1_dy = Line1->Point1.Y - Line2->Point1.Y;
 
-  r =
-    dx * (float) (Line2->Point2.Y -
-                  Line2->Point1.Y) -
-    dy * (float) (Line2->Point2.X - Line2->Point1.X);
+  /* If either line is a point, we have failed already, since the
+   *   endpoint check above will have caught an "intersection". */
+  if ((line1_dx == 0 && line1_dy == 0)
+      || (line2_dx == 0 && line2_dy == 0))
+    return false;
 
-  /* handle parallel lines */
+  /* set s to cross product of Line1 and the line
+   *   Line1.Point1--Line2.Point1 (as vectors) */
+  s = point1_dy * line1_dx - point1_dx * line1_dy;
+
+  /* set r to cross product of both lines (as vectors) */
+  r = line1_dx * line2_dy - line1_dy * line2_dx;
+
+  /* No cross product means parallel lines, or maybe Line2 is
+   *  zero-length. In either case, since we did a bounding-box
+   *  check before getting here, the above IsPointInPad() checks
+   *  will have caught any intersections. */
   if (r == 0.0)
-    {
-      /* at least one of the two end points of one segment
-       * has to have a minimum distance to the other segment
-       *
-       * a first quick check is to see if the distance between
-       * the two lines is less then their half total thickness
-       */
-      register float distance;
+    return false;
 
-      /* perhaps line 1 is really just a point */
-      if ((dx == 0) && (dy == 0))
-        return IsPointInPad
-                (Line1->Point1.X,
-                 Line1->Point1.Y,
-                 MAX (Line1->Thickness / 2 +
-                      Bloat, 0),
-                 (PadTypePtr) Line2);
-      s = s * s / (dx * dx + dy * dy);
+  s /= r;
+  r = (point1_dy * line2_dx - point1_dx * line2_dy) / r;
 
+  /* intersection is at least on AB */
+  if (r >= 0.0 && r <= 1.0)
+    return (s >= 0.0 && s <= 1.0);
 
-      distance =
-        MAX ((float) 0.5 *
-             (Line1->Thickness + Line2->Thickness) + fBloat, 0.0);
-      distance *= distance;
-      if (s > distance)
-        return (false);
-      if (IsPointInPad (Line2->Point1.
-                               X,
-                               Line2->Point1.
-                               Y,
-                               MAX (Line2->
-                                    Thickness
-                                    / 2 +
-                                    Bloat, 0),
-                               (PadTypePtr)
-                               Line1)
-           || IsPointInPad (Line2->
-                                  Point2.X,
-                                  Line2->
-                                  Point2.Y,
-                                  MAX (Line2->
-                                       Thickness
-                                       / 2 + Bloat, 0), (PadTypePtr) Line1))
-        return (true);
-      return ((IsPointInPad (Line1->Point1.
-                               X,
-                               Line1->Point1.
-                               Y,
-                               MAX (Line1->
-                                    Thickness
-                                    / 2 +
-                                    Bloat, 0),
-                               (PadTypePtr)
-                               Line2)
-           || IsPointInPad (Line1->
-                                  Point2.X,
-                                  Line1->
-                                  Point2.Y,
-                                  MAX (Line1->
-                                       Thickness
-                                       / 2 + Bloat, 0), (PadTypePtr) Line2)));
-    }
-  else
-    {
-      s /= r;
-      r =
-        (dy1 *
-         (float) (Line2->Point2.X -
-                  Line2->Point1.X) -
-         dx1 * (float) (Line2->Point2.Y - Line2->Point1.Y)) / r;
-
-      /* intersection is at least on AB */
-      if (r >= 0.0 && r <= 1.0)
-        {
-          if (s >= 0.0 && s <= 1.0)
-            return (true);
-
-          /* intersection on AB and extension of CD */
-          return (s < 0.0 ?
-                  IsPointInPad
-                  (Line2->Point1.X,
-                   Line2->Point1.Y,
-                   MAX (0.5 *
-                        Line2->Thickness +
-                        fBloat, 0.0),
-                   (PadTypePtr)Line1) :
-                  IsPointInPad
-                  (Line2->Point2.X,
-                   Line2->Point2.Y,
-                   MAX (0.5 * Line2->Thickness + fBloat, 0.0), (PadTypePtr)Line1));
-        }
-
-      /* intersection is at least on CD */
-      if (s >= 0.0 && s <= 1.0)
-        {
-          /* intersection on CD and extension of AB */
-          return (r < 0.0 ?
-                  IsPointInPad
-                  (Line1->Point1.X,
-                   Line1->Point1.Y,
-                   MAX (Line1->Thickness /
-                        2.0 + fBloat, 0.0),
-                   (PadTypePtr)Line2) :
-                  IsPointInPad
-                  (Line1->Point2.X,
-                   Line1->Point2.Y,
-                   MAX (Line1->Thickness / 2.0 + fBloat, 0.0), (PadTypePtr)Line2));
-        }
-
-      /* no intersection of zero-width lines but maybe of thick lines;
-       * Must check each end point to exclude intersection
-       */
-      if (IsPointInPad (Line1->Point1.X, Line1->Point1.Y,
-                         Line1->Thickness / 2.0 + fBloat, (PadTypePtr)Line2))
-        return true;
-      if (IsPointInPad (Line1->Point2.X, Line1->Point2.Y,
-                         Line1->Thickness / 2.0 + fBloat, (PadTypePtr)Line2))
-        return true;
-      if (IsPointInPad (Line2->Point1.X, Line2->Point1.Y,
-                         Line2->Thickness / 2.0 + fBloat, (PadTypePtr)Line1))
-        return true;
-      return IsPointInPad (Line2->Point2.X, Line2->Point2.Y,
-                            Line2->Thickness / 2.0 + fBloat, (PadTypePtr)Line1);
-    }
+  /* intersection is at least on CD */
+  /* [removed this case since it always returns false --asp] */
+  return false;
 }
 
 /*---------------------------------------------------
@@ -1813,22 +1680,22 @@ LineLineIntersect (LineTypePtr Line1, LineTypePtr Line2)
  * The end points are hell so they are checked individually
  */
 bool
-LineArcIntersect (LineTypePtr Line, ArcTypePtr Arc)
+LineArcIntersect (LineType *Line, ArcType *Arc)
 {
-  register float dx, dy, dx1, dy1, l, d, r, r2, Radius;
-  BoxTypePtr box;
+  double dx, dy, dx1, dy1, l, d, r, r2, Radius;
+  BoxType *box;
 
-  dx = (float) (Line->Point2.X - Line->Point1.X);
-  dy = (float) (Line->Point2.Y - Line->Point1.Y);
-  dx1 = (float) (Line->Point1.X - Arc->X);
-  dy1 = (float) (Line->Point1.Y - Arc->Y);
+  dx = Line->Point2.X - Line->Point1.X;
+  dy = Line->Point2.Y - Line->Point1.Y;
+  dx1 = Line->Point1.X - Arc->X;
+  dy1 = Line->Point1.Y - Arc->Y;
   l = dx * dx + dy * dy;
   d = dx * dy1 - dy * dx1;
   d *= d;
 
   /* use the larger diameter circle first */
   Radius =
-    Arc->Width + MAX (0.5 * (Arc->Thickness + Line->Thickness) + fBloat, 0.0);
+    Arc->Width + MAX (0.5 * (Arc->Thickness + Line->Thickness) + Bloat, 0.0);
   Radius *= Radius;
   r2 = Radius * l - d;
   /* projection doesn't even intersect circle when r2 < 0 */
@@ -1838,11 +1705,11 @@ LineArcIntersect (LineTypePtr Line, ArcTypePtr Arc)
   /* of intersection is beyond the line end */
   if (IsPointOnArc
       (Line->Point1.X, Line->Point1.Y,
-       MAX (0.5 * Line->Thickness + fBloat, 0.0), Arc))
+       MAX (0.5 * Line->Thickness + Bloat, 0.0), Arc))
     return (true);
   if (IsPointOnArc
       (Line->Point2.X, Line->Point2.Y,
-       MAX (0.5 * Line->Thickness + fBloat, 0.0), Arc))
+       MAX (0.5 * Line->Thickness + Bloat, 0.0), Arc))
     return (true);
   if (l == 0.0)
     return (false);
@@ -1852,19 +1719,19 @@ LineArcIntersect (LineTypePtr Line, ArcTypePtr Arc)
   if (r >= 0 && r <= 1
       && IsPointOnArc (Line->Point1.X + r * dx,
                        Line->Point1.Y + r * dy,
-                       MAX (0.5 * Line->Thickness + fBloat, 0.0), Arc))
+                       MAX (0.5 * Line->Thickness + Bloat, 0.0), Arc))
     return (true);
   r = (Radius - r2) / l;
   if (r >= 0 && r <= 1
       && IsPointOnArc (Line->Point1.X + r * dx,
                        Line->Point1.Y + r * dy,
-                       MAX (0.5 * Line->Thickness + fBloat, 0.0), Arc))
+                       MAX (0.5 * Line->Thickness + Bloat, 0.0), Arc))
     return (true);
   /* check arc end points */
   box = GetArcEnds (Arc);
-  if (IsPointInPad (box->X1, box->Y1, Arc->Thickness * 0.5 + fBloat, (PadTypePtr)Line))
+  if (IsPointInPad (box->X1, box->Y1, Arc->Thickness * 0.5 + Bloat, (PadType *)Line))
     return true;
-  if (IsPointInPad (box->X2, box->Y2, Arc->Thickness * 0.5 + fBloat, (PadTypePtr)Line))
+  if (IsPointInPad (box->X2, box->Y2, Arc->Thickness * 0.5 + Bloat, (PadType *)Line))
     return true;
   return false;
 }
@@ -1872,7 +1739,7 @@ LineArcIntersect (LineTypePtr Line, ArcTypePtr Arc)
 static int
 LOCtoArcLine_callback (const BoxType * b, void *cl)
 {
-  LineTypePtr line = (LineTypePtr) b;
+  LineType *line = (LineType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, line) && LineArcIntersect (line, &i->arc))
@@ -1886,7 +1753,7 @@ LOCtoArcLine_callback (const BoxType * b, void *cl)
 static int
 LOCtoArcArc_callback (const BoxType * b, void *cl)
 {
-  ArcTypePtr arc = (ArcTypePtr) b;
+  ArcType *arc = (ArcType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!arc->Thickness)
@@ -1902,7 +1769,7 @@ LOCtoArcArc_callback (const BoxType * b, void *cl)
 static int
 LOCtoArcPad_callback (const BoxType * b, void *cl)
 {
-  PadTypePtr pad = (PadTypePtr) b;
+  PadType *pad = (PadType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pad) && i->layer ==
@@ -1920,15 +1787,10 @@ LOCtoArcPad_callback (const BoxType * b, void *cl)
  * Xij means Xj at arc i
  */
 static bool
-LookupLOConnectionsToArc (ArcTypePtr Arc, Cardinal LayerGroup)
+LookupLOConnectionsToArc (ArcType *Arc, Cardinal LayerGroup)
 {
   Cardinal entry;
-  LocationType xlow, xhigh;
   struct lo_info info;
-
-  /* the maximum possible distance */
-  xlow = Arc->BoundingBox.X1 - MAX (MAX_PADSIZE, MAX_LINESIZE) / 2;
-  xhigh = Arc->BoundingBox.X2 + MAX (MAX_PADSIZE, MAX_LINESIZE) / 2;
 
   info.arc = *Arc;
   EXPAND_BOUNDS (&info.arc);
@@ -1983,7 +1845,7 @@ LookupLOConnectionsToArc (ArcTypePtr Arc, Cardinal LayerGroup)
 static int
 LOCtoLineLine_callback (const BoxType * b, void *cl)
 {
-  LineTypePtr line = (LineTypePtr) b;
+  LineType *line = (LineType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, line) && LineLineIntersect (&i->line, line))
@@ -1997,7 +1859,7 @@ LOCtoLineLine_callback (const BoxType * b, void *cl)
 static int
 LOCtoLineArc_callback (const BoxType * b, void *cl)
 {
-  ArcTypePtr arc = (ArcTypePtr) b;
+  ArcType *arc = (ArcType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!arc->Thickness)
@@ -2013,7 +1875,7 @@ LOCtoLineArc_callback (const BoxType * b, void *cl)
 static int
 LOCtoLineRat_callback (const BoxType * b, void *cl)
 {
-  RatTypePtr rat = (RatTypePtr) b;
+  RatType *rat = (RatType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, rat))
@@ -2037,7 +1899,7 @@ LOCtoLineRat_callback (const BoxType * b, void *cl)
 static int
 LOCtoLinePad_callback (const BoxType * b, void *cl)
 {
-  PadTypePtr pad = (PadTypePtr) b;
+  PadType *pad = (PadType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pad) && i->layer ==
@@ -2055,7 +1917,7 @@ LOCtoLinePad_callback (const BoxType * b, void *cl)
  * Xij means Xj at line i
  */
 static bool
-LookupLOConnectionsToLine (LineTypePtr Line, Cardinal LayerGroup,
+LookupLOConnectionsToLine (LineType *Line, Cardinal LayerGroup,
                            bool PolysTo)
 {
   Cardinal entry;
@@ -2126,7 +1988,7 @@ LookupLOConnectionsToLine (LineTypePtr Line, Cardinal LayerGroup,
 static int
 LOT_Linecallback (const BoxType * b, void *cl)
 {
-  LineTypePtr line = (LineTypePtr) b;
+  LineType *line = (LineType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, line) && LineLineIntersect (&i->line, line))
@@ -2137,7 +1999,7 @@ LOT_Linecallback (const BoxType * b, void *cl)
 static int
 LOT_Arccallback (const BoxType * b, void *cl)
 {
-  ArcTypePtr arc = (ArcTypePtr) b;
+  ArcType *arc = (ArcType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!arc->Thickness)
@@ -2150,7 +2012,7 @@ LOT_Arccallback (const BoxType * b, void *cl)
 static int
 LOT_Padcallback (const BoxType * b, void *cl)
 {
-  PadTypePtr pad = (PadTypePtr) b;
+  PadType *pad = (PadType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pad) && i->layer ==
@@ -2161,7 +2023,7 @@ LOT_Padcallback (const BoxType * b, void *cl)
 }
 
 static bool
-LOTouchesLine (LineTypePtr Line, Cardinal LayerGroup)
+LOTouchesLine (LineType *Line, Cardinal LayerGroup)
 {
   Cardinal entry;
   struct lo_info info;
@@ -2222,14 +2084,14 @@ LOTouchesLine (LineTypePtr Line, Cardinal LayerGroup)
 struct rat_info
 {
   Cardinal layer;
-  PointTypePtr Point;
+  PointType *Point;
   jmp_buf env;
 };
 
 static int
 LOCtoRat_callback (const BoxType * b, void *cl)
 {
-  LineTypePtr line = (LineTypePtr) b;
+  LineType *line = (LineType *) b;
   struct rat_info *i = (struct rat_info *) cl;
 
   if (!TEST_FLAG (TheFlag, line) &&
@@ -2245,7 +2107,7 @@ LOCtoRat_callback (const BoxType * b, void *cl)
 static int
 PolygonToRat_callback (const BoxType * b, void *cl)
 {
-  PolygonTypePtr polygon = (PolygonTypePtr) b;
+  PolygonType *polygon = (PolygonType *) b;
   struct rat_info *i = (struct rat_info *) cl;
 
   if (!TEST_FLAG (TheFlag, polygon) && polygon->Clipped &&
@@ -2261,7 +2123,7 @@ PolygonToRat_callback (const BoxType * b, void *cl)
 static int
 LOCtoPad_callback (const BoxType * b, void *cl)
 {
-  PadTypePtr pad = (PadTypePtr) b;
+  PadType *pad = (PadType *) b;
   struct rat_info *i = (struct rat_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pad) && i->layer ==
@@ -2283,7 +2145,7 @@ LOCtoPad_callback (const BoxType * b, void *cl)
  * Xij means Xj at line i
  */
 static bool
-LookupLOConnectionsToRatEnd (PointTypePtr Point, Cardinal LayerGroup)
+LookupLOConnectionsToRatEnd (PointType *Point, Cardinal LayerGroup)
 {
   Cardinal entry;
   struct rat_info info;
@@ -2329,7 +2191,7 @@ LookupLOConnectionsToRatEnd (PointTypePtr Point, Cardinal LayerGroup)
 static int
 LOCtoPadLine_callback (const BoxType * b, void *cl)
 {
-  LineTypePtr line = (LineTypePtr) b;
+  LineType *line = (LineType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, line) && LinePadIntersect (line, &i->pad))
@@ -2343,7 +2205,7 @@ LOCtoPadLine_callback (const BoxType * b, void *cl)
 static int
 LOCtoPadArc_callback (const BoxType * b, void *cl)
 {
-  ArcTypePtr arc = (ArcTypePtr) b;
+  ArcType *arc = (ArcType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!arc->Thickness)
@@ -2359,7 +2221,7 @@ LOCtoPadArc_callback (const BoxType * b, void *cl)
 static int
 LOCtoPadPoly_callback (const BoxType * b, void *cl)
 {
-  PolygonTypePtr polygon = (PolygonTypePtr) b;
+  PolygonType *polygon = (PolygonType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
 
@@ -2376,7 +2238,7 @@ LOCtoPadPoly_callback (const BoxType * b, void *cl)
 static int
 LOCtoPadRat_callback (const BoxType * b, void *cl)
 {
-  RatTypePtr rat = (RatTypePtr) b;
+  RatType *rat = (RatType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, rat))
@@ -2406,7 +2268,7 @@ LOCtoPadRat_callback (const BoxType * b, void *cl)
 static int
 LOCtoPadPad_callback (const BoxType * b, void *cl)
 {
-  PadTypePtr pad = (PadTypePtr) b;
+  PadType *pad = (PadType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pad) && i->layer ==
@@ -2421,13 +2283,13 @@ LOCtoPadPad_callback (const BoxType * b, void *cl)
  * layergroup. All found connections are added to the list
  */
 static bool
-LookupLOConnectionsToPad (PadTypePtr Pad, Cardinal LayerGroup)
+LookupLOConnectionsToPad (PadType *Pad, Cardinal LayerGroup)
 {
   Cardinal entry;
   struct lo_info info;
 
   if (!TEST_FLAG (SQUAREFLAG, Pad))
-    return (LookupLOConnectionsToLine ((LineTypePtr) Pad, LayerGroup, false));
+    return (LookupLOConnectionsToLine ((LineType *) Pad, LayerGroup, false));
 
   info.pad = *Pad;
   EXPAND_BOUNDS (&info.pad);
@@ -2486,7 +2348,7 @@ LookupLOConnectionsToPad (PadTypePtr Pad, Cardinal LayerGroup)
 static int
 LOCtoPolyLine_callback (const BoxType * b, void *cl)
 {
-  LineTypePtr line = (LineTypePtr) b;
+  LineType *line = (LineType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, line) && IsLineInPolygon (line, &i->polygon))
@@ -2500,7 +2362,7 @@ LOCtoPolyLine_callback (const BoxType * b, void *cl)
 static int
 LOCtoPolyArc_callback (const BoxType * b, void *cl)
 {
-  ArcTypePtr arc = (ArcTypePtr) b;
+  ArcType *arc = (ArcType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!arc->Thickness)
@@ -2516,7 +2378,7 @@ LOCtoPolyArc_callback (const BoxType * b, void *cl)
 static int
 LOCtoPolyPad_callback (const BoxType * b, void *cl)
 {
-  PadTypePtr pad = (PadTypePtr) b;
+  PadType *pad = (PadType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, pad) && i->layer ==
@@ -2532,7 +2394,7 @@ LOCtoPolyPad_callback (const BoxType * b, void *cl)
 static int
 LOCtoPolyRat_callback (const BoxType * b, void *cl)
 {
-  RatTypePtr rat = (RatTypePtr) b;
+  RatType *rat = (RatType *) b;
   struct lo_info *i = (struct lo_info *) cl;
 
   if (!TEST_FLAG (TheFlag, rat))
@@ -2555,7 +2417,7 @@ LOCtoPolyRat_callback (const BoxType * b, void *cl)
  * on the given layergroup. All found connections are added to the list
  */
 static bool
-LookupLOConnectionsToPolygon (PolygonTypePtr Polygon, Cardinal LayerGroup)
+LookupLOConnectionsToPolygon (PolygonType *Polygon, Cardinal LayerGroup)
 {
   Cardinal entry;
   struct lo_info info;
@@ -2631,9 +2493,9 @@ LookupLOConnectionsToPolygon (PolygonTypePtr Polygon, Cardinal LayerGroup)
  * - check all segments of the polygon against the arc.
  */
 bool
-IsArcInPolygon (ArcTypePtr Arc, PolygonTypePtr Polygon)
+IsArcInPolygon (ArcType *Arc, PolygonType *Polygon)
 {
-  BoxTypePtr Box = (BoxType *) Arc;
+  BoxType *Box = (BoxType *) Arc;
 
   /* arcs with clearance never touch polys */
   if (TEST_FLAG (CLEARPOLYFLAG, Polygon) && TEST_FLAG (CLEARLINEFLAG, Arc))
@@ -2663,9 +2525,9 @@ IsArcInPolygon (ArcTypePtr Arc, PolygonTypePtr Polygon)
  * - check all segments of the polygon against the line.
  */
 bool
-IsLineInPolygon (LineTypePtr Line, PolygonTypePtr Polygon)
+IsLineInPolygon (LineType *Line, PolygonType *Polygon)
 {
-  BoxTypePtr Box = (BoxType *) Line;
+  BoxType *Box = (BoxType *) Line;
   POLYAREA *lp;
 
   /* lines with clearance never touch polygons */
@@ -2675,8 +2537,8 @@ IsLineInPolygon (LineTypePtr Line, PolygonTypePtr Polygon)
     return false;
   if (TEST_FLAG(SQUAREFLAG,Line)&&(Line->Point1.X==Line->Point2.X||Line->Point1.Y==Line->Point2.Y))
      {
-       BDimension wid = (Line->Thickness + Bloat + 1) / 2;
-       LocationType x1, x2, y1, y2;
+       Coord wid = (Line->Thickness + Bloat + 1) / 2;
+       Coord x1, x2, y1, y2;
 
        x1 = MIN (Line->Point1.X, Line->Point2.X) - wid;
        y1 = MIN (Line->Point1.Y, Line->Point2.Y) - wid;
@@ -2702,9 +2564,9 @@ IsLineInPolygon (LineTypePtr Line, PolygonTypePtr Polygon)
  * The polygon is assumed to already have been proven non-clearing
  */
 bool
-IsPadInPolygon (PadTypePtr pad, PolygonTypePtr polygon)
+IsPadInPolygon (PadType *pad, PolygonType *polygon)
 {
-    return IsLineInPolygon ((LineTypePtr) pad, polygon);
+    return IsLineInPolygon ((LineType *) pad, polygon);
 }
 
 /* ---------------------------------------------------------------------------
@@ -2714,7 +2576,7 @@ IsPadInPolygon (PadTypePtr pad, PolygonTypePtr polygon)
  * If both fail check all lines of P1 against the ones of P2
  */
 bool
-IsPolygonInPolygon (PolygonTypePtr P1, PolygonTypePtr P2)
+IsPolygonInPolygon (PolygonType *P1, PolygonType *P2)
 {
   if (!P1->Clipped || !P2->Clipped)
     return false;
@@ -2772,7 +2634,7 @@ IsPolygonInPolygon (PolygonTypePtr P1, PolygonTypePtr P2)
  * writes the several names of an element to a file
  */
 static void
-PrintElementNameList (ElementTypePtr Element, FILE * FP)
+PrintElementNameList (ElementType *Element, FILE * FP)
 {
   static DynamicStringType cname, pname, vname;
 
@@ -2786,7 +2648,7 @@ PrintElementNameList (ElementTypePtr Element, FILE * FP)
  * writes the several names of an element to a file
  */
 static void
-PrintConnectionElementName (ElementTypePtr Element, FILE * FP)
+PrintConnectionElementName (ElementType *Element, FILE * FP)
 {
   fputs ("Element", FP);
   PrintElementNameList (Element, FP);
@@ -2797,7 +2659,7 @@ PrintConnectionElementName (ElementTypePtr Element, FILE * FP)
  * prints one {pin,pad,via}/element entry of connection lists
  */
 static void
-PrintConnectionListEntry (char *ObjName, ElementTypePtr Element,
+PrintConnectionListEntry (char *ObjName, ElementType *Element,
                           bool FirstOne, FILE * FP)
 {
   static DynamicStringType oname;
@@ -2823,7 +2685,7 @@ static void
 PrintPadConnections (Cardinal Layer, FILE * FP, bool IsFirst)
 {
   Cardinal i;
-  PadTypePtr ptr;
+  PadType *ptr;
 
   if (!PadList[Layer].Number)
     return;
@@ -2845,7 +2707,7 @@ PrintPadConnections (Cardinal Layer, FILE * FP, bool IsFirst)
     {
       ptr = PADLIST_ENTRY (Layer, i);
       if (ptr != NULL)
-        PrintConnectionListEntry ((char *)EMPTY (ptr->Name), (ElementTypePtr)ptr->Element, false, FP);
+        PrintConnectionListEntry ((char *)EMPTY (ptr->Name), (ElementType *)ptr->Element, false, FP);
       else
         printf ("Skipping NULL ptr in 2nd part of PrintPadConnections\n");
     }
@@ -2859,7 +2721,7 @@ static void
 PrintPinConnections (FILE * FP, bool IsFirst)
 {
   Cardinal i;
-  PinTypePtr pv;
+  PinType *pv;
 
   if (!PVList.Number)
     return;
@@ -2878,7 +2740,7 @@ PrintPinConnections (FILE * FP, bool IsFirst)
     {
       /* get the elements name or assume that its a via */
       pv = PVLIST_ENTRY (i);
-      PrintConnectionListEntry ((char *)EMPTY (pv->Name), (ElementTypePtr)pv->Element, false, FP);
+      PrintConnectionListEntry ((char *)EMPTY (pv->Name), (ElementType *)pv->Element, false, FP);
     }
 }
 
@@ -2895,11 +2757,27 @@ ListsEmpty (bool AndRats)
   if (AndRats)
     empty = empty && (RatList.Location >= RatList.Number);
   for (i = 0; i < max_copper_layer && empty; i++)
-    empty = empty && LineList[i].Location >= LineList[i].Number
-      && ArcList[i].Location >= ArcList[i].Number
-      && PolygonList[i].Location >= PolygonList[i].Number;
+    if (!LAYER_PTR (i)->no_drc)
+      empty = empty && LineList[i].Location >= LineList[i].Number
+        && ArcList[i].Location >= ArcList[i].Number
+        && PolygonList[i].Location >= PolygonList[i].Number;
   return (empty);
 }
+
+static void
+reassign_no_drc_flags (void)
+{
+  int layer;
+
+  for (layer = 0; layer < max_copper_layer; layer++)
+    {
+      LayerType *l = LAYER_PTR (layer);
+      l->no_drc = AttributeGet (l, "PCB::skip-drc") != NULL;
+    }
+}
+
+
+
 
 /* ---------------------------------------------------------------------------
  * loops till no more connections are found 
@@ -2908,18 +2786,16 @@ static bool
 DoIt (bool AndRats, bool AndDraw)
 {
   bool newone = false;
+  reassign_no_drc_flags ();
   do
     {
       /* lookup connections; these are the steps (2) to (4)
        * from the description
        */
-      newone = LookupPVConnectionsToPVList ();
-      if (!newone)
-        newone = LookupLOConnectionsToPVList (AndRats);
-      if (!newone)
-        newone = LookupLOConnectionsToLOList (AndRats);
-      if (!newone)
-        newone = LookupPVConnectionsToLOList (AndRats);
+      newone = LookupPVConnectionsToPVList () ||
+               LookupLOConnectionsToPVList (AndRats) ||
+               LookupLOConnectionsToLOList (AndRats) ||
+               LookupPVConnectionsToLOList (AndRats);
       if (AndDraw)
         DrawNewConnections ();
     }
@@ -2935,7 +2811,7 @@ DoIt (bool AndRats, bool AndDraw)
  */
 
 bool
-lineClear (LineTypePtr line, Cardinal group)
+lineClear (LineType *line, Cardinal group)
 {
   if (LOTouchesLine (line, group))
     return (false);
@@ -2948,7 +2824,7 @@ lineClear (LineTypePtr line, Cardinal group)
  * prints all unused pins of an element to file FP
  */
 static bool
-PrintAndSelectUnusedPinsAndPadsOfElement (ElementTypePtr Element, FILE * FP)
+PrintAndSelectUnusedPinsAndPadsOfElement (ElementType *Element, FILE * FP)
 {
   bool first = true;
   Cardinal number;
@@ -3084,7 +2960,7 @@ PrepareNextLoop (FILE * FP)
  * Returns true if operation was aborted
  */
 static bool
-PrintElementConnections (ElementTypePtr Element, FILE * FP, bool AndDraw)
+PrintElementConnections (ElementType *Element, FILE * FP, bool AndDraw)
 {
   PrintConnectionElementName (Element, FP);
 
@@ -3173,8 +3049,7 @@ DrawNewConnections (void)
           /* draw all new polygons */
           position = PolygonList[layer].DrawLocation;
           for (; position < PolygonList[layer].Number; position++)
-            DrawPolygon
-              (LAYER_PTR (layer), POLYGONLIST_ENTRY (layer, position));
+            DrawPolygon (LAYER_PTR (layer), POLYGONLIST_ENTRY (layer, position));
           PolygonList[layer].DrawLocation = PolygonList[layer].Number;
         }
     }
@@ -3195,7 +3070,7 @@ DrawNewConnections (void)
    */
   while (PVList.DrawLocation < PVList.Number)
     {
-      PinTypePtr pv = PVLIST_ENTRY (PVList.DrawLocation);
+      PinType *pv = PVLIST_ENTRY (PVList.DrawLocation);
 
       if (TEST_FLAG (PINFLAG, pv))
         {
@@ -3220,7 +3095,7 @@ DrawNewConnections (void)
  * find all connections to pins within one element
  */
 void
-LookupElementConnections (ElementTypePtr Element, FILE * FP)
+LookupElementConnections (ElementType *Element, FILE * FP)
 {
   /* reset all currently marked connections */
   User = true;
@@ -3278,14 +3153,14 @@ ListStart (int type, void *ptr1, void *ptr2, void *ptr3)
     case PIN_TYPE:
     case VIA_TYPE:
       {
-        if (ADD_PV_TO_LIST ((PinTypePtr) ptr2))
+        if (ADD_PV_TO_LIST ((PinType *) ptr2))
           return true;
         break;
       }
 
     case RATLINE_TYPE:
       {
-        if (ADD_RAT_TO_LIST ((RatTypePtr) ptr1))
+        if (ADD_RAT_TO_LIST ((RatType *) ptr1))
           return true;
         break;
       }
@@ -3293,9 +3168,9 @@ ListStart (int type, void *ptr1, void *ptr2, void *ptr3)
     case LINE_TYPE:
       {
         int layer = GetLayerNumber (PCB->Data,
-                                    (LayerTypePtr) ptr1);
+                                    (LayerType *) ptr1);
 
-        if (ADD_LINE_TO_LIST (layer, (LineTypePtr) ptr2))
+        if (ADD_LINE_TO_LIST (layer, (LineType *) ptr2))
           return true;
         break;
       }
@@ -3303,9 +3178,9 @@ ListStart (int type, void *ptr1, void *ptr2, void *ptr3)
     case ARC_TYPE:
       {
         int layer = GetLayerNumber (PCB->Data,
-                                    (LayerTypePtr) ptr1);
+                                    (LayerType *) ptr1);
 
-        if (ADD_ARC_TO_LIST (layer, (ArcTypePtr) ptr2))
+        if (ADD_ARC_TO_LIST (layer, (ArcType *) ptr2))
           return true;
         break;
       }
@@ -3313,16 +3188,16 @@ ListStart (int type, void *ptr1, void *ptr2, void *ptr3)
     case POLYGON_TYPE:
       {
         int layer = GetLayerNumber (PCB->Data,
-                                    (LayerTypePtr) ptr1);
+                                    (LayerType *) ptr1);
 
-        if (ADD_POLYGON_TO_LIST (layer, (PolygonTypePtr) ptr2))
+        if (ADD_POLYGON_TO_LIST (layer, (PolygonType *) ptr2))
           return true;
         break;
       }
 
     case PAD_TYPE:
       {
-        PadTypePtr pad = (PadTypePtr) ptr2;
+        PadType *pad = (PadType *) ptr2;
         if (ADD_PAD_TO_LIST
             (TEST_FLAG
              (ONSOLDERFLAG, pad) ? SOLDER_LAYER : COMPONENT_LAYER, pad))
@@ -3341,8 +3216,7 @@ ListStart (int type, void *ptr1, void *ptr2, void *ptr3)
  * also the action is marked as undoable if AndDraw is true
  */
 void
-LookupConnection (LocationType X, LocationType Y, bool AndDraw,
-                  BDimension Range, int which_flag)
+LookupConnection (Coord X, Coord Y, bool AndDraw, Coord Range, int which_flag)
 {
   void *ptr1, *ptr2, *ptr3;
   char *name;
@@ -3350,6 +3224,7 @@ LookupConnection (LocationType X, LocationType Y, bool AndDraw,
 
   /* check if there are any pins or pads at that position */
 
+	reassign_no_drc_flags ();
 
   type
     = SearchObjectByLocation (LOOKUP_FIRST, &ptr1, &ptr2, &ptr3, X, Y, Range);
@@ -3364,10 +3239,10 @@ LookupConnection (LocationType X, LocationType Y, bool AndDraw,
       if (type & SILK_TYPE)
         {
           int laynum = GetLayerNumber (PCB->Data,
-                                       (LayerTypePtr) ptr1);
+                                       (LayerType *) ptr1);
 
-          /* don't mess with silk objects! */
-          if (laynum >= max_copper_layer)
+          /* don't mess with non-conducting objects! */
+          if (laynum >= max_copper_layer || ((LayerType *)ptr1)->no_drc)
             return;
         }
     }
@@ -3619,7 +3494,7 @@ DumpList (void)
 static bool
 DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
 {
-  LocationType x, y;
+  Coord x, y;
   int object_count;
   long int *object_id_list;
   int *object_type_list;
@@ -3628,7 +3503,6 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
   if (PCB->Shrink != 0)
     {
       Bloat = -PCB->Shrink;
-      fBloat = (float) -PCB->Shrink;
       TheFlag = DRCFLAG | SELECTEDFLAG;
       ListStart (What, ptr1, ptr2, ptr3);
       DoIt (true, false);
@@ -3637,7 +3511,6 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
       TheFlag = FOUNDFLAG;
       ListStart (What, ptr1, ptr2, ptr3);
       Bloat = 0;
-      fBloat = 0.0;
       drc = true;               /* abort the search if we find anything not already found */
       if (DoIt (true, false))
         {
@@ -3648,16 +3521,13 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
           User = true;
           drc = false;
           Bloat = -PCB->Shrink;
-          fBloat = (float) -PCB->Shrink;
           TheFlag = SELECTEDFLAG;
-          RestoreUndoSerialNumber ();
           ListStart (What, ptr1, ptr2, ptr3);
           DoIt (true, true);
           DumpList ();
           ListStart (What, ptr1, ptr2, ptr3);
           TheFlag = FOUNDFLAG;
           Bloat = 0;
-          fBloat = 0.0;
           drc = true;
           DoIt (true, true);
           DumpList ();
@@ -3673,9 +3543,7 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
                                              0,     /* ANGLE OF ERROR UNKNOWN */
                                              FALSE, /* MEASUREMENT OF ERROR UNKNOWN */
                                              0,     /* MAGNITUDE OF ERROR UNKNOWN */
-                                             LENGTH_TO_HUMAN(PCB->Shrink),
-                                             LENGTH_DIGITS,
-                                             LENGTH_UNITS_STRING,
+                                             PCB->Shrink,
                                              object_count,
                                              object_id_list,
                                              object_type_list);
@@ -3697,7 +3565,6 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
   TheFlag = FOUNDFLAG;
   ListStart (What, ptr1, ptr2, ptr3);
   Bloat = PCB->Bloat;
-  fBloat = (float) PCB->Bloat;
   drc = true;
   while (DoIt (true, false))
     {
@@ -3708,8 +3575,6 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
       User = true;
       drc = false;
       Bloat = 0;
-      fBloat = 0.0;
-      RestoreUndoSerialNumber ();
       TheFlag = SELECTEDFLAG;
       ListStart (What, ptr1, ptr2, ptr3);
       DoIt (true, true);
@@ -3717,7 +3582,6 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
       TheFlag = FOUNDFLAG;
       ListStart (What, ptr1, ptr2, ptr3);
       Bloat = PCB->Bloat;
-      fBloat = (float) PCB->Bloat;
       drc = true;
       DoIt (true, true);
       DumpList ();
@@ -3731,9 +3595,7 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
                                          0,     /* ANGLE OF ERROR UNKNOWN */
                                          FALSE, /* MEASUREMENT OF ERROR UNKNOWN */
                                          0,     /* MAGNITUDE OF ERROR UNKNOWN */
-                                         LENGTH_TO_HUMAN(PCB->Bloat),
-                                         LENGTH_DIGITS,
-                                         LENGTH_UNITS_STRING,
+                                         PCB->Bloat,
                                          object_count,
                                          object_id_list,
                                          object_type_list);
@@ -3750,13 +3612,11 @@ DRCFind (int What, void *ptr1, void *ptr2, void *ptr3)
       /* highlight the rest of the encroaching net so it's not reported again */
       TheFlag |= SELECTEDFLAG;
       Bloat = 0;
-      fBloat = 0.0;
       ListStart (thing_type, thing_ptr1, thing_ptr2, thing_ptr3);
       DoIt (true, true);
       DumpList ();
       drc = true;
       Bloat = PCB->Bloat;
-      fBloat = (float) PCB->Bloat;
       ListStart (What, ptr1, ptr2, ptr3);
     }
   drc = false;
@@ -3788,20 +3648,20 @@ RestoreFindFlag (void)
 /* DRC clearance callback */
 
 static int
-drc_callback (DataTypePtr data, LayerTypePtr layer, PolygonTypePtr polygon,
+drc_callback (DataType *data, LayerType *layer, PolygonType *polygon,
               int type, void *ptr1, void *ptr2)
 {
   char *message;
-  LocationType x, y;
+  Coord x, y;
   int object_count;
   long int *object_id_list;
   int *object_type_list;
   DrcViolationType *violation;
 
-  LineTypePtr line = (LineTypePtr) ptr2;
-  ArcTypePtr arc = (ArcTypePtr) ptr2;
-  PinTypePtr pin = (PinTypePtr) ptr2;
-  PadTypePtr pad = (PadTypePtr) ptr2;
+  LineType *line = (LineType *) ptr2;
+  ArcType *arc = (ArcType *) ptr2;
+  PinType *pin = (PinType *) ptr2;
+  PadType *pad = (PadType *) ptr2;
 
   thing_type = type;
   thing_ptr1 = ptr1;
@@ -3875,9 +3735,7 @@ doIsBad:
                                      0,     /* ANGLE OF ERROR UNKNOWN */
                                      FALSE, /* MEASUREMENT OF ERROR UNKNOWN */
                                      0,     /* MAGNITUDE OF ERROR UNKNOWN */
-                                     LENGTH_TO_HUMAN(PCB->Bloat),
-                                     LENGTH_DIGITS,
-                                     LENGTH_UNITS_STRING,
+                                     PCB->Bloat,
                                      object_count,
                                      object_id_list,
                                      object_type_list);
@@ -3902,7 +3760,7 @@ doIsBad:
 int
 DRCAll (void)
 {
-  LocationType x, y;
+  Coord x, y;
   int object_count;
   long int *object_id_list;
   int *object_type_list;
@@ -4001,10 +3859,8 @@ DRCAll (void)
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN(line->Thickness),
-                                               LENGTH_TO_HUMAN(PCB->minWid),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               line->Thickness,
+                                               PCB->minWid,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4045,10 +3901,8 @@ DRCAll (void)
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN(arc->Thickness),
-                                               LENGTH_TO_HUMAN(PCB->minWid),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               arc->Thickness,
+                                               PCB->minWid,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4090,10 +3944,8 @@ DRCAll (void)
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN((pin->Thickness - pin->DrillingHole) / 2),
-                                               LENGTH_TO_HUMAN(PCB->minRing),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               (pin->Thickness - pin->DrillingHole) / 2,
+                                               PCB->minRing,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4123,10 +3975,8 @@ DRCAll (void)
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN(pin->DrillingHole),
-                                               LENGTH_TO_HUMAN(PCB->minDrill),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               pin->DrillingHole,
+                                               PCB->minDrill,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4167,10 +4017,8 @@ DRCAll (void)
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN(pad->Thickness),
-                                               LENGTH_TO_HUMAN(PCB->minWid),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               pad->Thickness,
+                                               PCB->minWid,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4212,10 +4060,8 @@ DRCAll (void)
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN((via->Thickness - via->DrillingHole) / 2),
-                                               LENGTH_TO_HUMAN(PCB->minRing),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               (via->Thickness - via->DrillingHole) / 2,
+                                               PCB->minRing,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4245,10 +4091,8 @@ DRCAll (void)
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN(via->DrillingHole),
-                                               LENGTH_TO_HUMAN(PCB->minDrill),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               via->DrillingHole,
+                                               PCB->minDrill,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4271,7 +4115,6 @@ DRCAll (void)
   FreeConnectionLookupMemory ();
   TheFlag = FOUNDFLAG;
   Bloat = 0;
-  fBloat = 0.0;
 
   /* check silkscreen minimum widths outside of elements */
   /* XXX - need to check text and polygons too! */
@@ -4294,10 +4137,8 @@ DRCAll (void)
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN(line->Thickness),
-                                               LENGTH_TO_HUMAN(PCB->minSlk),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               line->Thickness,
+                                               PCB->minSlk,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4358,11 +4199,9 @@ DRCAll (void)
                                                "feature-width that can reliably be reproduced"),
                                                x, y,
                                                0,    /* ANGLE OF ERROR UNKNOWN */
-                                               0,    /* MINIMUM OFFENDING WIDTH UNKNOWN */
                                                TRUE, /* MEASUREMENT OF ERROR KNOWN */
-                                               LENGTH_TO_HUMAN(PCB->minSlk),
-                                               LENGTH_DIGITS,
-                                               LENGTH_UNITS_STRING,
+                                               0,    /* MINIMUM OFFENDING WIDTH UNKNOWN */
+                                               PCB->minSlk,
                                                object_count,
                                                object_id_list,
                                                object_type_list);
@@ -4405,27 +4244,27 @@ DRCAll (void)
  * Locate the coordinatates of offending item (thing)
  */
 static void
-LocateError (LocationType *x, LocationType *y)
+LocateError (Coord *x, Coord *y)
 {
   switch (thing_type)
     {
     case LINE_TYPE:
       {
-        LineTypePtr line = (LineTypePtr) thing_ptr3;
+        LineType *line = (LineType *) thing_ptr3;
         *x = (line->Point1.X + line->Point2.X) / 2;
         *y = (line->Point1.Y + line->Point2.Y) / 2;
         break;
       }
     case ARC_TYPE:
       {
-        ArcTypePtr arc = (ArcTypePtr) thing_ptr3;
+        ArcType *arc = (ArcType *) thing_ptr3;
         *x = arc->X;
         *y = arc->Y;
         break;
       }
     case POLYGON_TYPE:
       {
-        PolygonTypePtr polygon = (PolygonTypePtr) thing_ptr3;
+        PolygonType *polygon = (PolygonType *) thing_ptr3;
         *x =
           (polygon->Clipped->contours->xmin +
            polygon->Clipped->contours->xmax) / 2;
@@ -4437,21 +4276,21 @@ LocateError (LocationType *x, LocationType *y)
     case PIN_TYPE:
     case VIA_TYPE:
       {
-        PinTypePtr pin = (PinTypePtr) thing_ptr3;
+        PinType *pin = (PinType *) thing_ptr3;
         *x = pin->X;
         *y = pin->Y;
         break;
       }
     case PAD_TYPE:
       {
-        PadTypePtr pad = (PadTypePtr) thing_ptr3;
+        PadType *pad = (PadType *) thing_ptr3;
         *x = (pad->Point1.X + pad->Point2.X) / 2;
         *y = (pad->Point1.Y + pad->Point2.Y) / 2;
         break;
       }
     case ELEMENT_TYPE:
       {
-        ElementTypePtr element = (ElementTypePtr) thing_ptr3;
+        ElementType *element = (ElementType *) thing_ptr3;
         *x = element->MarkX;
         *y = element->MarkY;
         break;
@@ -4503,7 +4342,7 @@ BuildObjectList (int *object_count, long int **object_id_list, int **object_type
 static void
 GotoError (void)
 {
-  LocationType X, Y;
+  Coord X, Y;
 
   LocateError (&X, &Y);
 
@@ -4512,11 +4351,11 @@ GotoError (void)
     case LINE_TYPE:
     case ARC_TYPE:
     case POLYGON_TYPE:
-      ChangeGroupVisibility (GetLayerNumber
-                             (PCB->Data, (LayerTypePtr) thing_ptr1), true,
-                             true);
+      ChangeGroupVisibility (
+          GetLayerNumber (PCB->Data, (LayerType *) thing_ptr1),
+          true, true);
     }
-  CenterDisplay (X, Y, false);
+  CenterDisplay (X, Y);
 }
 
 void

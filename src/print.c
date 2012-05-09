@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -66,8 +64,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 /* ---------------------------------------------------------------------------
  * prints a FAB drawing.
  */
@@ -98,7 +94,7 @@ text_at (hidGC gc, int x, int y, int align, char *fmt, ...)
   int w = 0, i;
   TextType t;
   va_list a;
-  FontTypePtr font = &PCB->Font;
+  FontType *font = &PCB->Font;
   va_start (a, fmt);
   vsprintf (tmp, fmt, a);
   va_end (a);
@@ -111,16 +107,16 @@ text_at (hidGC gc, int x, int y, int align, char *fmt, ...)
   for (i = 0; tmp[i]; i++)
     w +=
       (font->Symbol[(int) tmp[i]].Width + font->Symbol[(int) tmp[i]].Delta);
-  w = w * t.Scale / 100;
+  w = SCALE_TEXT (w, t.Scale);
   t.X -= w * (align & 3) / 2;
   if (t.X < 0)
     t.X = 0;
   DrawTextLowLevel (&t, 0);
   if (align & 8)
     fab_line (gc, t.X,
-              t.Y + font->MaxHeight * t.Scale / 100 + MIL_TO_COORD(10),
+              t.Y + SCALE_TEXT (font->MaxHeight, t.Scale) + MIL_TO_COORD(10),
               t.X + w,
-              t.Y + font->MaxHeight * t.Scale / 100 + MIL_TO_COORD(10));
+              t.Y + SCALE_TEXT (font->MaxHeight, t.Scale) + MIL_TO_COORD(10));
 }
 
 /* Y, +, X, circle, square */
@@ -194,12 +190,12 @@ drill_sym (hidGC gc, int idx, int x, int y)
 }
 
 static int
-count_drill_lines (DrillInfoTypePtr AllDrills)
+count_drill_lines (DrillInfoType *AllDrills)
 {
   int n, ds = 0;
   for (n = AllDrills->DrillN - 1; n >= 0; n--)
     {
-      DrillTypePtr drill = &(AllDrills->Drill[n]);
+      DrillType *drill = &(AllDrills->Drill[n]);
       if (drill->PinCount + drill->ViaCount > drill->UnplatedCount)
 	ds++;
       if (drill->UnplatedCount)
@@ -212,7 +208,7 @@ count_drill_lines (DrillInfoTypePtr AllDrills)
 int
 PrintFab_overhang (void)
 {
-  DrillInfoTypePtr AllDrills = GetDrillInfo (PCB->Data);
+  DrillInfoType *AllDrills = GetDrillInfo (PCB->Data);
   int ds = count_drill_lines (AllDrills);
   if (ds < 4)
     ds = 4;
@@ -222,12 +218,10 @@ PrintFab_overhang (void)
 void
 PrintFab (hidGC gc)
 {
-  PinType tmp_pin;
-  DrillInfoTypePtr AllDrills;
+  DrillInfoType *AllDrills;
   int i, n, yoff, total_drills = 0, ds = 0;
   time_t currenttime;
   char utcTime[64];
-  tmp_pin.Flags = NoFlags ();
   AllDrills = GetDrillInfo (PCB->Data);
   RoundDrillInfo (AllDrills, MIL_TO_COORD(1));
   yoff = -TEXT_LINE;
@@ -250,7 +244,7 @@ PrintFab (hidGC gc)
   for (n = AllDrills->DrillN - 1; n >= 0; n--)
     {
       int plated_sym = -1, unplated_sym = -1;
-      DrillTypePtr drill = &(AllDrills->Drill[n]);
+      DrillType *drill = &(AllDrills->Drill[n]);
       if (drill->PinCount + drill->ViaCount > drill->UnplatedCount)
 	plated_sym = --ds;
       if (drill->UnplatedCount)
@@ -336,7 +330,7 @@ PrintFab (hidGC gc)
     }
   else
     {
-      LayerTypePtr layer = LAYER_PTR (i);
+      LayerType *layer = LAYER_PTR (i);
       gui->set_line_width (gc, MIL_TO_COORD(10));
       LINE_LOOP (layer);
       {

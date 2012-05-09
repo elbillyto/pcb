@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -19,8 +17,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 static HID_Action **all_actions = 0;
 static int all_actions_sorted = 0;
@@ -213,7 +209,8 @@ hid_actionl (const char *name, ...)
 int
 hid_actionv (const char *name, int argc, char **argv)
 {
-  int x = 0, y = 0, i, ret;
+  Coord x = 0, y = 0;
+  int i, ret;
   HID_Action *a, *old_action;
 
   if (!name)
@@ -437,9 +434,11 @@ these directly.
 
 
 static const char pcbchanged_syntax[] =
-  "PCBChanged()";
+  "PCBChanged([revert])";
 static const char pcbchanged_help[] =
-  "Tells the GUI that the whole PCB has changed.";
+  "Tells the GUI that the whole PCB has changed. The optional \"revert\""
+  "parameter can be used as a hint to the GUI that the same design is being"
+  "reloaded, and that it might keep some viewport settings";
 
 /* %start-doc actions PCBChanged
 

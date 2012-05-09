@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -67,8 +65,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 #define EXPANDRECTXY(r1, x1, y1, x2, y2) { \
   r1->X1=MIN(r1->X1, x1); r1->Y1=MIN(r1->Y1, y1); \
   r1->X2=MAX(r1->X2, x2); r1->Y2=MAX(r1->Y2, y2); \
@@ -78,32 +74,32 @@ RCSID ("$Id$");
 /* ---------------------------------------------------------------------------
  * some local prototypes
  */
-static double ComputeCost (NetListTypePtr Nets, double T0, double T);
+static double ComputeCost (NetListType *Nets, double T0, double T);
 
 /* ---------------------------------------------------------------------------
  * some local types
  */
 const struct
 {
-  float via_cost;
-  float congestion_penalty;	/* penalty length / unit area */
-  float overlap_penalty_min;	/* penalty length / unit area at start */
-  float overlap_penalty_max;	/* penalty length / unit area at end */
-  float out_of_bounds_penalty;	/* assessed for each component oob */
-  float overall_area_penalty;	/* penalty length / unit area */
-  float matching_neighbor_bonus;	/* length bonus per same-type neigh. */
-  float aligned_neighbor_bonus;	/* length bonus per aligned neigh. */
-  float oriented_neighbor_bonus;	/* length bonus per same-rot neigh. */
+  double via_cost;
+  double congestion_penalty;	/* penalty length / unit area */
+  double overlap_penalty_min;	/* penalty length / unit area at start */
+  double overlap_penalty_max;	/* penalty length / unit area at end */
+  double out_of_bounds_penalty;	/* assessed for each component oob */
+  double overall_area_penalty;	/* penalty length / unit area */
+  double matching_neighbor_bonus;	/* length bonus per same-type neigh. */
+  double aligned_neighbor_bonus;	/* length bonus per aligned neigh. */
+  double oriented_neighbor_bonus;	/* length bonus per same-rot neigh. */
 #if 0
-  float pin_alignment_bonus;	/* length bonus per exact alignment */
-  float bound_alignment_bonus;	/* length bonus per exact alignment */
+  double pin_alignment_bonus;	/* length bonus per exact alignment */
+  double bound_alignment_bonus;	/* length bonus per exact alignment */
 #endif
-  float m;			/* annealing stage cutoff constant */
-  float gamma;			/* annealing schedule constant */
+  double m;			/* annealing stage cutoff constant */
+  double gamma;			/* annealing schedule constant */
   int good_ratio;		/* ratio of moves to good moves for halting */
   bool fast;			/* ignore SMD/pin conflicts */
-  int large_grid_size;		/*snap perturbations to this grid when T is high */
-  int small_grid_size;		/* snap to this grid when T is small. */
+  Coord large_grid_size;	/* snap perturbations to this grid when T is high */
+  Coord small_grid_size;	/* snap to this grid when T is small. */
 }
 /* wire cost is manhattan distance (in mils), thus 1 inch = 1000 */
 CostParameter =
@@ -121,13 +117,13 @@ CostParameter =
     0.75,			/* annealing schedule constant: 0.85 */
     40,				/* halt when there are 60 times as many moves as good moves */
     false,			/* don't ignore SMD/pin conflicts */
-    100,			/* coarse grid is 100 mils */
-    10,				/* fine grid is 10 mils */
+    MIL_TO_COORD (100),		/* coarse grid is 100 mils */
+    MIL_TO_COORD (10),		/* fine grid is 10 mils */
 };
 
 typedef struct
 {
-  ElementTypePtr *element;
+  ElementType **element;
   Cardinal elementN;
 }
 ElementPtrListType;
@@ -137,11 +133,11 @@ enum ewhich
 
 typedef struct
 {
-  ElementTypePtr element;
+  ElementType *element;
   enum ewhich which;
-  LocationType DX, DY;		/* for shift */
-  BYTE rotate;			/* for rotate/flip */
-  ElementTypePtr other;		/* for exchange */
+  Coord DX, DY;			/* for shift */
+  unsigned rotate;		/* for rotate/flip */
+  ElementType *other;		/* for exchange */
 }
 PerturbationType;
 
@@ -154,7 +150,7 @@ PerturbationType;
  * elements have possibly been moved, rotated, flipped, etc.
  */
 static void
-UpdateXY (NetListTypePtr Nets)
+UpdateXY (NetListType *Nets)
 {
   Cardinal SLayer, CLayer;
   Cardinal i, j;
@@ -166,20 +162,20 @@ UpdateXY (NetListTypePtr Nets)
     {
       for (j = 0; j < Nets->Net[i].ConnectionN; j++)
 	{
-	  ConnectionTypePtr c = &(Nets->Net[i].Connection[j]);
+	  ConnectionType *c = &(Nets->Net[i].Connection[j]);
 	  switch (c->type)
 	    {
 	    case PAD_TYPE:
 	      c->group = TEST_FLAG (ONSOLDERFLAG,
-				    (ElementTypePtr) c->ptr1)
+				    (ElementType *) c->ptr1)
 		? SLayer : CLayer;
-	      c->X = ((PadTypePtr) c->ptr2)->Point1.X;
-	      c->Y = ((PadTypePtr) c->ptr2)->Point1.Y;
+	      c->X = ((PadType *) c->ptr2)->Point1.X;
+	      c->Y = ((PadType *) c->ptr2)->Point1.Y;
 	      break;
 	    case PIN_TYPE:
 	      c->group = SLayer;	/* any layer will do */
-	      c->X = ((PinTypePtr) c->ptr2)->X;
-	      c->Y = ((PinTypePtr) c->ptr2)->Y;
+	      c->X = ((PinType *) c->ptr2)->X;
+	      c->Y = ((PinType *) c->ptr2)->Y;
 	      break;
 	    default:
 	      Message ("Odd connection type encountered in " "UpdateXY");
@@ -200,7 +196,7 @@ collectSelectedElements ()
   {
     if (TEST_FLAG (SELECTEDFLAG, element))
       {
-	ElementTypePtr *epp = (ElementTypePtr *) GetPointerMemory (&list);
+	ElementType **epp = (ElementType **) GetPointerMemory (&list);
 	*epp = element;
       }
   }
@@ -212,10 +208,10 @@ collectSelectedElements ()
 #include "create.h"
 /* makes a line on the solder layer surrounding all boxes in blist */
 static void
-showboxes (BoxListTypePtr blist)
+showboxes (BoxListType *blist)
 {
   Cardinal i;
-  LayerTypePtr SLayer = &(PCB->Data->Layer[solder_silk_layer]);
+  LayerType *SLayer = &(PCB->Data->Layer[solder_silk_layer]);
   for (i = 0; i < blist->BoxN; i++)
     {
       CreateNewLineOnLayer (SLayer, blist->Box[i].X1, blist->Box[i].Y1,
@@ -242,7 +238,7 @@ struct r_neighbor_info
   BoxType trap;
   direction_t search_dir;
 };
-#define ROTATEBOX(box) { LocationType t;\
+#define ROTATEBOX(box) { Coord t;\
     t = (box).X1; (box).X1 = - (box).Y1; (box).Y1 = t;\
     t = (box).X2; (box).X2 = - (box).Y2; (box).Y2 = t;\
     t = (box).X1; (box).X1 =   (box).X2; (box).X2 = t;\
@@ -327,7 +323,7 @@ r_find_neighbor (rtree_t * rtree, const BoxType * box,
  *  Marcel Dekker, Inc. 1993.  ISBN: 0-8247-8916-4 TK7868.P7.P57 1993
  */
 static double
-ComputeCost (NetListTypePtr Nets, double T0, double T)
+ComputeCost (NetListType *Nets, double T0, double T)
 {
   double W = 0;			/* wire cost */
   double delta1 = 0;		/* wire congestion penalty function */
@@ -336,7 +332,7 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
   double delta4 = 0;		/* alignment bonus */
   double delta5 = 0;		/* total area penalty */
   Cardinal i, j;
-  LocationType minx, maxx, miny, maxy;
+  Coord minx, maxx, miny, maxy;
   bool allpads, allsameside;
   Cardinal thegroup;
   BoxListType bounds = { 0, 0, NULL };	/* save bounding rectangles here */
@@ -350,7 +346,7 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
    * the "layer height" of the net. */
   for (i = 0; i < Nets->NetN; i++)
     {
-      NetTypePtr n = &Nets->Net[i];
+      NetType *n = &Nets->Net[i];
       if (n->ConnectionN < 2)
 	continue;		/* no cost to go nowhere */
       minx = maxx = n->Connection[0].X;
@@ -360,7 +356,7 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
       allsameside = true;
       for (j = 1; j < n->ConnectionN; j++)
 	{
-	  ConnectionTypePtr c = &(n->Connection[j]);
+	  ConnectionType *c = &(n->Connection[j]);
 	  MAKEMIN (minx, c->X);
 	  MAKEMAX (maxx, c->X);
 	  MAKEMIN (miny, c->Y);
@@ -372,7 +368,7 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
 	}
       /* save bounding rectangle */
       {
-	BoxTypePtr box = GetBoxMemory (&bounds);
+	BoxType *box = GetBoxMemory (&bounds);
 	box->X1 = minx;
 	box->Y1 = miny;
 	box->X2 = maxx;
@@ -397,12 +393,12 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
 
   ELEMENT_LOOP (PCB->Data);
   {
-    BoxListTypePtr thisside;
-    BoxListTypePtr otherside;
-    BoxTypePtr box;
-    BoxTypePtr lastbox = NULL;
-    BDimension thickness;
-    BDimension clearance;
+    BoxListType *thisside;
+    BoxListType *otherside;
+    BoxType *box;
+    BoxType *lastbox = NULL;
+    Coord thickness;
+    Coord clearance;
     if (TEST_FLAG (ONSOLDERFLAG, element))
       {
 	thisside = &solderside;
@@ -518,7 +514,7 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
     struct ebox
     {
       BoxType box;
-      ElementTypePtr element;
+      ElementType *element;
     };
     direction_t dir[4] = { NORTH, EAST, SOUTH, WEST };
     struct ebox **boxpp, *boxp;
@@ -566,20 +562,13 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
 	}
       if (element->Name[0].Direction == boxp->element->Name[0].Direction)
 	delta4 += factor * CostParameter.oriented_neighbor_bonus;
-      if (element->VBox.X1 ==
-	  boxp->element->VBox.X1 ||
-	  element->VBox.X1 ==
-	  boxp->element->VBox.X2 ||
-	  element->VBox.X2 ==
-	  boxp->element->VBox.X1 ||
-	  element->VBox.X2 ==
-	  boxp->element->VBox.X2 ||
-	  element->VBox.Y1 ==
-	  boxp->element->VBox.Y1 ||
-	  element->VBox.Y1 ==
-	  boxp->element->VBox.Y2 ||
-	  element->VBox.Y2 ==
-	  boxp->element->VBox.Y1 ||
+      if (element->VBox.X1 == boxp->element->VBox.X1 ||
+	  element->VBox.X1 == boxp->element->VBox.X2 ||
+	  element->VBox.X2 == boxp->element->VBox.X1 ||
+	  element->VBox.X2 == boxp->element->VBox.X2 ||
+	  element->VBox.Y1 == boxp->element->VBox.Y1 ||
+	  element->VBox.Y1 == boxp->element->VBox.Y2 ||
+	  element->VBox.Y2 == boxp->element->VBox.Y1 ||
 	  element->VBox.Y2 == boxp->element->VBox.Y2)
 	delta4 += factor * CostParameter.aligned_neighbor_bonus;
     }
@@ -590,8 +579,8 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
   }
   /* penalize total area used by this layout */
   {
-    LocationType minX = MAX_COORD, minY = MAX_COORD;
-    LocationType maxX = -MAX_COORD, maxY = -MAX_COORD;
+    Coord minX = MAX_COORD, minY = MAX_COORD;
+    Coord maxX = -MAX_COORD, maxY = -MAX_COORD;
     ELEMENT_LOOP (PCB->Data);
     {
       MAKEMIN (minX, element->VBox.X1);
@@ -602,7 +591,7 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
     END_LOOP;
     if (minX < maxX && minY < maxY)
       delta5 = CostParameter.overall_area_penalty *
-	sqrt ((double) (maxX - minX) * (maxY - minY) * 0.0001);
+	sqrt (COORD_TO_MIL (maxX - minX) * COORD_TO_MIL (maxY - minY));
   }
   if (T == 5)
     {
@@ -624,24 +613,24 @@ ComputeCost (NetListTypePtr Nets, double T0, double T)
  *  -- Only perturb selected elements (need count/list of selected?) --
  */
 PerturbationType
-createPerturbation (PointerListTypePtr selected, double T)
+createPerturbation (PointerListType *selected, double T)
 {
   PerturbationType pt = { 0 };
   /* pick element to perturb */
-  pt.element = (ElementTypePtr) selected->Ptr[random () % selected->PtrN];
+  pt.element = (ElementType *) selected->Ptr[random () % selected->PtrN];
   /* exchange, flip/rotate or shift? */
   switch (random () % ((selected->PtrN > 1) ? 3 : 2))
     {
     case 0:
       {				/* shift! */
-	int grid;
-	double scaleX = MAX (250, MIN (sqrt (T), PCB->MaxWidth / 3));
-	double scaleY = MAX (250, MIN (sqrt (T), PCB->MaxHeight / 3));
+	Coord grid;
+	double scaleX = CLAMP (sqrt (T), MIL_TO_COORD (2.5), PCB->MaxWidth / 3);
+	double scaleY = CLAMP (sqrt (T), MIL_TO_COORD (2.5), PCB->MaxHeight / 3);
 	pt.which = SHIFT;
 	pt.DX = scaleX * 2 * ((((double) random ()) / RAND_MAX) - 0.5);
 	pt.DY = scaleY * 2 * ((((double) random ()) / RAND_MAX) - 0.5);
 	/* snap to grid. different grids for "high" and "low" T */
-	grid = (T > 1000) ? CostParameter.large_grid_size :
+	grid = (T > MIL_TO_COORD (10)) ? CostParameter.large_grid_size :
 	  CostParameter.small_grid_size;
 	/* (round away from zero) */
 	pt.DX = ((pt.DX / grid) + SGN (pt.DX)) * grid;
@@ -666,10 +655,10 @@ createPerturbation (PointerListTypePtr selected, double T)
     case 2:
       {				/* exchange! */
 	pt.which = EXCHANGE;
-	pt.other = (ElementTypePtr)
+	pt.other = (ElementType *)
 	  selected->Ptr[random () % (selected->PtrN - 1)];
 	if (pt.other == pt.element)
-	  pt.other = (ElementTypePtr) selected->Ptr[selected->PtrN - 1];
+	  pt.other = (ElementType *) selected->Ptr[selected->PtrN - 1];
 	/* don't allow exchanging a solderside-side SMD component
 	 * with a non-SMD component. */
 	if ((pt.element->PinN != 0 /* non-SMD */  &&
@@ -688,7 +677,7 @@ createPerturbation (PointerListTypePtr selected, double T)
 void
 doPerturb (PerturbationType * pt, bool undo)
 {
-  LocationType bbcx, bbcy;
+  Coord bbcx, bbcy;
   /* compute center of element bounding box */
   bbcx = (pt->element->VBox.X1 + pt->element->VBox.X2) / 2;
   bbcy = (pt->element->VBox.Y1 + pt->element->VBox.Y2) / 2;
@@ -697,7 +686,7 @@ doPerturb (PerturbationType * pt, bool undo)
     {
     case SHIFT:
       {
-	LocationType DX = pt->DX, DY = pt->DY;
+	Coord DX = pt->DX, DY = pt->DY;
 	if (undo)
 	  {
 	    DX = -DX;
@@ -708,7 +697,7 @@ doPerturb (PerturbationType * pt, bool undo)
       }
     case ROTATE:
       {
-	BYTE b = pt->rotate;
+	unsigned b = pt->rotate;
 	if (undo)
 	  b = (4 - b) & 3;
 	/* 0 - flip; 1-3, rotate. */
@@ -716,7 +705,7 @@ doPerturb (PerturbationType * pt, bool undo)
 	  RotateElementLowLevel (PCB->Data, pt->element, bbcx, bbcy, b);
 	else
 	  {
-	    LocationType y = pt->element->VBox.Y1;
+	    Coord y = pt->element->VBox.Y1;
 	    MirrorElementCoordinates (PCB->Data, pt->element, 0);
 	    /* mirroring moves the element.  move it back. */
 	    MoveElementLowLevel (PCB->Data, pt->element, 0,
@@ -727,10 +716,10 @@ doPerturb (PerturbationType * pt, bool undo)
     case EXCHANGE:
       {
 	/* first exchange positions */
-	LocationType x1 = pt->element->VBox.X1;
-	LocationType y1 = pt->element->VBox.Y1;
-	LocationType x2 = pt->other->BoundingBox.X1;
-	LocationType y2 = pt->other->BoundingBox.Y1;
+	Coord x1 = pt->element->VBox.X1;
+	Coord y1 = pt->element->VBox.Y1;
+	Coord x2 = pt->other->BoundingBox.X1;
+	Coord y2 = pt->other->BoundingBox.Y1;
 	MoveElementLowLevel (PCB->Data, pt->element, x2 - x1, y2 - y1);
 	MoveElementLowLevel (PCB->Data, pt->other, x1 - x2, y1 - y2);
 	/* then flip both elements if they are on opposite sides */
@@ -759,7 +748,7 @@ doPerturb (PerturbationType * pt, bool undo)
 bool
 AutoPlaceSelected (void)
 {
-  NetListTypePtr Nets;
+  NetListType *Nets;
   PointerListType Selected = { 0, 0, NULL };
   PerturbationType pt;
   double C0, T0;
@@ -788,13 +777,13 @@ AutoPlaceSelected (void)
   /* simulated annealing */
   {				/* compute T0 by doing a random series of moves. */
     const int TRIALS = 10;
-    const double Tx = 3e5, P = 0.95;
+    const double Tx = MIL_TO_COORD (300), P = 0.95;
     double Cs = 0.0;
     int i;
     C0 = ComputeCost (Nets, Tx, Tx);
     for (i = 0; i < TRIALS; i++)
       {
-	pt = createPerturbation (&Selected, 1e6);
+	pt = createPerturbation (&Selected, INCH_TO_COORD (1));
 	doPerturb (&pt, false);
 	Cs += fabs (ComputeCost (Nets, Tx, Tx) - C0);
 	doPerturb (&pt, true);

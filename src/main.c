@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -33,6 +31,9 @@
 #include "config.h"
 #endif
 
+#ifdef HAVE_LOCALE_H
+#include <locale.h>  /* setlocale() and LC_ALL */
+#endif
 #include <stdlib.h>
 #ifdef HAVE_STRING_H
 #include <string.h>
@@ -56,6 +57,7 @@
 #include "lrealpath.h"
 #include "free_atexit.h"
 #include "polygon.h"
+#include "pcb-printf.h"
 
 #include "hid/common/actions.h"
 
@@ -73,9 +75,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
-
 
 #define PCBLIBPATH ".:" PCBLIBDIR
 
@@ -157,7 +156,8 @@ static UsageNotes *usage_notes = NULL;
 static void
 usage_attr (HID_Attribute * a)
 {
-  int i;
+  int i, n;
+  const Unit *unit_list;
   static char buf[200];
 
   if (a->help_text == ATTR_UNDOCUMENTED)
@@ -170,6 +170,9 @@ usage_attr (HID_Attribute * a)
     case HID_Integer:
     case HID_Real:
       sprintf (buf, "--%s <num>", a->name);
+      break;
+    case HID_Coord:
+      sprintf (buf, "--%s <measure>", a->name);
       break;
     case HID_String:
       sprintf (buf, "--%s <string>", a->name);
@@ -191,6 +194,17 @@ usage_attr (HID_Attribute * a)
       break;
     case HID_Path:
       sprintf (buf, "--%s <path>", a->name);
+      break;
+    case HID_Unit:
+      unit_list = get_unit_list ();
+      n = get_n_units ();
+      sprintf (buf, "--%s ", a->name);
+      for (i = 0; i < n; i++)
+	{
+	  strcat (buf, i ? "|" : "<");
+	  strcat (buf, unit_list[i].suffix);
+	}
+      strcat (buf, ">");
       break;
     }
 
@@ -305,8 +319,9 @@ static void
 print_defaults_1 (HID_Attribute * a, void *value)
 {
   int i;
+  Coord c;
   double d;
-  char *s;
+  const char *s;
 
   /* Remember, at this point we've parsed the command line, so they
      may be in the global variable instead of the default_val.  */
@@ -323,6 +338,10 @@ print_defaults_1 (HID_Attribute * a, void *value)
     case HID_Real:
       d = value ? *(double *) value : a->default_val.real_value;
       fprintf (stderr, "%s %g\n", a->name, d);
+      break;
+    case HID_Coord:
+      c = value ? *(Coord *) value : a->default_val.coord_value;
+      pcb_fprintf (stderr, "%s %$mS\n", a->name, c);
       break;
     case HID_String:
     case HID_Path:
@@ -342,6 +361,9 @@ print_defaults_1 (HID_Attribute * a, void *value)
       break;
     case HID_Label:
       break;
+    case HID_Unit:
+      i = value ? *(int *) value : a->default_val.int_value;
+      fprintf (stderr, "%s %s\n", a->name, get_unit_list()[i].suffix);
     }
 }
 
@@ -385,6 +407,8 @@ print_defaults ()
 	HID_Boolean, 0, 0, { D, 0, 0 }, 0, &Settings.F }
 #define RSET(F,D,N,H) { N, H, \
 	HID_Real,    0, 0, { 0, 0, D }, 0, &Settings.F }
+#define CSET(F,D,N,H) { N, H, \
+	HID_Coord,    0, 0, { 0, 0, 0, D }, 0, &Settings.F }
 
 #define COLOR(F,D,N,H) { N, H, \
 	HID_String, 0, 0, { 0, D, 0 }, 0, &Settings.F }
@@ -401,54 +425,374 @@ static int show_copyright = 0;
 static int show_defaults = 0;
 static int show_actions = 0;
 static int do_dump_actions = 0;
+static char *grid_units;
+static Increments increment_mm  = { 0 };
+static Increments increment_mil = { 0 };
+
+void save_increments (const Increments *mm, const Increments *mil)
+{
+  memcpy (&increment_mm,  mm,  sizeof (*mm));
+  memcpy (&increment_mil, mil, sizeof (*mil));
+}
 
 HID_Attribute main_attribute_list[] = {
-  {"help", "Show Help", HID_Boolean, 0, 0, {0, 0, 0}, 0, &show_help},
-  {"version", "Show Version", HID_Boolean, 0, 0, {0, 0, 0}, 0, &show_version},
-  {"verbose", "Be verbose", HID_Boolean, 0, 0, {0, 0, 0}, 0,
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --help
+Show help on command line options.
+@end ftable
+%end-doc
+*/
+  {"help", "Show help on command line options", HID_Boolean, 0, 0, {0, 0, 0}, 0,
+  &show_help},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --version
+Show version.
+@end ftable
+%end-doc
+*/
+  {"version", "Show version", HID_Boolean, 0, 0, {0, 0, 0}, 0, &show_version},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --verbose
+Be verbose on stdout.
+@end ftable
+%end-doc
+*/
+  {"verbose", "Be verbose on stdout", HID_Boolean, 0, 0, {0, 0, 0}, 0,
    &Settings.verbose},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --copyright
+Show copyright.
+@end ftable
+%end-doc
+*/
   {"copyright", "Show Copyright", HID_Boolean, 0, 0, {0, 0, 0}, 0,
    &show_copyright},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --show-defaults
+Show option defaults.
+@end ftable
+%end-doc
+*/
   {"show-defaults", "Show option defaults", HID_Boolean, 0, 0, {0, 0, 0}, 0,
    &show_defaults},
-  {"show-actions", "Show actions", HID_Boolean, 0, 0, {0, 0, 0}, 0,
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --show-actions
+Show available actions and exit.
+@end ftable
+%end-doc
+*/
+  {"show-actions", "Show available actions", HID_Boolean, 0, 0, {0, 0, 0}, 0,
    &show_actions},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --dump-actions
+Dump actions (for documentation).
+@end ftable
+%end-doc
+*/
   {"dump-actions", "Dump actions (for documentation)", HID_Boolean, 0, 0,
-   {0, 0, 0}, 0,
-   &do_dump_actions},
+   {0, 0, 0}, 0, &do_dump_actions},
 
-  BSET (grid_units_mm, 0, "grid-units-mm", 0),
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --grid-units-mm <string>
+Set default grid units. Can be mm or mil. Defaults to mil.
+@end ftable
+%end-doc
+*/
+  {"grid-units", "Default grid units (mm|mil)", HID_String, 0, 0, {0, "mil", 0},
+  0, &grid_units},
 
-  COLOR (BlackColor, "#000000", "black-color", "color for black"),
-  COLOR (WhiteColor, "#ffffff", "white-color", "color for white"),
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --clear-increment-mm <string>
+Set default clear increment (amount to change when user presses k or K)
+when user is using a metric grid unit.
+@end ftable
+%end-doc
+*/
+  {"clear-increment-mm", "Default clear increment amount (metric)", HID_Coord, 0, 0, {0, 0, 0},
+  0, &increment_mm.clear},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --grid-increment-mm <string>
+Set default grid increment (amount to change when user presses g or G)
+when user is using a metric grid unit.
+@end ftable
+%end-doc
+*/
+  {"grid-increment-mm", "Default grid increment amount (metric)", HID_Coord, 0, 0, {0, 0, 0},
+  0, &increment_mm.grid},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --line-increment-mm <string>
+Set default line increment (amount to change when user presses l or L)
+when user is using a metric grid unit.
+@end ftable
+%end-doc
+*/
+  {"line-increment-mm", "Default line increment amount (metric)", HID_Coord, 0, 0, {0, 0, 0},
+  0, &increment_mm.line},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --size-increment-mm <string>
+Set default size increment (amount to change when user presses s or S)
+when user is using a metric grid unit.
+@end ftable
+%end-doc
+*/
+  {"size-increment-mm", "Default size increment amount (metric)", HID_Coord, 0, 0, {0, 0, 0},
+  0, &increment_mm.size},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --clear-increment-mil <string>
+Set default clear increment (amount to change when user presses k or K)
+when user is using an imperial grid unit.
+@end ftable
+%end-doc
+*/
+  {"clear-increment-mil", "Default clear increment amount (imperial)", HID_Coord, 0, 0, {0, 0, 0},
+  0, &increment_mil.clear},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --grid-increment-mil <string>
+Set default grid increment (amount to change when user presses g or G)
+when user is using a imperial grid unit.
+@end ftable
+%end-doc
+*/
+  {"grid-increment-mil", "Default grid increment amount (imperial)", HID_Coord, 0, 0, {0, 0, 0},
+  0, &increment_mil.grid},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --line-increment-mil <string>
+Set default line increment (amount to change when user presses l or L)
+when user is using a imperial grid unit.
+@end ftable
+%end-doc
+*/
+  {"line-increment-mil", "Default line increment amount (imperial)", HID_Coord, 0, 0, {0, 0, 0},
+  0, &increment_mil.line},
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --size-increment-mil <string>
+Set default size increment (amount to change when user presses s or S)
+when user is using a imperial grid unit.
+@end ftable
+%end-doc
+*/
+  {"size-increment-mil", "Default size increment amount (imperial)", HID_Coord, 0, 0, {0, 0, 0},
+  0, &increment_mil.size},
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --black-color <string>
+Color value for black. Default: @samp{#000000}
+@end ftable
+%end-doc
+*/
+  COLOR (BlackColor, "#000000", "black-color", "color value of 'black'"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --black-color <string>
+Color value for white. Default: @samp{#ffffff}
+@end ftable
+%end-doc
+*/
+  COLOR (WhiteColor, "#ffffff", "white-color", "color value of 'white'"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --background-color <string>
+Background color of the canvas. Default: @samp{#e5e5e5}
+@end ftable
+%end-doc
+*/
   COLOR (BackgroundColor, "#e5e5e5", "background-color",
 	 "color for background"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --crosshair-color <string>
+Color of the crosshair. Default: @samp{#ff0000}
+@end ftable
+%end-doc
+*/
   COLOR (CrosshairColor, "#ff0000", "crosshair-color",
 	 "color for the crosshair"),
-  COLOR (CrossColor, "#cdcd00", "cross-color", "color for cross"),
-  COLOR (ViaColor, "#7f7f7f", "via-color", "color for vias"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --cross-color <string>
+Color of the cross. Default: @samp{#cdcd00}
+@end ftable
+%end-doc
+*/
+  COLOR (CrossColor, "#cdcd00", "cross-color", "color of the cross"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --via-color <string>
+Color of vias. Default: @samp{#7f7f7f}
+@end ftable
+%end-doc
+*/
+  COLOR (ViaColor, "#7f7f7f", "via-color", "color of vias"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --via-selected-color <string>
+Color of selected vias. Default: @samp{#00ffff}
+@end ftable
+%end-doc
+*/
   COLOR (ViaSelectedColor, "#00ffff", "via-selected-color",
 	 "color for selected vias"),
-  COLOR (PinColor, "#4d4d4d", "pin-color", "color for pins"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --pin-color <string>
+Color of pins. Default: @samp{#4d4d4d}
+@end ftable
+%end-doc
+*/
+  COLOR (PinColor, "#4d4d4d", "pin-color", "color of pins"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --pin-selected-color <string>
+Color of selected pins. Default: @samp{#00ffff}
+@end ftable
+%end-doc
+*/
   COLOR (PinSelectedColor, "#00ffff", "pin-selected-color",
-	 "color for selected pins"),
+	 "color of selected pins"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --pin-name-color <string>
+Color of pin names and pin numbers. Default: @samp{#ff0000}
+@end ftable
+%end-doc
+*/
   COLOR (PinNameColor, "#ff0000", "pin-name-color",
-	 "color for pin names and numbers"),
-  COLOR (ElementColor, "#000000", "element-color", "color for elements"),
-  COLOR (RatColor, "#b8860b", "rat-color", "color for ratlines"),
+	 "color for pin names and pin numbers"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --element-color <string>
+Color of components. Default: @samp{#000000}
+@end ftable
+%end-doc
+*/
+  COLOR (ElementColor, "#000000", "element-color", "color of components"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --rat-color <string>
+Color of ratlines. Default: @samp{#b8860b}
+@end ftable
+%end-doc
+*/
+  COLOR (RatColor, "#b8860b", "rat-color", "color of ratlines"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --invisible-objects-color <string>
+Color of invisible objects. Default: @samp{#cccccc}
+@end ftable
+%end-doc
+*/
   COLOR (InvisibleObjectsColor, "#cccccc", "invisible-objects-color",
-	 "color for invisible objects"),
+	 "color of invisible objects"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --invisible-mark-color <string>
+Color of invisible marks. Default: @samp{#cccccc}
+@end ftable
+%end-doc
+*/
   COLOR (InvisibleMarkColor, "#cccccc", "invisible-mark-color",
-	 "color for invisible marks"),
+	 "color of invisible marks"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --element-selected-color <string>
+Color of selected components. Default: @samp{#00ffff}
+@end ftable
+%end-doc
+*/
   COLOR (ElementSelectedColor, "#00ffff", "element-selected-color",
-	 "color for selected elements"),
+	 "color of selected components"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --rat-selected-color <string>
+Color of selected rats. Default: @samp{#00ffff}
+@end ftable
+%end-doc
+*/
   COLOR (RatSelectedColor, "#00ffff", "rat-selected-color",
-	 "color for selected rats"),
+	 "color of selected rats"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --connected-color <string>
+Color to indicate connections. Default: @samp{#00ff00}
+@end ftable
+%end-doc
+*/
   COLOR (ConnectedColor, "#00ff00", "connected-color",
-	 "color for connections"),
+	 "color to indicate connections"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --off-limit-color <string>
+Color of off-canvas area. Default: @samp{#cccccc}
+@end ftable
+%end-doc
+*/
   COLOR (OffLimitColor, "#cccccc", "off-limit-color",
-	 "color for off-limits areas"),
-  COLOR (GridColor, "#ff0000", "grid-color", "color for the grid"),
+	 "color of off-canvas area"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --grid-color <string>
+Color of the grid. Default: @samp{#ff0000}
+@end ftable
+%end-doc
+*/
+  COLOR (GridColor, "#ff0000", "grid-color", "color of the grid"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --layer-color-<n> <string>
+Color of layer @code{<n>}, where @code{<n>} is an integer from 1 to 16.
+@end ftable
+%end-doc
+*/
   LAYERCOLOR (1, "#8b2323"),
   LAYERCOLOR (2, "#3a5fcd"),
   LAYERCOLOR (3, "#104e8b"),
@@ -465,6 +809,13 @@ HID_Attribute main_attribute_list[] = {
   LAYERCOLOR (14, "#8b7355"),
   LAYERCOLOR (15, "#00868b"),
   LAYERCOLOR (16, "#228b22"),
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --layer-selected-color-<n> <string>
+Color of layer @code{<n>}, when selected. @code{<n>} is an integer from 1 to 16.
+@end ftable
+%end-doc
+*/
   LAYERSELCOLOR (1),
   LAYERSELCOLOR (2),
   LAYERSELCOLOR (3),
@@ -481,81 +832,548 @@ HID_Attribute main_attribute_list[] = {
   LAYERSELCOLOR (14),
   LAYERSELCOLOR (15),
   LAYERSELCOLOR (16),
-  COLOR (WarnColor, "#ff8000", "warn-color", "color for warnings"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --warn-color <string>
+Color of offending objects during DRC. Default value is @code{"#ff8000"}
+@end ftable
+%end-doc
+*/
+  COLOR (WarnColor, "#ff8000", "warn-color", "color of offending objects during DRC"),
+
+/* %start-doc options "3 Colors"
+@ftable @code
+@item --mask-color <string>
+Color of the mask layer. Default value is @code{"#ff0000"}
+@end ftable
+%end-doc
+*/
   COLOR (MaskColor, "#ff0000", "mask-color", "color for solder mask"),
 
-  ISET (ViaThickness, MIL_TO_COORD(60), "via-thickness", 0),
-  ISET (ViaDrillingHole, MIL_TO_COORD(28), "via-drilling-hole", 0),
-  ISET (LineThickness, MIL_TO_COORD(10), "line-thickness",
-	"Initial thickness of new lines."),
-  ISET (RatThickness, MIL_TO_COORD(10), "rat-thickness", 0),
-  ISET (Keepaway, MIL_TO_COORD(10), "keepaway", 0),
-  ISET (MaxWidth, MIL_TO_COORD(MIL_TO_COORD(60)), "default-PCB-width", 0),
-  ISET (MaxHeight, MIL_TO_COORD(MIL_TO_COORD(50)), "default-PCB-height", 0),
-  ISET (TextScale, 100, "text-scale", 0),
-  ISET (AlignmentDistance, MIL_TO_COORD(2), "alignment-distance", 0),
-  ISET (Bloat, MIL_TO_COORD(10), "bloat", 0),
-  ISET (Shrink, MIL_TO_COORD(10), "shrink", 0),
-  ISET (minWid, MIL_TO_COORD(10), "min-width", "DRC minimum copper spacing"),
-  ISET (minSlk, MIL_TO_COORD(10), "min-silk", "DRC minimum silk width"),
-  ISET (minDrill, MIL_TO_COORD(15), "min-drill", "DRC minimum drill diameter"),
-  ISET (minRing, MIL_TO_COORD(10), "min-ring", "DRC minimum annular ring"),
 
-  RSET (Grid, MIL_TO_COORD(10), "grid", 0),
-  RSET (grid_increment_mm, 0.1, "grid-increment-mm", 0),
-  RSET (grid_increment_mil, 5.0, "grid-increment-mil", 0),
-  RSET (size_increment_mm, 0.2, "size-increment-mm", 0),
-  RSET (size_increment_mil, 10.0, "size-increment-mil", 0),
-  RSET (line_increment_mm, 0.1, "line-increment-mm", 0),
-  RSET (line_increment_mil, 5.0, "line-increment-mil", 0),
-  RSET (clear_increment_mm, 0.05, "clear-increment-mm", 0),
-  RSET (clear_increment_mil, 2.0, "clear-increment-mil", 0),
-  RSET (IsleArea, MIL_TO_COORD(1400) * MIL_TO_COORD(1400), "minimum polygon area", 0),
+/* %start-doc options "5 Sizes"
+All parameters should be given with an unit. If no unit is given, 1/100 mil
+(cmil) will be used. Write units without space to the
+number like @code{3mm}, not @code{3 mm}.
+Valid Units are:
+ @table @samp
+   @item km
+    Kilometer
+   @item m
+    Meter
+   @item cm
+    Centimeter
+   @item mm
+    Millimeter
+   @item um
+    Micrometer
+   @item nm
+    Nanometer
+   @item in
+    Inch (1in = 0.0254m)
+   @item mil
+    Mil (1000mil = 1in)
+   @item cmil
+    Centimil (1/100 mil)
+@end table
 
-  ISET (BackupInterval, 60, "backup-interval", 0),
+@ftable @code
+@item --via-thickness <num>
+Default diameter of vias. Default value is @code{60mil}.
+@end ftable
+%end-doc
+*/
+  CSET (ViaThickness, MIL_TO_COORD(60), "via-thickness",
+  "default diameter of vias in 1/100 mil"),
 
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --via-drilling-hole <num>
+Default diameter of holes. Default value is @code{28mil}.
+@end ftable
+%end-doc
+*/
+  CSET (ViaDrillingHole, MIL_TO_COORD(28), "via-drilling-hole",
+  "default diameter of holes"),
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --line-thickness <num>
+Default thickness of new lines. Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (LineThickness, MIL_TO_COORD(10), "line-thickness",
+	"initial thickness of new lines"),
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --rat-thickness <num><unit>
+Thickness of rats. If no unit is given, PCB units are assumed (i.e. 100 
+means "1 nm"). This option allows for a special unit @code{px} which 
+sets the rat thickness to a fixed value in terms of screen pixels.
+Maximum fixed thickness is 100px. Minimum saling rat thickness is 101nm.  
+Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (RatThickness, MIL_TO_COORD(10), "rat-thickness", "thickness of rat lines"),
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --keepaway <num>
+Default minimum distance between a track and adjacent copper.
+Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (Keepaway, MIL_TO_COORD(10), "keepaway", "minimum distance between adjacent copper"),
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --default-PCB-width <num>
+Default width of the canvas. Default value is @code{6000mil}.
+@end ftable
+%end-doc
+*/
+  CSET (MaxWidth, MIL_TO_COORD(6000), "default-PCB-width",
+  "default width of the canvas"),
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --default-PCB-height <num>
+Default height of the canvas. Default value is @code{5000mil}.
+@end ftable
+%end-doc
+*/
+  CSET (MaxHeight, MIL_TO_COORD(5000), "default-PCB-height",
+  "default height of the canvas"),
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --text-scale <num>
+Default text scale. This value is in percent. Default value is @code{100}.
+@end ftable
+%end-doc
+*/
+  ISET (TextScale, 100, "text-scale", "default text scale in percent"),
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --alignment-distance <num>
+Specifies the distance between the board outline and alignment targets.
+Default value is @code{2mil}.
+@end ftable
+%end-doc
+*/
+  CSET (AlignmentDistance, MIL_TO_COORD(2), "alignment-distance",
+  "distance between the boards outline and alignment targets"),
+
+/* %start-doc options "7 DRC Options"
+All parameters should be given with an unit. If no unit is given, 1/100 mil
+(cmil) will be used for backward compability. Valid units are given in section
+@ref{Sizes}.
+%end-doc
+*/
+
+
+/* %start-doc options "7 DRC Options"
+@ftable @code
+@item --bloat <num>
+Minimum spacing. Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (Bloat, MIL_TO_COORD(10), "bloat", "DRC minimum spacing in 1/100 mil"),
+
+/* %start-doc options "7 DRC Options"
+@ftable @code
+@item --shrink <num>
+Minimum touching overlap. Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (Shrink, MIL_TO_COORD(10), "shrink", "DRC minimum overlap in 1/100 mils"),
+
+/* %start-doc options "7 DRC Options"
+@ftable @code
+@item --min-width <num>
+Minimum width of copper. Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (minWid, MIL_TO_COORD(10), "min-width", "DRC minimum copper spacing"),
+
+/* %start-doc options "7 DRC Options"
+@ftable @code
+@item --min-silk <num>
+Minimum width of lines in silk. Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (minSlk, MIL_TO_COORD(10), "min-silk", "DRC minimum silk width"),
+
+/* %start-doc options "7 DRC Options"
+@ftable @code
+@item --min-drill <num>
+Minimum diameter of holes. Default value is @code{15mil}.
+@end ftable
+%end-doc
+*/
+  CSET (minDrill, MIL_TO_COORD(15), "min-drill", "DRC minimum drill diameter"),
+
+/* %start-doc options "7 DRC Options"
+@ftable @code
+@item --min-ring <num>
+Minimum width of annular ring. Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (minRing, MIL_TO_COORD(10), "min-ring", "DRC minimum annular ring"),
+
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --grid <num>
+Initial grid size. Default value is @code{10mil}.
+@end ftable
+%end-doc
+*/
+  CSET (Grid, MIL_TO_COORD(10), "grid", "Initial grid size in 1/100 mil"),
+
+/* %start-doc options "5 Sizes"
+@ftable @code
+@item --minimum polygon area <num>
+Minimum polygon area.
+@end ftable
+%end-doc
+*/
+  RSET (IsleArea, MIL_TO_COORD(100) * MIL_TO_COORD(100), "minimum polygon area", 0),
+
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --backup-interval
+Time between automatic backups in seconds. Set to @code{0} to disable.
+The default value is @code{60}.
+@end ftable
+%end-doc
+*/
+  ISET (BackupInterval, 60, "backup-interval",
+  "Time between automatic backups in seconds. Set to 0 to disable"),
+
+/* %start-doc options "4 Layer Names"
+@ftable @code
+@item --layer-name-1 <string>
+Name of the 1st Layer. Default is @code{"top"}.
+@end ftable
+%end-doc
+*/
   LAYERNAME (1, "top"),
-  LAYERNAME (2, "ground"),
-  LAYERNAME (3, "signal2"),
-  LAYERNAME (4, "signal3"),
-  LAYERNAME (5, "power"),
-  LAYERNAME (6, "bottom"),
-  LAYERNAME (7, "outline"),
-  LAYERNAME (8, "spare"),
-  SSET (Groups, "1,c:2:3:4:5:6,s:7:8", "groups", 0),
 
-  SSET (FontCommand, "",
-	"font-command", 0),
-  SSET (FileCommand, "", "file-command", "Command to read a file."),
+/* %start-doc options "4 Layer Names"
+@ftable @code
+@item --layer-name-2 <string>
+Name of the 2nd Layer. Default is @code{"ground"}.
+@end ftable
+%end-doc
+*/
+  LAYERNAME (2, "ground"),
+
+/* %start-doc options "4 Layer Names"
+@ftable @code
+@item --layer-name-3 <string>
+Name of the 3nd Layer. Default is @code{"signal2"}.
+@end ftable
+%end-doc
+*/
+  LAYERNAME (3, "signal2"),
+
+/* %start-doc options "4 Layer Names"
+@ftable @code
+@item --layer-name-4 <string>
+Name of the 4rd Layer. Default is @code{"signal3"}.
+@end ftable
+%end-doc
+*/
+  LAYERNAME (4, "signal3"),
+
+/* %start-doc options "4 Layer Names"
+@ftable @code
+@item --layer-name-5 <string>
+Name of the 5rd Layer. Default is @code{"power"}.
+@end ftable
+%end-doc
+*/
+  LAYERNAME (5, "power"),
+
+/* %start-doc options "4 Layer Names"
+@ftable @code
+@item --layer-name-6 <string>
+Name of the 6rd Layer. Default is @code{"bottom"}.
+@end ftable
+%end-doc
+*/
+  LAYERNAME (6, "bottom"),
+
+/* %start-doc options "4 Layer Names"
+@ftable @code
+@item --layer-name-7 <string>
+Name of the 7rd Layer. Default is @code{"outline"}.
+@end ftable
+%end-doc
+*/
+  LAYERNAME (7, "outline"),
+
+/* %start-doc options "4 Layer Names"
+@ftable @code
+@item --layer-name-8 <string>
+Name of the 8rd Layer. Default is @code{"spare"}.
+@end ftable
+%end-doc
+*/
+  LAYERNAME (8, "spare"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --groups <string>
+Layer group string. Defaults to @code{"1,c:2:3:4:5:6,s:7:8"}.
+@end ftable
+%end-doc
+*/
+  SSET (Groups, "1,c:2:3:4:5:6,s:7:8", "groups", "Layer group string"),
+
+
+/* %start-doc options "6 Commands"
+pcb uses external commands for input output operations. These commands can be
+configured at start-up to meet local requirements. The command string may include
+special sequences @code{%f}, @code{%p} or @code{%a}. These are replaced when the
+command is called. The sequence @code{%f} is replaced by the file name,
+@code{%p} gets the path and @code{%a} indicates a package name.
+%end-doc
+*/
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --font-command <string>
+Command to load a font.
+@end ftable
+%end-doc
+*/
+  SSET (FontCommand, "", "font-command", "Command to load a font"),
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --file-command <string>
+Command to read a file.
+@end ftable
+%end-doc
+*/
+  SSET (FileCommand, "", "file-command", "Command to read a file"),
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --element-command <string>
+Command to read a footprint. @*
+Defaults to @code{"M4PATH='%p';export M4PATH;echo 'include(%f)' | m4"}
+@end ftable
+%end-doc
+*/
   SSET (ElementCommand,
 	"M4PATH='%p';export M4PATH;echo 'include(%f)' | " GNUM4,
-	"element-command", 0),
-  SSET (PrintFile, "%f.output", "print-file", 0),
-  SSET (LibraryCommandDir, PCBLIBDIR, "lib-command-dir", 0),
+	"element-command", "Command to read a footprint"),
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --print-file <string>
+Command to print to a file.
+@end ftable
+%end-doc
+*/
+  SSET (PrintFile, "%f.output", "print-file", "Command to print to a file"),
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --lib-command-dir <string>
+Path to the command that queries the library.
+@end ftable
+%end-doc
+*/
+  SSET (LibraryCommandDir, PCBLIBDIR, "lib-command-dir",
+       "Path to the command that queries the library"),
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --lib-command <string>
+Command to query the library. @*
+Defaults to @code{"QueryLibrary.sh '%p' '%f' %a"}
+@end ftable
+%end-doc
+*/
   SSET (LibraryCommand, "QueryLibrary.sh '%p' '%f' %a",
-	"lib-command", 0),
-  SSET (LibraryContentsCommand, "ListLibraryContents.sh '%p' '%f'",
-	"lib-contents-command", 0),
+       "lib-command", "Command to query the library"),
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --lib-contents-command <string>
+Command to query the contents of the library. @*
+Defaults to @code{"ListLibraryContents.sh %p %f"} or,
+on Windows builds, an empty string (to disable this feature).
+@end ftable
+%end-doc
+*/
+  SSET (LibraryContentsCommand,
+#ifdef __WIN32__
+	"",
+#else
+	"ListLibraryContents.sh '%p' '%f'",
+#endif
+	"lib-contents-command", "Command to query the contents of the library"),
+
+/* %start-doc options "5 Paths"
+@ftable @code
+@item --lib-newlib <string>
+Top level directory for the newlib style library.
+@end ftable
+%end-doc
+*/
   SSET (LibraryTree, PCBTREEPATH, "lib-newlib",
 	"Top level directory for the newlib style library"),
-  SSET (SaveCommand, "", "save-command", 0),
-  SSET (LibraryFilename, LIBRARYFILENAME, "lib-name", 0),
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --save-command <string>
+Command to save to a file.
+@end ftable
+%end-doc
+*/
+  SSET (SaveCommand, "", "save-command", "Command to save to a file"),
+
+/* %start-doc options "5 Paths"
+@ftable @code
+@item --lib-name <string>
+The default filename for the library.
+@end ftable
+%end-doc
+*/
+  SSET (LibraryFilename, LIBRARYFILENAME, "lib-name",
+				"The default filename for the library"),
+
+/* %start-doc options "5 Paths"
+@ftable @code
+@item --default-font <string>
+The name of the default font.
+@end ftable
+%end-doc
+*/
   SSET (FontFile, "default_font", "default-font",
-	"File name of default font."),
+	"File name of default font"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --route-styles <string>
+A string that defines the route styles. Defaults to @*
+@code{"Signal,1000,3600,2000,1000:Power,2500,6000,3500,1000
+	:Fat,4000,6000,3500,1000:Skinny,600,2402,1181,600"}
+@end ftable
+%end-doc
+*/
   SSET (Routes, "Signal,1000,3600,2000,1000:Power,2500,6000,3500,1000"
 	":Fat,4000,6000,3500,1000:Skinny,600,2402,1181,600", "route-styles",
-	0),
+	"A string that defines the route styles"),
+
+/* %start-doc options "5 Paths"
+@ftable @code
+@item --file-path <string>
+A colon separated list of directories or commands (starts with '|'). The path
+is passed to the program specified in @option{--file-command} together with the selected
+filename.
+@end ftable
+%end-doc
+*/
   SSET (FilePath, "", "file-path", 0),
-  SSET (RatCommand, "", "rat-command", 0),
-  SSET (FontPath, PCBLIBPATH, "font-path", 0),
-  SSET (ElementPath, PCBLIBPATH, "element-path", 0),
-  SSET (LibraryPath, PCBLIBPATH, "lib-path", 0),
-  SSET (MenuFile, "pcb-menu.res", "menu-file", 0),
+
+/* %start-doc options "6 Commands"
+@ftable @code
+@item --rat-command <string>
+Command for reading a netlist. Sequence @code{%f} is replaced by the netlist filename.
+@end ftable
+%end-doc
+*/
+  SSET (RatCommand, "", "rat-command", "Command for reading a netlist"),
+
+/* %start-doc options "5 Paths"
+@ftable @code
+@item --font-path <string>
+A colon separated list of directories to search the default font. Defaults to
+the default library path.
+@end ftable
+%end-doc
+*/
+  SSET (FontPath, PCBLIBPATH, "font-path",
+       "Colon separated list of directories to search the default font"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --element-path <string>
+A colon separated list of directories or commands (starts with '|').
+The path is passed to the program specified in @option{--element-command}.
+@end ftable
+%end-doc
+*/
+  SSET(ElementPath, PCBLIBPATH, "element-path",
+      "A colon separated list of directories or commands (starts with '|')"),
+
+/* %start-doc options "5 Paths"
+@ftable @code
+@item --lib-path <string>
+A colon separated list of directories that will be passed to the commands specified
+by @option{--element-command} and @option{--element-contents-command}.
+@end ftable
+%end-doc
+*/
+  SSET (LibraryPath, PCBLIBPATH, "lib-path",
+       "A colon separated list of directories"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --action-script <string>
+If set, this file is executed at startup.
+@end ftable
+%end-doc
+*/
   SSET (ScriptFilename, 0, "action-script",
-	"If set, this file is executed at startup."),
+	     "If set, this file is executed at startup"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --action-string <string>
+If set, this string of actions is executed at startup.
+@end ftable
+%end-doc
+*/
   SSET (ActionString, 0, "action-string",
-	"If set, this is executed at startup."),
-  SSET (FabAuthor, "", "fab-author", 0),
+       "If set, this is executed at startup"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --fab-author <string>
+Name of author to be put in the Gerber files.
+@end ftable
+%end-doc
+*/
+  SSET (FabAuthor, "", "fab-author",
+       "Name of author to be put in the Gerber files"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --layer-stack <string>
+Initial layer stackup, for setting up an export. A comma separated list of layer
+names, layer numbers and layer groups.
+@end ftable
+%end-doc
+*/
   SSET (InitialLayerStack, "", "layer-stack",
 	"Initial layer stackup, for setting up an export."),
 
@@ -564,22 +1382,152 @@ HID_Attribute main_attribute_list[] = {
   SSET (GnetlistProgram, NULL, "gnetlist",
 	"Sets the name and optionally full path to the gnetlist(3) program"),
 
-  ISET (PinoutOffsetX, MIL_TO_COORD(1), "pinout-offset-x", 0),
-  ISET (PinoutOffsetY, MIL_TO_COORD(1), "pinout-offset-y", 0),
-  ISET (PinoutTextOffsetX, MIL_TO_COORD(8), "pinout-text-offset-x", 0),
-  ISET (PinoutTextOffsetY, MIL_TO_COORD(-1), "pinout-text-offset-y", 0),
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --pinout-offset-x <num>
+Horizontal offset of the pin number display. Defaults to @code{100mil}.
+@end ftable
+%end-doc
+*/
+  CSET (PinoutOffsetX, MIL_TO_COORD(1), "pinout-offset-x",
+       "Horizontal offset of the pin number display in mil"),
 
-  BSET (DrawGrid, 0, "draw-grid", "default to drawing the grid at startup"),
-  BSET (ClearLine, 1, "clear-line", 0),
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --pinout-offset-y <num>
+Vertical offset of the pin number display. Defaults to @code{100mil}.
+@end ftable
+%end-doc
+*/
+  CSET (PinoutOffsetY, MIL_TO_COORD(1), "pinout-offset-y",
+       "Vertical offset of the pin number display in mil"),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --pinout-text-offset-x <num>
+Horizontal offset of the pin name display. Defaults to @code{800mil}.
+@end ftable
+%end-doc
+*/
+  CSET (PinoutTextOffsetX, MIL_TO_COORD(8), "pinout-text-offset-x",
+       "Horizontal offset of the pin name display in mil"),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --pinout-text-offset-y <num>
+Vertical offset of the pin name display. Defaults to @code{-100mil}.
+@end ftable
+%end-doc
+*/
+  CSET (PinoutTextOffsetY, MIL_TO_COORD(-1), "pinout-text-offset-y",
+       "Vertical offset of the pin name display in mil"),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --draw-grid
+If set, draw the grid at start-up.
+@end ftable
+%end-doc
+*/
+  BSET (DrawGrid, 0, "draw-grid", "If set, draw the grid at start-up"),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --clear-line
+If set, new lines clear polygons.
+@end ftable
+%end-doc
+*/
+  BSET (ClearLine, 1, "clear-line", "If set, new lines clear polygons"),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --full-poly
+If set, new polygons are full ones.
+@end ftable
+%end-doc
+*/
   BSET (FullPoly, 0, "full-poly", 0),
-  BSET (UniqueNames, 1, "unique-names", 0),
-  BSET (SnapPin, 1, "snap-pin", 0),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --unique-names
+If set, you will not be permitted to change the name of an component to match that
+of another component.
+@end ftable
+%end-doc
+*/
+  BSET (UniqueNames, 1, "unique-names", "Prevents identical component names"),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --snap-pin
+If set, pin centers and pad end points are treated as additional grid points
+that the cursor can snap to.
+@end ftable
+%end-doc
+*/
+  BSET (SnapPin, 1, "snap-pin",
+       "If set, the cursor snaps to pads and pin centers"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --save-last-command
+If set, the last user command is saved.
+@end ftable
+%end-doc
+*/
   BSET (SaveLastCommand, 0, "save-last-command", 0),
-  BSET (SaveInTMP, 0, "save-in-tmp", 0),
-  BSET (AllDirectionLines, 0, "all-direction-lines", 0),
-  BSET (ShowNumber, 0, "show-number", 0),
-  BSET (ResetAfterElement, 1, "reset-after-element", 0),
-  BSET (RingBellWhenFinished, 0, "ring-bell-finished", 0),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --save-in-tmp
+If set, all data which would otherwise be lost are saved in a temporary file
+@file{/tmp/PCB.%i.save} . Sequence @samp{%i} is replaced by the process ID.
+@end ftable
+%end-doc
+*/
+  BSET (SaveInTMP, 0, "save-in-tmp",
+       "When set, all data which would otherwise be lost are saved in /tmp"),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --all-direction-lines
+Allow all directions, when drawing new lines.
+@end ftable
+%end-doc
+*/
+  BSET (AllDirectionLines, 0, "all-direction-lines",
+       "Allow all directions, when drawing new lines"),
+
+/* %start-doc options "2 General GUI Options"
+@ftable @code
+@item --show-number
+Pinout shows number.
+@end ftable
+%end-doc
+*/
+  BSET (ShowNumber, 0, "show-number", "Pinout shows number"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --reset-after-element
+If set, all found connections are reset before a new component is scanned.
+@end ftable
+%end-doc
+*/
+  BSET (ResetAfterElement, 1, "reset-after-element",
+       "If set, all found connections are reset before a new component is scanned"),
+
+/* %start-doc options "1 General Options"
+@ftable @code
+@item --ring-bell-finished
+Execute the bell command when all rats are routed.
+@end ftable
+%end-doc
+*/
+  BSET (RingBellWhenFinished, 0, "ring-bell-finished",
+       "Execute the bell command when all rats are routed"),
 };
 
 REGISTER_ATTRIBUTES (main_attribute_list)
@@ -590,7 +1538,10 @@ REGISTER_ATTRIBUTES (main_attribute_list)
 {
   char *tmps;
 
-  if (Settings.LibraryCommand[0] != PCB_DIR_SEPARATOR_C && Settings.LibraryCommand[0] != '.')
+  if (Settings.LibraryCommand != NULL &&
+      Settings.LibraryCommand[0] != '\0' &&
+      Settings.LibraryCommand[0] != PCB_DIR_SEPARATOR_C &&
+      Settings.LibraryCommand[0] != '.')
     {
       Settings.LibraryCommand
 	=
@@ -598,8 +1549,10 @@ REGISTER_ATTRIBUTES (main_attribute_list)
 		Settings.LibraryCommand,
 		NULL);
     }
-  if (Settings.LibraryContentsCommand[0] != PCB_DIR_SEPARATOR_C
-      && Settings.LibraryContentsCommand[0] != '.')
+  if (Settings.LibraryContentsCommand != NULL &&
+      Settings.LibraryContentsCommand[0] != '\0' &&
+      Settings.LibraryContentsCommand[0] != PCB_DIR_SEPARATOR_C &&
+      Settings.LibraryContentsCommand[0] != '.')
     {
       Settings.LibraryContentsCommand
 	=
@@ -619,8 +1572,8 @@ REGISTER_ATTRIBUTES (main_attribute_list)
     Settings.ViaDrillingHole =
       DEFAULT_DRILLINGHOLE * Settings.ViaThickness / 100;
 
-  Settings.MaxWidth = MIN (MAX_COORD, MAX (Settings.MaxWidth, MIN_SIZE));
-  Settings.MaxHeight = MIN (MAX_COORD, MAX (Settings.MaxHeight, MIN_SIZE));
+  Settings.MaxWidth  = CLAMP (Settings.MaxWidth, MIN_SIZE, MAX_COORD);
+  Settings.MaxHeight = CLAMP (Settings.MaxHeight, MIN_SIZE, MAX_COORD);
 
   ParseRouteString (Settings.Routes, &Settings.RouteStyle[0], "cmil");
 
@@ -646,7 +1599,15 @@ REGISTER_ATTRIBUTES (main_attribute_list)
     Settings.GnetlistProgram = strdup ("gnetlist");
   }
 
+  if (grid_units)
+    Settings.grid_unit = get_unit_struct (grid_units);
+  if (!grid_units || Settings.grid_unit == NULL)
+    Settings.grid_unit = get_unit_struct ("mil");
 
+  copy_nonzero_increments (get_increments_struct (METRIC), &increment_mm);
+  copy_nonzero_increments (get_increments_struct (IMPERIAL), &increment_mil);
+
+  Settings.increments = get_increments_struct (Settings.grid_unit->family);
 }
 
 /* ---------------------------------------------------------------------- 
@@ -906,10 +1867,13 @@ main (int argc, char *argv[])
   InitPaths (argv[0]);
 
   bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
+  textdomain(GETTEXT_PACKAGE);
   bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
+  setlocale(LC_ALL,"");
 
   srand ( time(NULL) ); /* Set seed for rand() */
 
+  initialize_units();
   polygon_init ();
   hid_init ();
 
@@ -931,7 +1895,10 @@ main (int argc, char *argv[])
   Progname = program_basename;
 
   /* Print usage or version if requested.  Then exit.  */  
-  if (argc > 1 && strcmp (argv[1], "-h") == 0)
+  if (argc > 1 &&
+      (strcmp (argv[1], "-h") == 0 ||
+       strcmp (argv[1], "-?") == 0 ||
+       strcmp (argv[1], "--help") == 0))
     usage ();
   if (argc > 1 && strcmp (argv[1], "-V") == 0)
     print_version ();
@@ -1004,7 +1971,6 @@ main (int argc, char *argv[])
 
   ResetStackAndVisibility ();
 
-  CreateDefaultFont ();
   if (gui->gui)
     InitCrosshair ();
   InitHandler ();
@@ -1025,9 +1991,6 @@ main (int argc, char *argv[])
     {
       LayerStringToLayerStack (Settings.InitialLayerStack);
     }
-
-  /*    FIX_ME
-     LoadBackgroundImage (Settings.BackgroundImage); */
 
   /* This must be called before any other atexit functions
    * are registered, as it configures an atexit function to
@@ -1067,6 +2030,8 @@ main (int argc, char *argv[])
 
   if (gui->printer || gui->exporter)
     {
+      // Workaround to fix batch output for non-C locales
+      setlocale(LC_NUMERIC,"C");
       gui->do_export (0);
       exit (0);
     }

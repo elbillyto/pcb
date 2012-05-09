@@ -24,27 +24,27 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for rats routines
  */
 
-#ifndef	__RATS_INCLUDED__
-#define	__RATS_INCLUDED__
+#ifndef	PCB_RATS_H
+#define	PCB_RATS_H
 
 #include "global.h"
 
 /* This one is actually in netlist.h, but it's used by rats.c */
-LibraryMenuTypePtr netnode_to_netname (char *nodename);
-LibraryMenuTypePtr netname_to_netname (char *netname);
+LibraryMenuType * netnode_to_netname (char *nodename);
+LibraryMenuType * netname_to_netname (char *netname);
 
-RatTypePtr AddNet (void);
+RatType * AddNet (void);
 char *ConnectionName (int, void *, void *);
 
-bool AddAllRats (bool, void (*)(register ConnectionTypePtr, register ConnectionTypePtr, register RouteStyleTypePtr));
-bool SeekPad (LibraryEntryTypePtr, ConnectionTypePtr, bool);
+bool AddAllRats (bool, void (*)(register ConnectionType *, register ConnectionType *, register RouteStyleType *));
+bool SeekPad (LibraryEntryType *, ConnectionType *, bool);
 
-NetListTypePtr ProcNetlist (LibraryTypePtr);
+NetListType * ProcNetlist (LibraryType *);
 NetListListType CollectSubnets (bool);
+
 #endif

@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for drawing routines
  */
 
-#ifndef	__DRAW_INCLUDED__
-#define	__DRAW_INCLUDED__
+#ifndef	PCB_DRAW_H
+#define	PCB_DRAW_H
 
 #include "global.h"
 
@@ -37,41 +36,45 @@
 
 void Draw (void);
 void Redraw (void);
-void DrawVia (PinTypePtr);
-void DrawRat (RatTypePtr);
-void DrawViaName (PinTypePtr);
-void DrawPin (PinTypePtr);
-void DrawPinName (PinTypePtr);
-void DrawPad (PadTypePtr);
-void DrawPadName (PadTypePtr);
-void DrawLine (LayerTypePtr, LineTypePtr);
-void DrawArc (LayerTypePtr, ArcTypePtr);
-void DrawText (LayerTypePtr, TextTypePtr);
-void DrawTextLowLevel (TextTypePtr, int);
-void DrawPolygon (LayerTypePtr, PolygonTypePtr);
-void DrawElement (ElementTypePtr);
-void DrawElementName (ElementTypePtr);
-void DrawElementPackage (ElementTypePtr);
-void DrawElementPinsAndPads (ElementTypePtr);
+void DrawVia (PinType *);
+void DrawRat (RatType *);
+void DrawViaName (PinType *);
+void DrawPin (PinType *);
+void DrawPinName (PinType *);
+void DrawPad (PadType *);
+void DrawPadName (PadType *);
+void DrawLine (LayerType *, LineType *);
+void DrawArc (LayerType *, ArcType *);
+void DrawText (LayerType *, TextType *);
+void DrawTextLowLevel (TextType *, Coord);
+void DrawPolygon (LayerType *, PolygonType *);
+void DrawElement (ElementType *);
+void DrawElementName (ElementType *);
+void DrawElementPackage (ElementType *);
+void DrawElementPinsAndPads (ElementType *);
 void DrawObject (int, void *, void *);
-void DrawLayer (LayerTypePtr, const BoxType *);
-void EraseVia (PinTypePtr);
-void EraseRat (RatTypePtr);
-void EraseViaName (PinTypePtr);
-void ErasePad (PadTypePtr);
-void ErasePadName (PadTypePtr);
-void ErasePin (PinTypePtr);
-void ErasePinName (PinTypePtr);
-void EraseLine (LineTypePtr);
-void EraseArc (ArcTypePtr);
-void EraseText (LayerTypePtr, TextTypePtr);
-void ErasePolygon (PolygonTypePtr);
-void EraseElement (ElementTypePtr);
-void EraseElementPinsAndPads (ElementTypePtr);
-void EraseElementName (ElementTypePtr);
+void DrawLayer (LayerType *, const BoxType *);
+void EraseVia (PinType *);
+void EraseRat (RatType *);
+void EraseViaName (PinType *);
+void ErasePad (PadType *);
+void ErasePadName (PadType *);
+void ErasePin (PinType *);
+void ErasePinName (PinType *);
+void EraseLine (LineType *);
+void EraseArc (ArcType *);
+void EraseText (LayerType *, TextType *);
+void ErasePolygon (PolygonType *);
+void EraseElement (ElementType *);
+void EraseElementPinsAndPads (ElementType *);
+void EraseElementName (ElementType *);
 void EraseObject (int, void *, void *);
-void LoadBackgroundImage (char *);
 
-/*GdkDrawable *draw_get_current_drawable(void);*/
+void DrawLayerGroup (int side, const BoxType *drawn_area);
+void DrawPaste (int side, const BoxType *drawn_area);
+void DrawSilk (int side, const BoxType *drawn_area);
+void DrawMask (int side, const BoxType *drawn_area);
+void DrawHoles (bool draw_plated, bool draw_unplated, const BoxType *drawn_area);
+void PrintAssembly (int side, const BoxType *drawn_area);
 
 #endif

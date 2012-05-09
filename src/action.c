@@ -1,5 +1,3 @@
-/* 15 Oct 2008 Ineiev: add CycleCrosshair action */
-
 /*
  *                            COPYRIGHT
  *
@@ -55,6 +53,7 @@
 #include "line.h"
 #include "mymem.h"
 #include "misc.h"
+#include "mirror.h"
 #include "move.h"
 #include "polygon.h"
 /*#include "print.h"*/
@@ -70,6 +69,7 @@
 #include "undo.h"
 #include "rtree.h"
 #include "macro.h"
+#include "pcb-printf.h"
 
 #include <assert.h>
 #include <stdlib.h> /* rand() */
@@ -163,7 +163,6 @@ typedef enum
   F_Restore,
   F_Rotate,
   F_Save,
-  F_Scroll,
   F_Selected,
   F_SelectedArcs,
   F_SelectedElements,
@@ -217,7 +216,7 @@ typedef struct			/* used to identify subfunctions */
   char *Identifier;
   FunctionID ID;
 }
-FunctionType, *FunctionTypePtr;
+FunctionType;
 
 /* --------------------------------------------------------------------------- */
 
@@ -296,18 +295,17 @@ either round or, if the octagon flag is set, octagonal.
  * some local identifiers
  */
 static PointType InsertedPoint;
-static LayerTypePtr lastLayer;
+static LayerType *lastLayer;
 static struct
 {
-  PolygonTypePtr poly;
+  PolygonType *poly;
   LineType line;
 }
 fake;
 
 static struct
 {
-  int X;
-  int Y;
+  Coord X, Y;
   Cardinal Buffer;
   bool Click;
   bool Moving;		/* selected type clicked on */
@@ -322,7 +320,6 @@ static int defer_updates = 0;
 static int defer_needs_update = 0;
 
 static Cardinal polyIndex = 0;
-static bool IgnoreMotionEvents = false;
 static bool saved_mode = false;
 #ifdef HAVE_LIBSTROKE
 static bool mid_stroke = false;
@@ -400,7 +397,6 @@ static FunctionType Functions[] = {
   {"Revert", F_Revert},
   {"Rotate", F_Rotate},
   {"Save", F_Save},
-  {"Scroll", F_Scroll},
   {"Selected", F_Selected},
   {"SelectedArcs", F_SelectedArcs},
   {"SelectedElements", F_SelectedElements},
@@ -546,9 +542,9 @@ FinishStroke (void)
 	case 12589:
 	case 14589:
 	  {
-	    LocationType x = (StrokeBox.X1 + StrokeBox.X2) / 2;
-	    LocationType y = (StrokeBox.Y1 + StrokeBox.Y2) / 2;
-	    int z;
+	    Coord x = (StrokeBox.X1 + StrokeBox.X2) / 2;
+	    Coord y = (StrokeBox.Y1 + StrokeBox.Y2) / 2;
+	    double z;
 	    /* XXX: PCB->MaxWidth and PCB->MaxHeight may be the wrong
 	     *      divisors below. The old code WAS broken, but this
              *      replacement has not been tested for correctness.
@@ -564,7 +560,7 @@ FinishStroke (void)
 		   log (2.0));
 	    SetZoom (z);
 
-	    CenterDisplay (x, y, false);
+	    CenterDisplay (x, y);
 	    break;
 	  }
 
@@ -827,7 +823,7 @@ AdjustAttachedBox (void)
 void
 AdjustAttachedObjects (void)
 {
-  PointTypePtr pnt;
+  PointType *pnt;
   switch (Settings.Mode)
     {
       /* update at least an attached block (selection) */
@@ -901,18 +897,15 @@ NotifyLine (void)
       if (type == PIN_TYPE || type == VIA_TYPE)
 	{
 	  Crosshair.AttachedLine.Point1.X =
-	    Crosshair.AttachedLine.Point2.X = ((PinTypePtr) ptr2)->X;
+	    Crosshair.AttachedLine.Point2.X = ((PinType *) ptr2)->X;
 	  Crosshair.AttachedLine.Point1.Y =
-	    Crosshair.AttachedLine.Point2.Y = ((PinTypePtr) ptr2)->Y;
+	    Crosshair.AttachedLine.Point2.Y = ((PinType *) ptr2)->Y;
 	}
       else if (type == PAD_TYPE)
 	{
-	  PadTypePtr pad = (PadTypePtr) ptr2;
-	  float d1, d2;
-	  d1 = SQUARE (Crosshair.X - pad->Point1.X) +
-	    SQUARE (Crosshair.Y - pad->Point1.Y);
-	  d2 = SQUARE (Crosshair.X - pad->Point2.X) +
-	    SQUARE (Crosshair.Y - pad->Point2.Y);
+	  PadType *pad = (PadType *) ptr2;
+	  double d1 = Distance (Crosshair.X, Crosshair.Y, pad->Point1.X, pad->Point1.Y);
+	  double d2 = Distance (Crosshair.X, Crosshair.Y, pad->Point2.X, pad->Point2.Y);
 	  if (d2 < d1)
 	    {
 	      Crosshair.AttachedLine.Point1 =
@@ -1003,7 +996,7 @@ NotifyMode (void)
 	  {
 	    type = SearchScreen (Note.X, Note.Y, test, &ptr1, &ptr2, &ptr3);
 	    if (!Note.Hit && (type & MOVE_TYPES) &&
-		!TEST_FLAG (LOCKFLAG, (PinTypePtr) ptr2))
+		!TEST_FLAG (LOCKFLAG, (PinType *) ptr2))
 	      {
 		Note.Hit = type;
 		Note.ptr1 = ptr1;
@@ -1011,7 +1004,7 @@ NotifyMode (void)
 		Note.ptr3 = ptr3;
 	      }
 	    if (!Note.Moving && (type & SELECT_TYPES) &&
-		TEST_FLAG (SELECTEDFLAG, (PinTypePtr) ptr2))
+		TEST_FLAG (SELECTEDFLAG, (PinType *) ptr2))
 	      Note.Moving = true;
 	    if ((Note.Hit && Note.Moving) || type == NO_TYPE)
 	      break;
@@ -1021,7 +1014,7 @@ NotifyMode (void)
 
     case VIA_MODE:
       {
-	PinTypePtr via;
+	PinType *via;
 
 	if (!PCB->ViaOn)
 	  {
@@ -1059,9 +1052,9 @@ NotifyMode (void)
 	  case STATE_SECOND:
 	  case STATE_THIRD:
 	    {
-	      ArcTypePtr arc;
-	      LocationType wx, wy;
-	      int sa, dir;
+	      ArcType *arc;
+	      Coord wx, wy;
+	      Angle sa, dir;
 
 	      wx = Note.X - Crosshair.AttachedBox.Point1.X;
 	      wy = Note.Y - Crosshair.AttachedBox.Point1.Y;
@@ -1112,7 +1105,7 @@ NotifyMode (void)
 							       CLEARLINEFLAG :
 							       0))))
 		{
-		  BoxTypePtr bx;
+		  BoxType *bx;
 
 		  bx = GetArcEnds (arc);
 		  Crosshair.AttachedBox.Point1.X =
@@ -1136,7 +1129,7 @@ NotifyMode (void)
 	type = SearchScreen (Note.X, Note.Y, LOCK_TYPES, &ptr1, &ptr2, &ptr3);
 	if (type == ELEMENT_TYPE)
 	  {
-	    ElementTypePtr element = (ElementTypePtr) ptr2;
+	    ElementType *element = (ElementType *) ptr2;
 
 	    TOGGLE_FLAG (LOCKFLAG, element);
 	    PIN_LOOP (element);
@@ -1157,11 +1150,12 @@ NotifyMode (void)
 	     */
 	    DrawElement (element);
 	    Draw ();
+	    SetChangedFlag (true);
 	    hid_actionl ("Report", "Object", NULL);
 	  }
 	else if (type != NO_TYPE)
 	  {
-	    TextTypePtr thing = (TextTypePtr) ptr3;
+	    TextType *thing = (TextType *) ptr3;
 	    TOGGLE_FLAG (LOCKFLAG, thing);
 	    if (TEST_FLAG (LOCKFLAG, thing)
 		&& TEST_FLAG (SELECTEDFLAG, thing))
@@ -1171,6 +1165,7 @@ NotifyMode (void)
 		DrawObject (type, ptr1, ptr2);
 		Draw ();
 	      }
+	    SetChangedFlag (true);
 	    hid_actionl ("Report", "Object", NULL);
 	  }
 	break;
@@ -1181,17 +1176,17 @@ NotifyMode (void)
 	      =
 	      SearchScreen (Note.X, Note.Y, PIN_TYPES, &ptr1, &ptr2,
 			    &ptr3)) != NO_TYPE)
-	    && !TEST_FLAG (HOLEFLAG, (PinTypePtr) ptr3))
+	    && !TEST_FLAG (HOLEFLAG, (PinType *) ptr3))
 	  {
 	    if (gui->shift_is_pressed ())
 	      {
-		int tstyle = GET_THERM (INDEXOFCURRENT, (PinTypePtr) ptr3);
+		int tstyle = GET_THERM (INDEXOFCURRENT, (PinType *) ptr3);
 		tstyle++;
 		if (tstyle > 5)
 		  tstyle = 1;
 		ChangeObjectThermal (type, ptr1, ptr2, ptr3, tstyle);
 	      }
-	    else if (GET_THERM (INDEXOFCURRENT, (PinTypePtr) ptr3))
+	    else if (GET_THERM (INDEXOFCURRENT, (PinType *) ptr3))
 	      ChangeObjectThermal (type, ptr1, ptr2, ptr3, 0);
 	    else
 	      ChangeObjectThermal (type, ptr1, ptr2, ptr3, PCB->ThermStyle);
@@ -1220,7 +1215,7 @@ NotifyMode (void)
 
       if (PCB->RatDraw)
 	{
-	  RatTypePtr line;
+	  RatType *line;
 	  if ((line = AddNet ()))
 	    {
 	      addedLines++;
@@ -1238,7 +1233,8 @@ NotifyMode (void)
       else
 	/* create line if both ends are determined && length != 0 */
 	{
-	  LineTypePtr line;
+	  LineType *line;
+	  int maybe_found_flag;
 
 	  if (PCB->Clipping
 	      && Crosshair.AttachedLine.Point1.X ==
@@ -1255,6 +1251,12 @@ NotifyMode (void)
 	      Crosshair.AttachedLine.Point2.Y = Note.Y;
 	    }
 
+	  if (TEST_FLAG (AUTODRCFLAG, PCB)
+	      && ! TEST_SILK_LAYER (CURRENT))
+	    maybe_found_flag = FOUNDFLAG;
+	  else
+	    maybe_found_flag = 0;
+
 	  if ((Crosshair.AttachedLine.Point1.X !=
 	       Crosshair.AttachedLine.Point2.X
 	       || Crosshair.AttachedLine.Point1.Y !=
@@ -1267,15 +1269,13 @@ NotifyMode (void)
 					  Crosshair.AttachedLine.Point2.Y,
 					  Settings.LineThickness,
 					  2 * Settings.Keepaway,
-					  MakeFlags ((TEST_FLAG
-						      (AUTODRCFLAG,
-						       PCB) ? FOUNDFLAG : 0) |
+					  MakeFlags (maybe_found_flag |
 						     (TEST_FLAG
 						      (CLEARNEWFLAG,
 						       PCB) ? CLEARLINEFLAG :
 						      0)))) != NULL)
 	    {
-	      PinTypePtr via;
+	      PinType *via;
 
 	      addedLines++;
 	      AddObjectToCreateUndoList (LINE_TYPE, CURRENT, line, line);
@@ -1357,7 +1357,7 @@ NotifyMode (void)
 	  Crosshair.AttachedBox.Point1.X != Crosshair.AttachedBox.Point2.X &&
 	  Crosshair.AttachedBox.Point1.Y != Crosshair.AttachedBox.Point2.Y)
 	{
-	  PolygonTypePtr polygon;
+	  PolygonType *polygon;
 
 	  int flags = CLEARPOLYFLAG;
 	  if (TEST_FLAG (NEWFULLPOLYFLAG, PCB))
@@ -1395,7 +1395,7 @@ NotifyMode (void)
 	  {
 	    if (strlen(string) > 0)
 	      {
-		TextTypePtr text;
+		TextType *text;
 		int flag = CLEARLINEFLAG;
 
 		if (GetLayerGroupNumberByNumber (INDEXOFCURRENT) ==
@@ -1418,7 +1418,7 @@ NotifyMode (void)
 
     case POLYGON_MODE:
       {
-	PointTypePtr points = Crosshair.AttachedPolygon.Points;
+	PointType *points = Crosshair.AttachedPolygon.Points;
 	Cardinal n = Crosshair.AttachedPolygon.PointN;
 
 	/* do update of position; use the 'LINE_MODE' mechanism */
@@ -1466,7 +1466,7 @@ NotifyMode (void)
 
 	    if (Crosshair.AttachedObject.Type != NO_TYPE)
 	      {
-		if (TEST_FLAG (LOCKFLAG, (PolygonTypePtr)
+		if (TEST_FLAG (LOCKFLAG, (PolygonType *)
 			       Crosshair.AttachedObject.Ptr2))
 		  {
 		    Message (_("Sorry, the object is locked\n"));
@@ -1481,7 +1481,7 @@ NotifyMode (void)
             /* second notify, insert new point into object */
           case STATE_SECOND:
             {
-	      PointTypePtr points = Crosshair.AttachedPolygon.Points;
+	      PointType *points = Crosshair.AttachedPolygon.Points;
 	      Cardinal n = Crosshair.AttachedPolygon.PointN;
 	      POLYAREA *original, *new_hole, *result;
 	      FlagType Flags;
@@ -1550,7 +1550,7 @@ NotifyMode (void)
     case PASTEBUFFER_MODE:
       {
 	TextType estr[MAX_ELEMENTNAMES];
-	ElementTypePtr e = 0;
+	ElementType *e = 0;
 
 	if (gui->shift_is_pressed ())
 	  {
@@ -1559,7 +1559,7 @@ NotifyMode (void)
 			    &ptr3);
 	    if (type == ELEMENT_TYPE)
 	      {
-		e = (ElementTypePtr) ptr1;
+		e = (ElementType *) ptr1;
 		if (e)
 		  {
 		    int i;
@@ -1582,7 +1582,7 @@ NotifyMode (void)
 	    if (type == ELEMENT_TYPE && ptr1)
 	      {
 		int i, save_n;
-		e = (ElementTypePtr) ptr1;
+		e = (ElementType *) ptr1;
 
 		save_n = NAME_INDEX (PCB);
 
@@ -1610,14 +1610,14 @@ NotifyMode (void)
 	   SearchScreen (Note.X, Note.Y, REMOVE_TYPES, &ptr1, &ptr2,
 			 &ptr3)) != NO_TYPE)
 	{
-	  if (TEST_FLAG (LOCKFLAG, (LineTypePtr) ptr2))
+	  if (TEST_FLAG (LOCKFLAG, (LineType *) ptr2))
 	    {
 	      Message (_("Sorry, the object is locked\n"));
 	      break;
 	    }
 	  if (type == ELEMENT_TYPE)
 	    {
-	      RubberbandTypePtr ptr;
+	      RubberbandType *ptr;
 	      int i;
 
 	      Crosshair.AttachedObject.RubberbandN = 0;
@@ -1626,7 +1626,7 @@ NotifyMode (void)
 	      for (i = 0; i < Crosshair.AttachedObject.RubberbandN; i++)
 		{
 		  if (PCB->RatOn)
-		    EraseRat ((RatTypePtr) ptr->Line);
+		    EraseRat ((RatType *) ptr->Line);
                   if (TEST_FLAG (RUBBERENDFLAG, ptr->Line))
 		    MoveObjectToRemoveUndoList (RATLINE_TYPE,
 					        ptr->Line, ptr->Line,
@@ -1668,7 +1668,7 @@ NotifyMode (void)
 	    if (Crosshair.AttachedObject.Type != NO_TYPE)
 	      {
 		if (Settings.Mode == MOVE_MODE &&
-		    TEST_FLAG (LOCKFLAG, (PinTypePtr)
+		    TEST_FLAG (LOCKFLAG, (PinType *)
 			       Crosshair.AttachedObject.Ptr2))
 		  {
 		    Message (_("Sorry, the object is locked\n"));
@@ -1722,7 +1722,7 @@ NotifyMode (void)
 
 	  if (Crosshair.AttachedObject.Type != NO_TYPE)
 	    {
-	      if (TEST_FLAG (LOCKFLAG, (PolygonTypePtr)
+	      if (TEST_FLAG (LOCKFLAG, (PolygonType *)
 			     Crosshair.AttachedObject.Ptr2))
 		{
 		  Message (_("Sorry, the object is locked\n"));
@@ -1735,7 +1735,7 @@ NotifyMode (void)
 		  if (Crosshair.AttachedObject.Type == POLYGON_TYPE)
 		    {
 		      fake.poly =
-			(PolygonTypePtr) Crosshair.AttachedObject.Ptr2;
+			(PolygonType *) Crosshair.AttachedObject.Ptr2;
 		      polyIndex =
 			GetLowestDistancePolygonPoint (fake.poly, Note.X,
 						       Note.Y);
@@ -1815,7 +1815,7 @@ Does a Restore if there was nothing to undo, else does a Close.
 %end-doc */
 
 static int
-ActionAtomic (int argc, char **argv, int x, int y)
+ActionAtomic (int argc, char **argv, Coord x, Coord y)
 {
   if (argc != 1)
     AFAIL (atomic);
@@ -1855,21 +1855,19 @@ not the current style settings.
 %end-doc */
 
 static int
-ActionDRCheck (int argc, char **argv, int x, int y)
+ActionDRCheck (int argc, char **argv, Coord x, Coord y)
 {
   int count;
 
   if (gui->drc_gui == NULL || gui->drc_gui->log_drc_overview)
     {
-      Message (_("Rules are minspace %.2f, minoverlap %.2f "
-		 "minwidth %.2f, minsilk %.2f\n"
-		 "min drill %.2f, min annular ring %.2f\n"),
-	       COORD_TO_MIL(PCB->Bloat + 1),
-	       COORD_TO_MIL(PCB->Shrink),
-	       COORD_TO_MIL(PCB->minWid),
-	       COORD_TO_MIL(PCB->minSlk),
-	       COORD_TO_MIL(PCB->minDrill),
-	       COORD_TO_MIL(PCB->minRing));
+      Message (_("%m+Rules are minspace %$mS, minoverlap %$mS "
+		 "minwidth %$mS, minsilk %$mS\n"
+		 "min drill %$mS, min annular ring %$mS\n"),
+               Settings.grid_unit->allow,
+	       PCB->Bloat, PCB->Shrink,
+	       PCB->minWid, PCB->minSlk,
+	       PCB->minDrill, PCB->minRing);
     }
   count = DRCAll ();
   if (gui->drc_gui == NULL || gui->drc_gui->log_drc_overview)
@@ -1897,7 +1895,7 @@ static const char dumplibrary_help[] =
 %end-doc */
 
 static int
-ActionDumpLibrary (int argc, char **argv, int x, int y)
+ActionDumpLibrary (int argc, char **argv, Coord x, Coord y)
 {
   int i, j;
 
@@ -1956,10 +1954,10 @@ other, not their absolute positions on the board.
 %end-doc */
 
 static int
-ActionFlip (int argc, char **argv, int x, int y)
+ActionFlip (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
-  ElementTypePtr element;
+  ElementType *element;
   void *ptrtmp;
   int err = 0;
 
@@ -1971,7 +1969,7 @@ ActionFlip (int argc, char **argv, int x, int y)
 	  if ((SearchScreen (x, y, ELEMENT_TYPE,
 			     &ptrtmp, &ptrtmp, &ptrtmp)) != NO_TYPE)
 	    {
-	      element = (ElementTypePtr) ptrtmp;
+	      element = (ElementType *) ptrtmp;
 	      ChangeElementSide (element, 2 * Crosshair.Y - PCB->MaxHeight);
 	      IncrementUndoSerialNumber ();
 	      Draw ();
@@ -2008,7 +2006,7 @@ followed by a newline.
 %end-doc */
 
 static int
-ActionMessage (int argc, char **argv, int x, int y)
+ActionMessage (int argc, char **argv, Coord x, Coord y)
 {
   int i;
 
@@ -2058,7 +2056,7 @@ to connect with. However, they will have no effect without the polygon.
 %end-doc */
 
 static int
-ActionSetThermal (int argc, char **argv, int x, int y)
+ActionSetThermal (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *style = ARG (1);
@@ -2108,32 +2106,6 @@ ActionSetThermal (int argc, char **argv, int x, int y)
 }
 
 /* ---------------------------------------------------------------------------
- * action routine to move the X pointer relative to the current position
- * syntax: MovePointer(deltax,deltay)
- */
-void
-ActionMovePointer (char *deltax, char *deltay)
-{
-  LocationType x, y, dx, dy;
-
-  /* save old crosshair position */
-  x = Crosshair.X;
-  y = Crosshair.Y;
-  dx = (LocationType) (atoi (deltax) * PCB->Grid);
-  dy = (LocationType) (atoi (deltay) * PCB->Grid);
-  MoveCrosshairRelative (TO_SCREEN_SIGN_X (dx), TO_SCREEN_SIGN_Y (dy));
-  FitCrosshairIntoGrid (Crosshair.X, Crosshair.Y);
-  /* restore crosshair for erasure */
-  Crosshair.X = x;
-  Crosshair.Y = y;
-  notify_crosshair_change (false);
-  MoveCrosshairRelative (TO_SCREEN_SIGN_X (dx), TO_SCREEN_SIGN_Y (dy));
-  /* update object position and cursor location */
-  AdjustAttachedObjects ();
-  notify_crosshair_change (true);
-}
-
-/* ---------------------------------------------------------------------------
  * !!! no action routine !!!
  *
  * event handler to set the cursor according to the X pointer position
@@ -2151,18 +2123,12 @@ EventMoveCrosshair (int ev_x, int ev_y)
       return;
     }
 #endif /* HAVE_LIBSTROKE */
-  /* ignore events that are caused by ActionMovePointer */
-  if (!IgnoreMotionEvents)
+  if (MoveCrosshairAbsolute (ev_x, ev_y))
     {
-      if (MoveCrosshairAbsolute (ev_x, ev_y))
-	{
-	  /* update object position and cursor location */
-	  AdjustAttachedObjects ();
-	  notify_crosshair_change (true);
-	}
+      /* update object position and cursor location */
+      AdjustAttachedObjects ();
+      notify_crosshair_change (true);
     }
-  else
-    IgnoreMotionEvents = false;
 }
 
 /* --------------------------------------------------------------------------- */
@@ -2200,13 +2166,14 @@ Changes the size of new text.
 %end-doc */
 
 static int
-ActionSetValue (int argc, char **argv, int x, int y)
+ActionSetValue (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *val = ARG (1);
   char *units = ARG (2);
   bool absolute;			/* flag for 'absolute' value */
   double value;
+  int text_scale;
   int err = 0;
 
   if (function && val)
@@ -2222,34 +2189,29 @@ ActionSetValue (int argc, char **argv, int x, int y)
 	  break;
 
 	case F_Grid:
-	  if (!absolute)
-	    {
-	      if ((value == (int) value && PCB->Grid == (int) PCB->Grid)
-		  || (value != (int) value && PCB->Grid != (int) PCB->Grid)
-                  || PCB->Grid ==1)
-                {
-                  /* 
-		   * On the way down short against the minimum 
-		   * PCB drawing unit 
-		   */
-                  if ((value + PCB->Grid) < 1)
-                     SetGrid (1, false);
-                  else if (PCB->Grid == 1)
-                    SetGrid ( value, false);
-                  else
-                    SetGrid (value + PCB->Grid, false);
-                }
-
-	      else
-		Message (_
-			 ("Don't combine metric/English grids like that!\n"));
-	    }
-	  else
+	  if (absolute)
 	    SetGrid (value, false);
+	  else
+	    {
+              if (value == 0)
+                value = val[0] == '-' ? -Settings.increments->grid
+                                      :  Settings.increments->grid;
+              /* On the way down, short against the minimum 
+               * PCB drawing unit */
+              if ((value + PCB->Grid) < 1)
+                SetGrid (1, false);
+              else if (PCB->Grid == 1)
+                SetGrid (value, false);
+              else
+                SetGrid (value + PCB->Grid, false);
+	    }
 	  break;
 
 	case F_LineSize:
 	case F_Line:
+          if (!absolute && value == 0)
+            value = val[0] == '-' ? -Settings.increments->line
+                                  :  Settings.increments->line;
 	  SetLineSize (absolute ? value : value + Settings.LineThickness);
 	  hid_action ("RouteStylesChanged");
 	  break;
@@ -2262,8 +2224,10 @@ ActionSetValue (int argc, char **argv, int x, int y)
 
 	case F_Text:
 	case F_TextScale:
-	  value /= 45;
-	  SetTextScale (absolute ? value : value + Settings.TextScale);
+	  text_scale = value / (double)FONT_CAPHEIGHT * 100.;
+	  if (!absolute)
+	    text_scale += Settings.TextScale;
+	  SetTextScale (text_scale);
 	  break;
 	default:
 	  err = 1;
@@ -2291,7 +2255,7 @@ save) before quitting.
 %end-doc */
 
 static int
-ActionQuit (int argc, char **argv, int x, int y)
+ActionQuit (int argc, char **argv, Coord x, Coord y)
 {
   char *force = ARG (0);
   if (force && strcasecmp (force, "force") == 0)
@@ -2336,7 +2300,7 @@ All ``found'' objects are marked ``not found''.
 %end-doc */
 
 static int
-ActionConnection (int argc, char **argv, int x, int y)
+ActionConnection (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -2400,16 +2364,14 @@ from.
 #define GAP MIL_TO_COORD(100)
 
 static int
-ActionDisperseElements (int argc, char **argv, int x, int y)
+ActionDisperseElements (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
-  long minx, miny, maxx, maxy, dx, dy;
+  Coord minx = GAP,
+    miny = GAP,
+    maxy = GAP,
+    dx, dy;
   int all = 0, bad = 0;
-
-  minx = GAP;
-  miny = GAP;
-  maxx = GAP;
-  maxy = GAP;
 
   if (!function || !*function)
     {
@@ -2454,13 +2416,13 @@ ActionDisperseElements (int argc, char **argv, int x, int y)
 	dx = minx - element->BoundingBox.X1;
 
 	/* snap to the grid */
-	dx -= (element->MarkX + dx) % (long) (PCB->Grid);
+	dx -= (element->MarkX + dx) % PCB->Grid;
 
 	/* 
 	 * and add one grid size so we make sure we always space by GAP or
 	 * more
 	 */
-	dx += (long) (PCB->Grid);
+	dx += PCB->Grid;
 
 	/* Figure out if this row has room.  If not, start a new row */
 	if (GAP + element->BoundingBox.X2 + dx > PCB->MaxWidth)
@@ -2474,10 +2436,10 @@ ActionDisperseElements (int argc, char **argv, int x, int y)
 	dy = miny - element->BoundingBox.Y1;
 
 	/* snap to the grid */
-	dx -= (element->MarkX + dx) % (long) (PCB->Grid);
-	dx += (long) (PCB->Grid);
-	dy -= (element->MarkY + dy) % (long) (PCB->Grid);
-	dy += (long) (PCB->Grid);
+	dx -= (element->MarkX + dx) % PCB->Grid;
+	dx += PCB->Grid;
+	dy -= (element->MarkY + dy) % PCB->Grid;
+	dy += PCB->Grid;
 
 	/* move the element */
 	MoveElementLowLevel (PCB->Data, element, dx, dy);
@@ -2626,8 +2588,7 @@ instead of only the biggest one.
 @item ToggleGrid
 Resets the origin of the current grid to be wherever the mouse pointer
 is (not where the crosshair currently is).  If you provide two numbers
-after this, the origin is set to that coordinate.  The numbers are in
-PCB internal units, currently 1/100 mil.
+after this, the origin is set to that coordinate.
 
 @item Grid
 Toggles whether the grid is displayed or not.
@@ -2667,7 +2628,7 @@ CrosshairShapeIncrement (enum crosshair_shape shape)
 }
 
 static int
-ActionDisplay (int argc, char **argv, int childX, int childY)
+ActionDisplay (int argc, char **argv, Coord childX, Coord childY)
 {
   char *function, *str_dir;
   int id;
@@ -2724,8 +2685,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 
 	case F_CycleClip:
 	  notify_crosshair_change (false);
-	  if TEST_FLAG
-	    (ALLDIRECTIONFLAG, PCB)
+	  if (TEST_FLAG (ALLDIRECTIONFLAG, PCB))
 	    {
 	      TOGGLE_FLAG (ALLDIRECTIONFLAG, PCB);
 	      PCB->Clipping = 0;
@@ -2851,10 +2811,9 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  /* shift grid alignment */
 	case F_ToggleGrid:
 	  {
-	    float oldGrid;
+	    Coord oldGrid = PCB->Grid;
 
-	    oldGrid = PCB->Grid;
-	    PCB->Grid = 1.0;
+	    PCB->Grid = 1;
 	    if (MoveCrosshairAbsolute (Crosshair.X, Crosshair.Y))
 	      notify_crosshair_change (true);	/* first notify was in MoveCrosshairAbs */
 	    SetGrid (oldGrid, true);
@@ -2870,16 +2829,16 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	  /* display the pinout of an element */
 	case F_Pinout:
 	  {
-	    ElementTypePtr element;
+	    ElementType *element;
 	    void *ptrtmp;
-	    int x, y;
+	    Coord x, y;
 
 	    gui->get_coords (_("Click on an element"), &x, &y);
 	    if ((SearchScreen
 		 (x, y, ELEMENT_TYPE, &ptrtmp,
 		  &ptrtmp, &ptrtmp)) != NO_TYPE)
 	      {
-		element = (ElementTypePtr) ptrtmp;
+		element = (ElementType *) ptrtmp;
 		gui->show_item (element);
 	      }
 	    break;
@@ -2896,7 +2855,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 				  (void **) &ptr3))
 	      {
 	      case ELEMENT_TYPE:
-		PIN_LOOP ((ElementTypePtr) ptr1);
+		PIN_LOOP ((ElementType *) ptr1);
 		{
 		  if (TEST_FLAG (DISPLAYNAMEFLAG, pin))
 		    ErasePinName (pin);
@@ -2906,7 +2865,7 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 		  TOGGLE_FLAG (DISPLAYNAMEFLAG, pin);
 		}
 		END_LOOP;
-		PAD_LOOP ((ElementTypePtr) ptr1);
+		PAD_LOOP ((ElementType *) ptr1);
 		{
 		  if (TEST_FLAG (DISPLAYNAMEFLAG, pad))
 		    ErasePadName (pad);
@@ -2922,35 +2881,35 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 		break;
 
 	      case PIN_TYPE:
-		if (TEST_FLAG (DISPLAYNAMEFLAG, (PinTypePtr) ptr2))
-		  ErasePinName ((PinTypePtr) ptr2);
+		if (TEST_FLAG (DISPLAYNAMEFLAG, (PinType *) ptr2))
+		  ErasePinName ((PinType *) ptr2);
 		else
-		  DrawPinName ((PinTypePtr) ptr2);
+		  DrawPinName ((PinType *) ptr2);
 		AddObjectToFlagUndoList (PIN_TYPE, ptr1, ptr2, ptr3);
-		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PinTypePtr) ptr2);
+		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PinType *) ptr2);
 		SetChangedFlag (true);
 		IncrementUndoSerialNumber ();
 		Draw ();
 		break;
 
 	      case PAD_TYPE:
-		if (TEST_FLAG (DISPLAYNAMEFLAG, (PadTypePtr) ptr2))
-		  ErasePadName ((PadTypePtr) ptr2);
+		if (TEST_FLAG (DISPLAYNAMEFLAG, (PadType *) ptr2))
+		  ErasePadName ((PadType *) ptr2);
 		else
-		  DrawPadName ((PadTypePtr) ptr2);
+		  DrawPadName ((PadType *) ptr2);
 		AddObjectToFlagUndoList (PAD_TYPE, ptr1, ptr2, ptr3);
-		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PadTypePtr) ptr2);
+		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PadType *) ptr2);
 		SetChangedFlag (true);
 		IncrementUndoSerialNumber ();
 		Draw ();
 		break;
 	      case VIA_TYPE:
-		if (TEST_FLAG (DISPLAYNAMEFLAG, (PinTypePtr) ptr2))
-		  EraseViaName ((PinTypePtr) ptr2);
+		if (TEST_FLAG (DISPLAYNAMEFLAG, (PinType *) ptr2))
+		  EraseViaName ((PinType *) ptr2);
 		else
-		  DrawViaName ((PinTypePtr) ptr2);
+		  DrawViaName ((PinType *) ptr2);
 		AddObjectToFlagUndoList (VIA_TYPE, ptr1, ptr2, ptr3);
-		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PinTypePtr) ptr2);
+		TOGGLE_FLAG (DISPLAYNAMEFLAG, (PinType *) ptr2);
 		SetChangedFlag (true);
 		IncrementUndoSerialNumber ();
 		Draw ();
@@ -2969,9 +2928,8 @@ ActionDisplay (int argc, char **argv, int childX, int childY)
 	case F_ToggleGrid:
 	  if (argc > 2)
 	    {
-	      /* FIXME: units */
-	      PCB->GridOffsetX = atoi (argv[1]);
-	      PCB->GridOffsetY = atoi (argv[2]);
+	      PCB->GridOffsetX = GetValue (argv[1], NULL, NULL);
+	      PCB->GridOffsetY = GetValue (argv[2], NULL, NULL);
 	      if (Settings.DrawGrid)
 		Redraw ();
 	    }
@@ -3052,7 +3010,7 @@ Restores the tool to the last saved tool.
 %end-doc */
 
 static int
-ActionMode (int argc, char **argv, int x, int y)
+ActionMode (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
 
@@ -3274,7 +3232,7 @@ static const char removeselected_help[] = "Removes any selected objects.";
 %end-doc */
 
 static int
-ActionRemoveSelected (int argc, char **argv, int x, int y)
+ActionRemoveSelected (int argc, char **argv, Coord x, Coord y)
 {
   if (RemoveSelected ())
     SetChangedFlag (true);
@@ -3295,11 +3253,11 @@ static const char renumber_help[] =
 %end-doc */
 
 static int
-ActionRenumber (int argc, char **argv, int x, int y)
+ActionRenumber (int argc, char **argv, Coord x, Coord y)
 {
   bool changed = false;
-  ElementTypePtr *element_list;
-  ElementTypePtr *locked_element_list;
+  ElementType **element_list;
+  ElementType **locked_element_list;
   unsigned int i, j, k, cnt, lock_cnt;
   unsigned int tmpi;
   size_t sz;
@@ -3379,8 +3337,8 @@ ActionRenumber (int argc, char **argv, int x, int y)
    *
    * We'll actually renumber things in the 2nd pass.
    */
-  element_list = (ElementType **)calloc (PCB->Data->ElementN, sizeof (ElementTypePtr));
-  locked_element_list = (ElementType **)calloc (PCB->Data->ElementN, sizeof (ElementTypePtr));
+  element_list = (ElementType **)calloc (PCB->Data->ElementN, sizeof (ElementType *));
+  locked_element_list = (ElementType **)calloc (PCB->Data->ElementN, sizeof (ElementType *));
   was = (char **)calloc (PCB->Data->ElementN, sizeof (char *));
   is = (char **)calloc (PCB->Data->ElementN, sizeof (char *));
   if (element_list == NULL || locked_element_list == NULL || was == NULL
@@ -3401,10 +3359,9 @@ ActionRenumber (int argc, char **argv, int x, int y)
 	 * add to the list of locked elements which we won't try to
 	 * renumber and whose reference designators are now reserved.
 	 */
-	fprintf (out,
-		 "*WARN* Element \"%s\" at (%d,%d) is locked and will not be renumbered.\n",
-		 UNKNOWN (NAMEONPCB_NAME (element)), element->MarkX,
-		 element->MarkY);
+	pcb_fprintf (out,
+		     "*WARN* Element \"%s\" at %$md is locked and will not be renumbered.\n",
+		      UNKNOWN (NAMEONPCB_NAME (element)), element->MarkX, element->MarkY);
 	locked_element_list[lock_cnt] = element;
 	lock_cnt++;
       }
@@ -3566,7 +3523,7 @@ ActionRenumber (int argc, char **argv, int x, int y)
 	}
       else
 	{
-	  fprintf (out, "*WARN* Element at (%d,%d) has no name.\n",
+	  pcb_fprintf (out, "*WARN* Element at %$md has no name.\n",
 		   element_list[i]->MarkX, element_list[i]->MarkY);
 	}
 
@@ -3665,7 +3622,7 @@ that this uses the highest numbered paste buffer.
 %end-doc */
 
 static int
-ActionRipUp (int argc, char **argv, int x, int y)
+ActionRipUp (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   bool changed = false;
@@ -3680,6 +3637,15 @@ ActionRipUp (int argc, char **argv, int x, int y)
 	    if (TEST_FLAG (AUTOFLAG, line) && !TEST_FLAG (LOCKFLAG, line))
 	      {
 		RemoveObject (LINE_TYPE, layer, line, line);
+		changed = true;
+	      }
+	  }
+	  ENDALL_LOOP;
+	  ALLARC_LOOP (PCB->Data);
+	  {
+	    if (TEST_FLAG (AUTOFLAG, arc) && !TEST_FLAG (LOCKFLAG, arc))
+	      {
+		RemoveObject (ARC_TYPE, layer, arc, arc);
 		changed = true;
 	      }
 	  }
@@ -3784,10 +3750,10 @@ Selects the shortest unselected rat on the board.
 %end-doc */
 
 static int
-ActionAddRats (int argc, char **argv, int x, int y)
+ActionAddRats (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
-  RatTypePtr shorty;
+  RatType *shorty;
   float len, small;
 
   if (function)
@@ -3828,8 +3794,7 @@ ActionAddRats (int argc, char **argv, int x, int y)
 	      DrawRat (shorty);
 	      Draw ();
 	      CenterDisplay ((shorty->Point2.X + shorty->Point1.X) / 2,
-			     (shorty->Point2.Y + shorty->Point1.Y) / 2,
-			     false);
+			     (shorty->Point2.Y + shorty->Point1.Y) / 2);
 	    }
 	  break;
 	}
@@ -3850,7 +3815,7 @@ static const char delete_help[] = "Delete stuff.";
 %end-doc */
 
 static int
-ActionDelete (int argc, char **argv, int x, int y)
+ActionDelete (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   int id = GetFunctionID (function);
@@ -3900,7 +3865,7 @@ static const char deleterats_help[] = "Delete rat lines.";
 %end-doc */
 
 static int
-ActionDeleteRats (int argc, char **argv, int x, int y)
+ActionDeleteRats (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -3937,7 +3902,7 @@ connecting them are minimized.  Note that you cannot undo this.
 %end-doc */
 
 static int
-ActionAutoPlaceSelected (int argc, char **argv, int x, int y)
+ActionAutoPlaceSelected (int argc, char **argv, Coord x, Coord y)
 {
   hid_action("Busy");
   if (gui->confirm_dialog (_("Auto-placement can NOT be undone.\n"
@@ -3979,7 +3944,7 @@ responsive.
 %end-doc */
 
 static int
-ActionAutoRoute (int argc, char **argv, int x, int y)
+ActionAutoRoute (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   hid_action("Busy");
@@ -4024,7 +3989,7 @@ cursor location.
 %end-doc */
 
 static int
-ActionMarkCrosshair (int argc, char **argv, int x, int y)
+ActionMarkCrosshair (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (!function || !*function)
@@ -4078,17 +4043,20 @@ of the silk layer lines and arcs for this element.
 %end-doc */
 
 static int
-ActionChangeSize (int argc, char **argv, int x, int y)
+ActionChangeSize (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
   bool absolute;			/* indicates if absolute size is given */
-  float value;
+  Coord value;
 
   if (function && delta)
     {
       value = GetValue (delta, units, &absolute);
+      if (value == 0)
+        value = delta[0] == '-' ? -Settings.increments->size
+                                :  Settings.increments->size;
       switch (GetFunctionID (function))
 	{
 	case F_Object:
@@ -4099,7 +4067,7 @@ ActionChangeSize (int argc, char **argv, int x, int y)
 	    if ((type =
 		 SearchScreen (Crosshair.X, Crosshair.Y, CHANGESIZE_TYPES,
 			       &ptr1, &ptr2, &ptr3)) != NO_TYPE)
-	      if (TEST_FLAG (LOCKFLAG, (PinTypePtr) ptr2))
+	      if (TEST_FLAG (LOCKFLAG, (PinType *) ptr2))
 		Message (_("Sorry, the object is locked\n"));
 	    if (ChangeObjectSize (type, ptr1, ptr2, ptr3, value, absolute))
 	      SetChangedFlag (true);
@@ -4170,13 +4138,13 @@ static const char changedrillsize_help[] =
 %end-doc */
 
 static int
-ActionChange2ndSize (int argc, char **argv, int x, int y)
+ActionChange2ndSize (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
   bool absolute;
-  float value;
+  Coord value;
 
   if (function && delta)
     {
@@ -4237,17 +4205,20 @@ changes the polygon clearance.
 %end-doc */
 
 static int
-ActionChangeClearSize (int argc, char **argv, int x, int y)
+ActionChangeClearSize (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
   bool absolute;
-  float value;
+  Coord value;
 
   if (function && delta)
     {
       value = 2 * GetValue (delta, units, &absolute);
+      if (value == 0)
+        value = delta[0] == '-' ? -Settings.increments->clear
+                                :  Settings.increments->clear;
       switch (GetFunctionID (function))
 	{
 	case F_Object:
@@ -4312,13 +4283,13 @@ the mask edge.
 %end-doc */
 
 static int
-ActionMinMaskGap (int argc, char **argv, int x, int y)
+ActionMinMaskGap (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
   bool absolute;
-  int value;
+  Coord value;
   int flags;
 
   if (!function)
@@ -4396,13 +4367,13 @@ polygon edges.
 %end-doc */
 
 static int
-ActionMinClearGap (int argc, char **argv, int x, int y)
+ActionMinClearGap (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *delta = ARG (1);
   char *units = ARG (2);
   bool absolute;
-  int value;
+  Coord value;
   int flags;
 
   if (!function)
@@ -4505,7 +4476,7 @@ ChangePinName(U3, 7, VCC)
 %end-doc */
 
 static int
-ActionChangePinName (int argc, char **argv, int x, int y)
+ActionChangePinName (int argc, char **argv, Coord x, Coord y)
 {
   int changed = 0;
   char *refdes, *pinnum, *pinname;
@@ -4603,7 +4574,7 @@ Changes the name of the currently active layer.
 %end-doc */
 
 int
-ActionChangeName (int argc, char **argv, int x, int y)
+ActionChangeName (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *name;
@@ -4629,7 +4600,7 @@ ActionChangeName (int argc, char **argv, int x, int y)
 		    SetChangedFlag (true);
 		    if (type == ELEMENT_TYPE)
 		      {
-			RubberbandTypePtr ptr;
+			RubberbandType *ptr;
 			int i;
 
 			RestoreUndoSerialNumber ();
@@ -4640,7 +4611,7 @@ ActionChangeName (int argc, char **argv, int x, int y)
 			     i++, ptr++)
 			  {
 			    if (PCB->RatOn)
-			      EraseRat ((RatTypePtr) ptr->Line);
+			      EraseRat ((RatType *) ptr->Line);
 			    MoveObjectToRemoveUndoList (RATLINE_TYPE,
 							ptr->Line, ptr->Line,
 							ptr->Line);
@@ -4694,7 +4665,7 @@ off are automatically deleted.
 %end-doc */
 
 static int
-ActionMorphPolygon (int argc, char **argv, int x, int y)
+ActionMorphPolygon (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -4748,7 +4719,7 @@ appear on the silk layer when you print the layout.
 %end-doc */
 
 static int
-ActionToggleHideName (int argc, char **argv, int x, int y)
+ActionToggleHideName (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function && PCB->ElementOn)
@@ -4765,9 +4736,9 @@ ActionToggleHideName (int argc, char **argv, int x, int y)
 				      &ptr1, &ptr2, &ptr3)) != NO_TYPE)
 	      {
 		AddObjectToFlagUndoList (type, ptr1, ptr2, ptr3);
-		EraseElementName ((ElementTypePtr) ptr2);
-		TOGGLE_FLAG (HIDENAMEFLAG, (ElementTypePtr) ptr2);
-		DrawElementName ((ElementTypePtr) ptr2);
+		EraseElementName ((ElementType *) ptr2);
+		TOGGLE_FLAG (HIDENAMEFLAG, (ElementType *) ptr2);
+		DrawElementName ((ElementType *) ptr2);
 		Draw ();
 		IncrementUndoSerialNumber ();
 	      }
@@ -4823,7 +4794,7 @@ polygon, insulating them from each other.
 %end-doc */
 
 static int
-ActionChangeJoin (int argc, char **argv, int x, int y)
+ActionChangeJoin (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -4884,7 +4855,7 @@ Note that @code{Pins} means both pins and pads.
 %end-doc */
 
 static int
-ActionChangeSquare (int argc, char **argv, int x, int y)
+ActionChangeSquare (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -4942,7 +4913,7 @@ Note that @code{Pins} means pins and pads.
 %end-doc */
 
 static int
-ActionSetSquare (int argc, char **argv, int x, int y)
+ActionSetSquare (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function && *function)
@@ -5001,7 +4972,7 @@ Note that @code{Pins} means pins and pads.
 %end-doc */
 
 static int
-ActionClearSquare (int argc, char **argv, int x, int y)
+ActionClearSquare (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function && *function)
@@ -5059,7 +5030,7 @@ static const char changeoctagon_help[] =
 %end-doc */
 
 static int
-ActionChangeOctagon (int argc, char **argv, int x, int y)
+ActionChangeOctagon (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -5120,7 +5091,7 @@ static const char setoctagon_help[] = "Sets the octagon-flag of objects.";
 %end-doc */
 
 static int
-ActionSetOctagon (int argc, char **argv, int x, int y)
+ActionSetOctagon (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -5183,7 +5154,7 @@ static const char clearoctagon_help[] =
 %end-doc */
 
 static int
-ActionClearOctagon (int argc, char **argv, int x, int y)
+ActionClearOctagon (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -5245,7 +5216,7 @@ plated-through hole (not set), or an unplated hole (set).
 %end-doc */
 
 static int
-ActionChangeHole (int argc, char **argv, int x, int y)
+ActionChangeHole (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -5261,7 +5232,7 @@ ActionChangeHole (int argc, char **argv, int x, int y)
 	    gui->get_coords (_("Select an Object"), &x, &y);
 	    if ((type = SearchScreen (x, y, VIA_TYPE,
 				      &ptr1, &ptr2, &ptr3)) != NO_TYPE
-		&& ChangeHole ((PinTypePtr) ptr3))
+		&& ChangeHole ((PinType *) ptr3))
 	      IncrementUndoSerialNumber ();
 	    break;
 	  }
@@ -5293,7 +5264,7 @@ The "no paste flag" of a pad determines whether the solderpaste
 %end-doc */
 
 static int
-ActionChangePaste (int argc, char **argv, int x, int y)
+ActionChangePaste (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -5309,7 +5280,7 @@ ActionChangePaste (int argc, char **argv, int x, int y)
 	    gui->get_coords (_("Select an Object"), &x, &y);
 	    if ((type = SearchScreen (x, y, PAD_TYPE,
 				      &ptr1, &ptr2, &ptr3)) != NO_TYPE
-		&& ChangePaste ((PadTypePtr) ptr3))
+		&& ChangePaste ((PadType *) ptr3))
 	      IncrementUndoSerialNumber ();
 	    break;
 	  }
@@ -5376,7 +5347,7 @@ numbered paste buffer.
 %end-doc */
 
 static int
-ActionSelect (int argc, char **argv, int x, int y)
+ActionSelect (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -5483,13 +5454,13 @@ ActionSelect (int argc, char **argv, int x, int y)
 
 	case F_Convert:
 	  {
-	    int x, y;
+	    Coord x, y;
 	    Note.Buffer = Settings.BufferNumber;
 	    SetBufferNumber (MAX_BUFFER - 1);
 	    ClearBuffer (PASTEBUFFER);
 	    gui->get_coords (_("Select the Element's Mark Location"), &x, &y);
-	    x = GRIDFIT_X (x, PCB->Grid);
-	    y = GRIDFIT_Y (y, PCB->Grid);
+	    x = GridFit (x, PCB->Grid, PCB->GridOffsetX);
+	    y = GridFit (y, PCB->Grid, PCB->GridOffsetY);
 	    AddSelectedToBuffer (PASTEBUFFER, x, y, true);
 	    SaveUndoSerialNumber ();
 	    RemoveSelected ();
@@ -5562,7 +5533,7 @@ type specified are unselected.
 %end-doc */
 
 static int
-ActionUnselect (int argc, char **argv, int x, int y)
+ActionUnselect (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -5705,7 +5676,7 @@ Save the content of the active Buffer to a file. This is the graphical way to cr
 %end-doc */
 
 static int
-ActionSaveTo (int argc, char **argv, int x, int y)
+ActionSaveTo (int argc, char **argv, Coord x, Coord y)
 {
   char *function;
   char *name;
@@ -5715,7 +5686,8 @@ ActionSaveTo (int argc, char **argv, int x, int y)
 
   if (strcasecmp (function, "Layout") == 0)
     {
-      SavePCB (PCB->Filename);
+      if (SavePCB (PCB->Filename) == 0)
+        SetChangedFlag (false);
       return 0;
     }
 
@@ -5724,9 +5696,14 @@ ActionSaveTo (int argc, char **argv, int x, int y)
 
   if (strcasecmp (function, "LayoutAs") == 0)
     {
-      free (PCB->Filename);
-      PCB->Filename = strdup (name);
-      SavePCB (PCB->Filename);
+      if (SavePCB (name) == 0)
+        {
+          SetChangedFlag (false);
+          free (PCB->Filename);
+          PCB->Filename = strdup (name);
+          if (gui->notify_filename_changed != NULL)
+            gui->notify_filename_changed ();
+        }
       return 0;
     }
 
@@ -5758,7 +5735,7 @@ ActionSaveTo (int argc, char **argv, int x, int y)
 
   if (strcasecmp (function, "ElementConnections") == 0)
     {
-      ElementTypePtr element;
+      ElementType *element;
       void *ptrtmp;
       FILE *fp;
       bool result;
@@ -5766,7 +5743,7 @@ ActionSaveTo (int argc, char **argv, int x, int y)
       if ((SearchScreen (Crosshair.X, Crosshair.Y, ELEMENT_TYPE,
 			 &ptrtmp, &ptrtmp, &ptrtmp)) != NO_TYPE)
 	{
-	  element = (ElementTypePtr) ptrtmp;
+	  element = (ElementType *) ptrtmp;
 	  if ((fp =
 	       CheckAndOpenFile (name, true, false, &result, NULL)) != NULL)
 	    {
@@ -5803,7 +5780,7 @@ saved in @code{./pcb.settings}.
 %end-doc */
 
 static int
-ActionSaveSettings (int argc, char **argv, int x, int y)
+ActionSaveSettings (int argc, char **argv, Coord x, Coord y)
 {
   int locally = argc > 0 ? (strncasecmp (argv[0], "local", 5) == 0) : 0;
   hid_save_settings (locally);
@@ -5849,11 +5826,10 @@ you may have made.
 %end-doc */
 
 static int
-ActionLoadFrom (int argc, char **argv, int x, int y)
+ActionLoadFrom (int argc, char **argv, Coord x, Coord y)
 {
   char *function;
   char *name;
-  char fname[256];
 
   if (argc < 2)
     AFAIL (loadfrom);
@@ -5890,15 +5866,14 @@ ActionLoadFrom (int argc, char **argv, int x, int y)
 	free (PCB->Netlistname);
       PCB->Netlistname = StripWhiteSpaceAndDup (name);
       FreeLibraryMemory (&PCB->NetlistLib);
-      if (!ImportNetlist (PCB->Netlistname))
-	NetlistChanged (1);
+      ImportNetlist (PCB->Netlistname);
+      NetlistChanged (1);
     }
   else if (strcasecmp (function, "Revert") == 0 && PCB->Filename
 	   && (!PCB->Changed
 	       || gui->confirm_dialog (_("OK to override changes?"), 0)))
     {
-      strcpy (fname, PCB->Filename);	/*Calling LoadPCB(PCB->Filename) changes the content of PCB->Filename. */
-      LoadPCB (fname);
+      RevertPCB ();
     }
 
   return 0;
@@ -5917,7 +5892,7 @@ If a name is not given, one is prompted for.
 %end-doc */
 
 static int
-ActionNew (int argc, char **argv, int x, int y)
+ActionNew (int argc, char **argv, Coord x, Coord y)
 {
   char *name = ARG (0);
 
@@ -5938,6 +5913,7 @@ ActionNew (int argc, char **argv, int x, int y)
       if (PCB->Changed && Settings.SaveInTMP)
 	SaveInTMP ();
       RemovePCB (PCB);
+      PCB = NULL;
       PCB = CreateNewPCB (true);
       PCB->Data->LayerN = DEF_LAYER;
       CreateNewPCBPost (PCB, 1);
@@ -5947,9 +5923,8 @@ ActionNew (int argc, char **argv, int x, int y)
       PCB->Name = name;
 
       ResetStackAndVisibility ();
-      CreateDefaultFont ();
       SetCrosshairRange (0, 0, PCB->MaxWidth, PCB->MaxHeight);
-      CenterDisplay (PCB->MaxWidth / 2, PCB->MaxHeight / 2, false);
+      CenterDisplay (PCB->MaxWidth / 2, PCB->MaxHeight / 2);
       Redraw ();
 
       hid_action ("PCBChanged");
@@ -6032,7 +6007,7 @@ Selects the given buffer to be the current paste buffer.
 %end-doc */
 
 static int
-ActionPasteBuffer (int argc, char **argv, int x, int y)
+ActionPasteBuffer (int argc, char **argv, Coord x, Coord y)
 {
   char *function = argc ? argv[0] : (char *)"";
   char *sbufnum = argc > 1 ? argv[1] : (char *)"";
@@ -6128,8 +6103,8 @@ ActionPasteBuffer (int argc, char **argv, int x, int y)
 
 	case F_ToLayout:
 	  {
-	    static int oldx = 0, oldy = 0;
-	    int x, y;
+	    static Coord oldx = 0, oldy = 0;
+	    Coord x, y;
 	    bool absolute;
 
 	    if (argc == 1)
@@ -6197,7 +6172,7 @@ same serial number will be undone (or redone) as a group.  See
 %end-doc */
 
 static int
-ActionUndo (int argc, char **argv, int x, int y)
+ActionUndo (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (!function || !*function)
@@ -6236,13 +6211,13 @@ ActionUndo (int argc, char **argv, int x, int y)
 	    {
 	      int type;
 	      void *ptr1, *ptr3, *ptrtmp;
-	      LineTypePtr ptr2;
+	      LineType *ptr2;
 	      /* this search is guaranteed to succeed */
 	      SearchObjectByLocation (LINE_TYPE | RATLINE_TYPE, &ptr1,
 				      &ptrtmp, &ptr3,
 				      Crosshair.AttachedLine.Point1.X,
 				      Crosshair.AttachedLine.Point1.Y, 0);
-	      ptr2 = (LineTypePtr) ptrtmp;
+	      ptr2 = (LineType *) ptrtmp;
 
 	      /* save both ends of line */
 	      Crosshair.AttachedLine.Point2.X = ptr2->Point1.X;
@@ -6274,7 +6249,7 @@ ActionUndo (int argc, char **argv, int x, int y)
 					  &ptr3,
 					  Crosshair.AttachedLine.Point2.X,
 					  Crosshair.AttachedLine.Point2.Y, 0);
-		  ptr2 = (LineTypePtr) ptrtmp;
+		  ptr2 = (LineType *) ptrtmp;
 	          if (TEST_FLAG (AUTODRCFLAG, PCB))
 		    {
 		      /* undo loses FOUNDFLAG */
@@ -6301,8 +6276,8 @@ ActionUndo (int argc, char **argv, int x, int y)
 					  &ptr3,
 					  Crosshair.AttachedLine.Point1.X,
 					  Crosshair.AttachedLine.Point1.Y, 0);
-		  ptr2 = (LineTypePtr) ptrtmp;
-		  lastLayer = (LayerTypePtr) ptr1;
+		  ptr2 = (LineType *) ptrtmp;
+		  lastLayer = (LayerType *) ptr1;
 		}
 	      notify_crosshair_change (true);
 	      return 0;
@@ -6319,12 +6294,12 @@ ActionUndo (int argc, char **argv, int x, int y)
 	  if (Crosshair.AttachedBox.State == STATE_THIRD)
 	    {
 	      void *ptr1, *ptr2, *ptr3;
-	      BoxTypePtr bx;
+	      BoxType *bx;
 	      /* guaranteed to succeed */
 	      SearchObjectByLocation (ARC_TYPE, &ptr1, &ptr2, &ptr3,
 				      Crosshair.AttachedBox.Point1.X,
 				      Crosshair.AttachedBox.Point1.Y, 0);
-	      bx = GetArcEnds ((ArcTypePtr) ptr2);
+	      bx = GetArcEnds ((ArcType *) ptr2);
 	      Crosshair.AttachedBox.Point1.X =
 		Crosshair.AttachedBox.Point2.X = bx->X1;
 	      Crosshair.AttachedBox.Point1.Y =
@@ -6374,7 +6349,7 @@ three "undone" lines.
 %end-doc */
 
 static int
-ActionRedo (int argc, char **argv, int x, int y)
+ActionRedo (int argc, char **argv, Coord x, Coord y)
 {
   if (((Settings.Mode == POLYGON_MODE ||
         Settings.Mode == POLYGONHOLE_MODE) &&
@@ -6425,7 +6400,7 @@ will call Polygon(PreviousPoint) when appropriate to do so.
 %end-doc */
 
 static int
-ActionPolygon (int argc, char **argv, int x, int y)
+ActionPolygon (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function && Settings.Mode == POLYGON_MODE)
@@ -6460,7 +6435,7 @@ static const char routestyle_help[] =
 %end-doc */
 
 static int
-ActionRouteStyle (int argc, char **argv, int x, int y)
+ActionRouteStyle (int argc, char **argv, Coord x, Coord y)
 {
   char *str = ARG (0);
   RouteStyleType *rts;
@@ -6500,12 +6475,12 @@ units, currently 1/100 mil.
 %end-doc */
 
 static int
-ActionMoveObject (int argc, char **argv, int x, int y)
+ActionMoveObject (int argc, char **argv, Coord x, Coord y)
 {
   char *x_str = ARG (0);
   char *y_str = ARG (1);
   char *units = ARG (2);
-  LocationType nx, ny;
+  Coord nx, ny;
   bool absolute1, absolute2;
   void *ptr1, *ptr2, *ptr3;
   int type;
@@ -6550,7 +6525,7 @@ or from solder to component, won't automatically flip it.  Use the
 %end-doc */
 
 static int
-ActionMoveToCurrentLayer (int argc, char **argv, int x, int y)
+ActionMoveToCurrentLayer (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   if (function)
@@ -6596,11 +6571,11 @@ sizes (thickness, keepaway, drill, etc) according to that item.
 %end-doc */
 
 static int
-ActionSetSame (int argc, char **argv, int x, int y)
+ActionSetSame (int argc, char **argv, Coord x, Coord y)
 {
   void *ptr1, *ptr2, *ptr3;
   int type;
-  LayerTypePtr layer = CURRENT;
+  LayerType *layer = CURRENT;
 
   type = SearchScreen (x, y, CLONE_TYPES, &ptr1, &ptr2, &ptr3);
 /* set layer current and size from line or arc */
@@ -6608,9 +6583,9 @@ ActionSetSame (int argc, char **argv, int x, int y)
     {
     case LINE_TYPE:
       notify_crosshair_change (false);
-      Settings.LineThickness = ((LineTypePtr) ptr2)->Thickness;
-      Settings.Keepaway = ((LineTypePtr) ptr2)->Clearance / 2;
-      layer = (LayerTypePtr) ptr1;
+      Settings.LineThickness = ((LineType *) ptr2)->Thickness;
+      Settings.Keepaway = ((LineType *) ptr2)->Clearance / 2;
+      layer = (LayerType *) ptr1;
       if (Settings.Mode != LINE_MODE)
 	SetMode (LINE_MODE);
       notify_crosshair_change (true);
@@ -6619,9 +6594,9 @@ ActionSetSame (int argc, char **argv, int x, int y)
 
     case ARC_TYPE:
       notify_crosshair_change (false);
-      Settings.LineThickness = ((ArcTypePtr) ptr2)->Thickness;
-      Settings.Keepaway = ((ArcTypePtr) ptr2)->Clearance / 2;
-      layer = (LayerTypePtr) ptr1;
+      Settings.LineThickness = ((ArcType *) ptr2)->Thickness;
+      Settings.Keepaway = ((ArcType *) ptr2)->Clearance / 2;
+      layer = (LayerType *) ptr1;
       if (Settings.Mode != ARC_MODE)
 	SetMode (ARC_MODE);
       notify_crosshair_change (true);
@@ -6629,14 +6604,14 @@ ActionSetSame (int argc, char **argv, int x, int y)
       break;
 
     case POLYGON_TYPE:
-      layer = (LayerTypePtr) ptr1;
+      layer = (LayerType *) ptr1;
       break;
 
     case VIA_TYPE:
       notify_crosshair_change (false);
-      Settings.ViaThickness = ((PinTypePtr) ptr2)->Thickness;
-      Settings.ViaDrillingHole = ((PinTypePtr) ptr2)->DrillingHole;
-      Settings.Keepaway = ((PinTypePtr) ptr2)->Clearance / 2;
+      Settings.ViaThickness = ((PinType *) ptr2)->Thickness;
+      Settings.ViaDrillingHole = ((PinType *) ptr2)->DrillingHole;
+      Settings.Keepaway = ((PinType *) ptr2)->Clearance / 2;
       if (Settings.Mode != VIA_MODE)
 	SetMode (VIA_MODE);
       notify_crosshair_change (true);
@@ -6678,7 +6653,7 @@ SetFlag(SelectedPins,thermal)
 %end-doc */
 
 static int
-ActionSetFlag (int argc, char **argv, int x, int y)
+ActionSetFlag (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *flag = ARG (1);
@@ -6709,7 +6684,7 @@ ClrFlag(SelectedLines,join)
 %end-doc */
 
 static int
-ActionClrFlag (int argc, char **argv, int x, int y)
+ActionClrFlag (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *flag = ARG (1);
@@ -6739,7 +6714,7 @@ cleared.  If the value is 1, the flag is set.
 %end-doc */
 
 static int
-ActionChangeFlag (int argc, char **argv, int x, int y)
+ActionChangeFlag (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *flag = ARG (1);
@@ -6791,7 +6766,7 @@ ChangeFlag (char *what, char *flag_name, int value, char *cmd_name)
 	if ((type =
 	     SearchScreen (Crosshair.X, Crosshair.Y, CHANGESIZE_TYPES,
 			   &ptr1, &ptr2, &ptr3)) != NO_TYPE)
-	  if (TEST_FLAG (LOCKFLAG, (PinTypePtr) ptr2))
+	  if (TEST_FLAG (LOCKFLAG, (PinType *) ptr2))
 	    Message (_("Sorry, the object is locked\n"));
 	if (set_object (type, ptr1, ptr2, ptr3))
 	  SetChangedFlag (true);
@@ -6854,7 +6829,7 @@ Lines starting with @code{#} are ignored.
 %end-doc */
 
 static int
-ActionExecuteFile (int argc, char **argv, int x, int y)
+ActionExecuteFile (int argc, char **argv, Coord x, Coord y)
 {
   FILE *fp;
   char *fname;
@@ -6915,7 +6890,7 @@ ActionExecuteFile (int argc, char **argv, int x, int y)
 /* --------------------------------------------------------------------------- */
 
 static int
-ActionPSCalib (int argc, char **argv, int x, int y)
+ActionPSCalib (int argc, char **argv, Coord x, Coord y)
 {
   HID *ps = hid_find_exporter ("ps");
   ps->calibrate (0.0,0.0);
@@ -6948,7 +6923,7 @@ find_element_by_refdes (char *refdes)
 }
 
 static AttributeType *
-lookup_attr (AttributeListTypePtr list, const char *name)
+lookup_attr (AttributeListType *list, const char *name)
 {
   int i;
   for (i=0; i<list->Number; i++)
@@ -6958,7 +6933,7 @@ lookup_attr (AttributeListTypePtr list, const char *name)
 }
 
 static void
-delete_attr (AttributeListTypePtr list, AttributeType *attr)
+delete_attr (AttributeListType *list, AttributeType *attr)
 {
   int idx = attr - list->List;
   if (idx < 0 || idx >= list->Number)
@@ -6998,27 +6973,19 @@ them.
 
 %end-doc */
 
+static int number_of_footprints_not_found;
+
 static int
 parse_layout_attribute_units (char *name, int def)
 {
-  const char *as, *units = NULL;
-  int n = 0, v;
-  bool absolute;
-
-  as = AttributeGet (PCB, name);
+  const char *as = AttributeGet (PCB, name);
   if (!as)
     return def;
-
-  sscanf (as, "%d%n", &v, &n);
-  units = as + n;
-  if (! *units)
-    units = NULL;
-  v = GetValue (as, units, &absolute);
-  return v;
+  return GetValue (as, NULL, NULL);
 }
 
 static int
-ActionElementList (int argc, char **argv, int x, int y)
+ActionElementList (int argc, char **argv, Coord x, Coord y)
 {
   ElementType *e = NULL;
   char *refdes, *value, *footprint, *old;
@@ -7037,6 +7004,7 @@ ActionElementList (int argc, char **argv, int x, int y)
       }
       END_LOOP;
       element_cache = NULL;
+      number_of_footprints_not_found = 0;
       return 0;
     }
 
@@ -7055,6 +7023,10 @@ ActionElementList (int argc, char **argv, int x, int y)
 	  }
       }
       END_LOOP;
+      if (number_of_footprints_not_found > 0)
+	gui->confirm_dialog ("Not all requested footprints were found.\n"
+			     "See the message log for details",
+			     "Ok", NULL);
       return 0;
     }
 
@@ -7085,14 +7057,17 @@ ActionElementList (int argc, char **argv, int x, int y)
 
   if (!e)
     {
-      int nx, ny, d;
+      Coord nx, ny, d;
 
 #ifdef DEBUG
       printf("  ... Footprint not on board, need to add it.\n");
 #endif
       /* Not on board, need to add it. */
       if (LoadFootprint(argc, args, x, y))
-	return 1;
+	{
+	  number_of_footprints_not_found ++;
+	  return 1;
+	}
 
       nx = PCB->MaxWidth / 2;
       ny = PCB->MaxHeight / 2;
@@ -7128,15 +7103,20 @@ ActionElementList (int argc, char **argv, int x, int y)
       printf("  ... Footprint on board, but different from footprint loaded.\n");
 #endif
       int er, pr, i;
-      LocationType mx, my;
+      Coord mx, my;
       ElementType *pe;
 
       /* Different footprint, we need to swap them out.  */
       if (LoadFootprint(argc, args, x, y))
-	return 1;
+	{
+	  number_of_footprints_not_found ++;
+	  return 1;
+	}
 
       er = ElementOrientation (e);
       pe = PASTEBUFFER->Data->Element->data;
+      if (!FRONT (e))
+	MirrorElementCoordinates (PASTEBUFFER->Data, pe, pe->MarkY*2 - PCB->MaxHeight);
       pr = ElementOrientation (pe);
 
       mx = e->MarkX;
@@ -7160,6 +7140,7 @@ ActionElementList (int argc, char **argv, int x, int y)
     }
 
   /* Now reload footprint */
+  element_cache = NULL;
   e = find_element_by_refdes (refdes);
 
   old = ChangeElementText (PCB, PCB->Data, e, NAMEONPCB_INDEX, strdup (refdes));
@@ -7192,7 +7173,7 @@ not specified, the given attribute is removed if present.
 %end-doc */
 
 static int
-ActionElementSetAttr (int argc, char **argv, int x, int y)
+ActionElementSetAttr (int argc, char **argv, Coord x, Coord y)
 {
   ElementType *e = NULL;
   char *refdes, *name, *value;
@@ -7254,7 +7235,7 @@ Runs the given command, which is a system executable.
 %end-doc */
 
 static int
-ActionExecCommand (int argc, char **argv, int x, int y)
+ActionExecCommand (int argc, char **argv, Coord x, Coord y)
 {
   char *command;
 
@@ -7388,6 +7369,15 @@ tempfile_name_new (char * name)
    * in case someone decides to create multiple temp names.
    */
   tmpfile = strdup (tmpnam (NULL));
+#ifdef __WIN32__
+    {
+      /* Guile doesn't like \ separators */
+      char *c;
+      for (c = tmpfile; *c; c++)
+	if (*c == '\\')
+	  *c = '/';
+    }
+#endif
 #endif
 
   return tmpfile;
@@ -7402,8 +7392,6 @@ tempfile_name_new (char * name)
 static int
 tempfile_unlink (char * name)
 {
-  int rc;
-
 #ifdef DEBUG
     /* SDB says:  Want to keep old temp files for examiniation when debugging */
   return 0;
@@ -7413,7 +7401,7 @@ tempfile_unlink (char * name)
   int e, rc2 = 0;
   char *dname;
 
-  rc = unlink (name);
+  unlink (name);
   /* it is possible that the file was never created so it is OK if the
      unlink fails */
 
@@ -7455,7 +7443,7 @@ tempfile_unlink (char * name)
   }
 
 #else
-  rc =  unlink (name);
+  int rc = unlink (name);
 
   if (rc != 0) {
     fprintf (stderr, _("Failed to unlink \"%s\"\n"), name);
@@ -7588,7 +7576,7 @@ smallest board dimension.  Dispersion is saved in the
 %end-doc */
 
 static int
-ActionImport (int argc, char **argv, int x, int y)
+ActionImport (int argc, char **argv, Coord x, Coord y)
 {
   char *mode;
   char **sources = NULL;
@@ -7627,7 +7615,7 @@ ActionImport (int argc, char **argv, int x, int y)
   if (mode && strcasecmp (mode, "setnewpoint") == 0)
     {
       const char *xs, *ys, *units;
-      int x, y;
+      Coord x, y;
       char buf[50];
 
       xs = ARG (1);
@@ -7646,17 +7634,16 @@ ActionImport (int argc, char **argv, int x, int y)
 	}
       else if (strcasecmp (xs, "mark") == 0)
 	{
-	  if (Marked.status)
-	    {
-	      x = Marked.X;
-	      y = Marked.Y;
-	    }
+	  if (!Marked.status)
+	    return 0;
+
+	  x = Marked.X;
+	  y = Marked.Y;
 	}
       else if (ys)
 	{
-	  bool absolute;
-	  x = GetValue (xs, units, &absolute);
-	  y = GetValue (ys, units, &absolute);
+	  x = GetValue (xs, units, NULL);
+	  y = GetValue (ys, units, NULL);
 	}
       else
 	{
@@ -7664,9 +7651,9 @@ ActionImport (int argc, char **argv, int x, int y)
 	  return 1;
 	}
 
-      sprintf (buf, "%d", x);
+      pcb_sprintf (buf, "%$ms", x);
       AttributePut (PCB, "import::newX", buf);
-      sprintf (buf, "%d", y);
+      pcb_sprintf (buf, "%$ms", y);
       AttributePut (PCB, "import::newY", buf);
       return 0;
     }
@@ -7731,7 +7718,10 @@ ActionImport (int argc, char **argv, int x, int y)
       strcat (schname, ".sch");
 
       if (access (schname, F_OK))
-	return hid_action("ImportGUI");
+        {
+          free (schname);
+          return hid_action("ImportGUI");
+        }
 
       sources = (char **) malloc (2 * sizeof (char *));
       sources[0] = schname;
@@ -7896,7 +7886,7 @@ pcb, an element, or a layer.
 
 
 static int
-ActionAttributes (int argc, char **argv, int x, int y)
+ActionAttributes (int argc, char **argv, Coord x, Coord y)
 {
   char *function = ARG (0);
   char *layername = ARG (1);
@@ -7970,7 +7960,7 @@ ActionAttributes (int argc, char **argv, int x, int y)
 	    if ((SearchScreen
 		 (x, y, ELEMENT_TYPE, &ptrtmp,
 		  &ptrtmp, &ptrtmp)) != NO_TYPE)
-	      e = (ElementTypePtr) ptrtmp;
+	      e = (ElementType *) ptrtmp;
 	    else
 	      {
 		Message (_("No element found there\n"));

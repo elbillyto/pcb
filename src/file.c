@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -89,6 +87,7 @@
 #include "move.h"
 #include "mymem.h"
 #include "parse_l.h"
+#include "pcb-printf.h"
 #include "polygon.h"
 #include "rats.h"
 #include "remove.h"
@@ -98,8 +97,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 #if !defined(HAS_ATEXIT) && !defined(HAS_ON_EXIT)
 /* ---------------------------------------------------------------------------
@@ -116,10 +113,10 @@ static void PrintQuotedString (FILE *, char *);
 static void WritePCBInfoHeader (FILE *);
 static void WritePCBDataHeader (FILE *);
 static void WritePCBFontData (FILE *);
-static void WriteViaData (FILE *, DataTypePtr);
+static void WriteViaData (FILE *, DataType *);
 static void WritePCBRatData (FILE *);
-static void WriteElementData (FILE *, DataTypePtr);
-static void WriteLayerData (FILE *, Cardinal, LayerTypePtr);
+static void WriteElementData (FILE *, DataType *);
+static void WriteLayerData (FILE *, Cardinal, LayerType *);
 static int WritePCB (FILE *);
 static int WritePCBFile (char *);
 static int WritePipe (char *, bool);
@@ -159,7 +156,7 @@ static char *pcb_basename (char *p);
 /* Hole[] in Polygon.  */
 #define PCB_FILE_VERSION_HOLES 20100606
 /* First version ever saved.  */
-#define PCB_FILE_VERSION_BASELINE 20070407
+#define PCB_FILE_VERSION_BASELINE 20091103
 
 int
 PCBFileVersionNeeded (void)
@@ -231,7 +228,7 @@ netnode_sort (const void *va, const void *vb)
 }
 
 static void
-sort_library (LibraryTypePtr lib)
+sort_library (LibraryType *lib)
 {
   int i;
   qsort (lib->Menu, lib->MenuN, sizeof (lib->Menu[0]), netlist_sort);
@@ -348,23 +345,18 @@ SaveBufferElements (char *Filename)
  * save PCB
  */
 int
-SavePCB (char *Filename)
+SavePCB (char *file)
 {
   int retcode;
-  char *copy;
 
-  if (!(retcode = WritePipe (Filename, true)))
-    {
-      /* thanks to Nick Bailey for the bug-fix;
-       * first of all make a copy of the passed filename because
-       * it might be identical to 'PCB->Filename'
-       */
-      copy = strdup (Filename);
-      free (PCB->Filename);
-      PCB->Filename = copy;
-      SetChangedFlag (false);
-    }
-  return (retcode);
+  if (gui->notify_save_pcb == NULL)
+    return WritePipe (file, true);
+
+  gui->notify_save_pcb (file, false);
+  retcode = WritePipe (file, true);
+  gui->notify_save_pcb (file, true);
+
+  return retcode;
 }
 
 /* ---------------------------------------------------------------------------
@@ -387,13 +379,17 @@ set_some_route_style ()
  * load PCB
  * parse the file with enabled 'PCB mode' (see parser)
  * if successful, update some other stuff
+ *
+ * If revert is true, we pass "revert" as a parameter
+ * to the HID's PCBChanged action.
  */
-int
-LoadPCB (char *Filename)
+static int
+real_load_pcb (char *Filename, bool revert)
 {
-  PCBTypePtr newPCB = CreateNewPCB (false);
-  PCBTypePtr oldPCB;
-  bool units_mm;
+  const char *unit_suffix, *grid_size;
+  char *new_filename;
+  PCBType *newPCB = CreateNewPCB (false);
+  PCBType *oldPCB;
 #ifdef DEBUG
   double elapsed;
   clock_t start, end;
@@ -401,11 +397,16 @@ LoadPCB (char *Filename)
   start = clock ();
 #endif
 
+  new_filename = strdup (Filename);
+
   oldPCB = PCB;
   PCB = newPCB;
 
+  /* mark the default font invalid to know if the file has one */
+  newPCB->Font.Valid = false;
+
   /* new data isn't added to the undo list */
-  if (!ParsePCB (PCB, Filename))
+  if (!ParsePCB (PCB, new_filename))
     {
       RemovePCB (oldPCB);
 
@@ -413,42 +414,56 @@ LoadPCB (char *Filename)
       ResetStackAndVisibility ();
 
       /* update cursor location */
-      Crosshair.X = MAX (0, MIN (PCB->CursorX, (LocationType) PCB->MaxWidth));
-      Crosshair.Y =
-	MAX (0, MIN (PCB->CursorY, (LocationType) PCB->MaxHeight));
+      Crosshair.X = CLAMP (PCB->CursorX, 0, PCB->MaxWidth);
+      Crosshair.Y = CLAMP (PCB->CursorY, 0, PCB->MaxHeight);
 
       /* update cursor confinement and output area (scrollbars) */
       ChangePCBSize (PCB->MaxWidth, PCB->MaxHeight);
 
-      /* create default font if necessary */
+      /* enable default font if necessary */
       if (!PCB->Font.Valid)
 	{
 	  Message (_
 		   ("File '%s' has no font information, using default font\n"),
-		   Filename);
-	  CreateDefaultFont ();
+		   new_filename);
+	  PCB->Font.Valid = true;
 	}
 
       /* clear 'changed flag' */
       SetChangedFlag (false);
-      PCB->Filename = strdup (Filename);
+      PCB->Filename = new_filename;
       /* just in case a bad file saved file is loaded */
 
-      units_mm = (PCB->Grid != (int) PCB->Grid) ? true : false;
-
-      Settings.grid_units_mm = units_mm;
-
+      /* Use attribute PCB::grid::unit as unit, if we can */
+      unit_suffix = AttributeGet (PCB, "PCB::grid::unit");
+      if (unit_suffix && *unit_suffix)
+        {
+          const Unit *new_unit = get_unit_struct (unit_suffix);
+          if (new_unit)
+            Settings.grid_unit = new_unit;
+        }
+      AttributePut (PCB, "PCB::grid::unit", Settings.grid_unit->suffix);
+      /* Use attribute PCB::grid::size as size, if we can */
+      grid_size = AttributeGet (PCB, "PCB::grid::size");
+      if (grid_size)
+        {
+          PCB->Grid = GetValue (grid_size, NULL, NULL);
+        }
+ 
       sort_netlist ();
 
       set_some_route_style ();
 
-      hid_action ("PCBChanged");
+      if (revert)
+        hid_actionl ("PCBChanged", "revert", NULL);
+      else
+        hid_action ("PCBChanged");
 
 #ifdef DEBUG
       end = clock ();
       elapsed = ((double) (end - start)) / CLOCKS_PER_SEC;
       gui->log ("Loading file %s took %f seconds of CPU time\n",
-		Filename, elapsed);
+		new_filename, elapsed);
 #endif
 
       return (0);
@@ -462,12 +477,30 @@ LoadPCB (char *Filename)
 }
 
 /* ---------------------------------------------------------------------------
+ * Load PCB
+ */
+int
+LoadPCB (char *file)
+{
+  return real_load_pcb (file, false);
+}
+
+/* ---------------------------------------------------------------------------
+ * Revert PCB
+ */
+int
+RevertPCB (void)
+{
+  return real_load_pcb (PCB->Filename, true);
+}
+
+/* ---------------------------------------------------------------------------
  * functions for loading elements-as-pcb
  */
 
-extern	PCBTypePtr		yyPCB;
-extern	DataTypePtr		yyData;
-extern	FontTypePtr		yyFont;
+extern	PCBType *		yyPCB;
+extern	DataType *		yyData;
+extern	FontType *		yyFont;
 
 void
 PreLoadElementPCB ()
@@ -485,8 +518,8 @@ PreLoadElementPCB ()
 void
 PostLoadElementPCB ()
 {
-  PCBTypePtr pcb_save = PCB;
-  ElementTypePtr e;
+  PCBType *pcb_save = PCB;
+  ElementType *e;
 
   if (!yyPCB)
     return;
@@ -519,7 +552,7 @@ PrintQuotedString (FILE * FP, char *S)
  * writes out an attribute list
  */
 static void
-WriteAttributeList (FILE * FP, AttributeListTypePtr list, char *prefix)
+WriteAttributeList (FILE * FP, AttributeListType *list, char *prefix)
 {
   int i;
 
@@ -569,28 +602,27 @@ WritePCBDataHeader (FILE * FP)
 
   fputs ("\nPCB[", FP);
   PrintQuotedString (FP, (char *)EMPTY (PCB->Name));
-  fprintf (FP, " %i %i]\n\n", (int) PCB->MaxWidth, (int) PCB->MaxHeight);
-  fprintf (FP, "Grid[%s %i %i %i]\n",
-	   c_dtostr (PCB->Grid), (int) PCB->GridOffsetX,
-	   (int) PCB->GridOffsetY, (int) Settings.DrawGrid);
-  fprintf (FP, "Cursor[%i %i %s]\n",
-           Crosshair.X, Crosshair.Y, c_dtostr (PCB->Zoom));
-  fprintf (FP, "PolyArea[%s]\n", c_dtostr (PCB->IsleArea));
-  fprintf (FP, "Thermal[%s]\n", c_dtostr (PCB->ThermScale));
-  fprintf (FP, "DRC[%i %i %i %i %i %i]\n", PCB->Bloat, PCB->Shrink,
-	   PCB->minWid, PCB->minSlk, PCB->minDrill, PCB->minRing);
+  pcb_fprintf (FP, " %mr %mr]\n\n", PCB->MaxWidth, PCB->MaxHeight);
+  pcb_fprintf (FP, "Grid[%s %mr %mr %d]\n", c_dtostr (COORD_TO_MIL (PCB->Grid) * 100), PCB->GridOffsetX, PCB->GridOffsetY, Settings.DrawGrid);
+  pcb_fprintf (FP, "Cursor[%mr %mr %s]\n",
+               Crosshair.X, Crosshair.Y, c_dtostr (PCB->Zoom));
+  /* PolyArea should be output in square cmils, no suffix */
+  fprintf (FP, "PolyArea[%s]\n", c_dtostr (COORD_TO_MIL (COORD_TO_MIL (PCB->IsleArea) * 100) * 100));
+  pcb_fprintf (FP, "Thermal[%s]\n", c_dtostr (PCB->ThermScale));
+  pcb_fprintf (FP, "DRC[%mr %mr %mr %mr %mr %mr]\n", PCB->Bloat, PCB->Shrink,
+	       PCB->minWid, PCB->minSlk, PCB->minDrill, PCB->minRing);
   fprintf (FP, "Flags(%s)\n", pcbflags_to_string(PCB->Flags));
   fprintf (FP, "Groups(\"%s\")\n", LayerGroupsToString (&PCB->LayerGroups));
   fputs ("Styles[\"", FP);
   for (group = 0; group < NUM_STYLES - 1; group++)
-    fprintf (FP, "%s,%i,%i,%i,%i:", PCB->RouteStyle[group].Name,
-	     PCB->RouteStyle[group].Thick,
-	     PCB->RouteStyle[group].Diameter,
-	     PCB->RouteStyle[group].Hole, PCB->RouteStyle[group].Keepaway);
-  fprintf (FP, "%s,%i,%i,%i,%i\"]\n\n", PCB->RouteStyle[group].Name,
-	   PCB->RouteStyle[group].Thick,
-	   PCB->RouteStyle[group].Diameter,
-	   PCB->RouteStyle[group].Hole, PCB->RouteStyle[group].Keepaway);
+    pcb_fprintf (FP, "%s,%mr,%mr,%mr,%mr:", PCB->RouteStyle[group].Name,
+	         PCB->RouteStyle[group].Thick,
+	         PCB->RouteStyle[group].Diameter,
+	         PCB->RouteStyle[group].Hole, PCB->RouteStyle[group].Keepaway);
+  pcb_fprintf (FP, "%s,%mr,%mr,%mr,%mr\"]\n\n", PCB->RouteStyle[group].Name,
+	       PCB->RouteStyle[group].Thick,
+	       PCB->RouteStyle[group].Diameter,
+	       PCB->RouteStyle[group].Hole, PCB->RouteStyle[group].Keepaway);
 }
 
 /* ---------------------------------------------------------------------------
@@ -600,39 +632,24 @@ static void
 WritePCBFontData (FILE * FP)
 {
   Cardinal i, j;
-  LineTypePtr line;
-  FontTypePtr font;
+  LineType *line;
+  FontType *font;
 
   for (font = &PCB->Font, i = 0; i <= MAX_FONTPOSITION; i++)
     {
       if (!font->Symbol[i].Valid)
 	continue;
 
-      if (isprint (i) && font->Symbol[i].Delta % 100 == 0)
-	fprintf (FP, "Symbol('%c' %i)\n(\n",
-		 (char) i, (int) font->Symbol[i].Delta / 100);
-      else if (isprint (i))
-	fprintf (FP, "Symbol['%c' %i]\n(\n",
-		 (char) i, (int) font->Symbol[i].Delta);
+      if (isprint (i))
+	pcb_fprintf (FP, "Symbol['%c' %mr]\n(\n", i, font->Symbol[i].Delta);
       else
-	fprintf (FP, "Symbol[%i %i]\n(\n", i, (int) font->Symbol[i].Delta);
+	pcb_fprintf (FP, "Symbol[%i %mr]\n(\n", i, font->Symbol[i].Delta);
 
       line = font->Symbol[i].Line;
       for (j = font->Symbol[i].LineN; j; j--, line++)
-	{
-	  if (line->Point1.X % 100 == 0
-	      && line->Point1.Y % 100 == 0
-	      && line->Point2.X % 100 == 0
-	      && line->Point2.Y % 100 == 0 && line->Thickness % 100 == 0)
-	    fprintf (FP, "\tSymbolLine(%i %i %i %i %i)\n",
-		     line->Point1.X / 100, line->Point1.Y / 100,
-		     line->Point2.X / 100, line->Point2.Y / 100,
-		     line->Thickness / 100);
-	  else
-	    fprintf (FP, "\tSymbolLine[%i %i %i %i %i]\n",
-		     line->Point1.X, line->Point1.Y,
-		     line->Point2.X, line->Point2.Y, line->Thickness);
-	}
+        pcb_fprintf (FP, "\tSymbolLine[%mr %mr %mr %mr %mr]\n",
+                     line->Point1.X, line->Point1.Y,
+                     line->Point2.X, line->Point2.Y, line->Thickness);
       fputs (")\n", FP);
     }
 }
@@ -641,16 +658,15 @@ WritePCBFontData (FILE * FP)
  * writes via data
  */
 static void
-WriteViaData (FILE * FP, DataTypePtr Data)
+WriteViaData (FILE * FP, DataType *Data)
 {
   GList *iter;
   /* write information about vias */
   for (iter = Data->Via; iter != NULL; iter = g_list_next (iter))
     {
       PinType *via = iter->data;
-      fprintf (FP, "Via[%i %i %i %i %i %i ",
-	       via->X, via->Y,
-	       via->Thickness, via->Clearance, via->Mask, via->DrillingHole);
+      pcb_fprintf (FP, "Via[%mr %mr %mr %mr %mr %mr ", via->X, via->Y,
+                   via->Thickness, via->Clearance, via->Mask, via->DrillingHole);
       PrintQuotedString (FP, (char *)EMPTY (via->Name));
       fprintf (FP, " %s]\n", F2S (via, VIA_TYPE));
     }
@@ -667,10 +683,9 @@ WritePCBRatData (FILE * FP)
   for (iter = PCB->Data->Rat; iter != NULL; iter = g_list_next (iter))
     {
       RatType *line = iter->data;
-      fprintf (FP, "Rat[%i %i %i %i %i %i ",
-	       (int) line->Point1.X, (int) line->Point1.Y,
-	       (int) line->group1, (int) line->Point2.X,
-	       (int) line->Point2.Y, (int) line->group2);
+      pcb_fprintf (FP, "Rat[%mr %mr %d %mr %mr %d ",
+                   line->Point1.X, line->Point1.Y, line->group1,
+                   line->Point2.X, line->Point2.Y, line->group2);
       fprintf (FP, " %s]\n", F2S (line, RATLINE_TYPE));
     }
 }
@@ -689,7 +704,7 @@ WritePCBNetlistData (FILE * FP)
 
       for (n = 0; n < PCB->NetlistLib.MenuN; n++)
 	{
-	  LibraryMenuTypePtr menu = &PCB->NetlistLib.Menu[n];
+	  LibraryMenuType *menu = &PCB->NetlistLib.Menu[n];
 	  fprintf (FP, "\tNet(");
 	  PrintQuotedString(FP, &menu->Name[2]);
 	  fprintf (FP, " ");
@@ -697,7 +712,7 @@ WritePCBNetlistData (FILE * FP)
 	  fprintf (FP, ")\n\t(\n");
 	  for (p = 0; p < menu->EntryN; p++)
 	    {
-	      LibraryEntryTypePtr entry = &menu->Entry[p];
+	      LibraryEntryType *entry = &menu->Entry[p];
 	      fprintf (FP, "\t\tConnect(");
 	      PrintQuotedString (FP, entry->ListEntry);
 	      fprintf (FP, ")\n");
@@ -712,7 +727,7 @@ WritePCBNetlistData (FILE * FP)
  * writes element data
  */
 static void
-WriteElementData (FILE * FP, DataTypePtr Data)
+WriteElementData (FILE * FP, DataType *Data)
 {
   GList *n, *p;
   for (n = Data->Element; n != NULL; n = g_list_next (n))
@@ -732,24 +747,22 @@ WriteElementData (FILE * FP, DataTypePtr Data)
       PrintQuotedString (FP, (char *)EMPTY (NAMEONPCB_NAME (element)));
       fputc (' ', FP);
       PrintQuotedString (FP, (char *)EMPTY (VALUE_NAME (element)));
-      fprintf (FP, " %i %i %i %i %i %i %s]\n(\n",
-	       (int) element->MarkX, (int) element->MarkY,
-	       (int) (DESCRIPTION_TEXT (element).X -
-		      element->MarkX),
-	       (int) (DESCRIPTION_TEXT (element).Y -
-		      element->MarkY),
-	       (int) DESCRIPTION_TEXT (element).Direction,
-	       (int) DESCRIPTION_TEXT (element).Scale,
-	       F2S (&(DESCRIPTION_TEXT (element)), ELEMENTNAME_TYPE));
+      pcb_fprintf (FP, " %mr %mr %mr %mr %d %d %s]\n(\n",
+                   element->MarkX, element->MarkY,
+                   DESCRIPTION_TEXT (element).X - element->MarkX,
+                   DESCRIPTION_TEXT (element).Y - element->MarkY,
+                   DESCRIPTION_TEXT (element).Direction,
+                   DESCRIPTION_TEXT (element).Scale,
+                   F2S (&(DESCRIPTION_TEXT (element)), ELEMENTNAME_TYPE));
       WriteAttributeList (FP, &element->Attributes, "\t");
       for (p = element->Pin; p != NULL; p = g_list_next (p))
 	{
 	  PinType *pin = p->data;
-	  fprintf (FP, "\tPin[%i %i %i %i %i %i ",
-		   (int) (pin->X - element->MarkX),
-		   (int) (pin->Y - element->MarkY),
-		   (int) pin->Thickness, (int) pin->Clearance,
-		   (int) pin->Mask, (int) pin->DrillingHole);
+          pcb_fprintf (FP, "\tPin[%mr %mr %mr %mr %mr %mr ",
+                       pin->X - element->MarkX,
+                       pin->Y - element->MarkY,
+                       pin->Thickness, pin->Clearance,
+                       pin->Mask, pin->DrillingHole);
 	  PrintQuotedString (FP, (char *)EMPTY (pin->Name));
 	  fprintf (FP, " ");
 	  PrintQuotedString (FP, (char *)EMPTY (pin->Number));
@@ -758,13 +771,12 @@ WriteElementData (FILE * FP, DataTypePtr Data)
       for (p = element->Pad; p != NULL; p = g_list_next (p))
 	{
 	  PadType *pad = p->data;
-	  fprintf (FP, "\tPad[%i %i %i %i %i %i %i ",
-		   (int) (pad->Point1.X - element->MarkX),
-		   (int) (pad->Point1.Y - element->MarkY),
-		   (int) (pad->Point2.X - element->MarkX),
-		   (int) (pad->Point2.Y - element->MarkY),
-		   (int) pad->Thickness, (int) pad->Clearance,
-		   (int) pad->Mask);
+          pcb_fprintf (FP, "\tPad[%mr %mr %mr %mr %mr %mr %mr ",
+                       pad->Point1.X - element->MarkX,
+                       pad->Point1.Y - element->MarkY,
+                       pad->Point2.X - element->MarkX,
+                       pad->Point2.Y - element->MarkY,
+                       pad->Thickness, pad->Clearance, pad->Mask);
 	  PrintQuotedString (FP, (char *)EMPTY (pad->Name));
 	  fprintf (FP, " ");
 	  PrintQuotedString (FP, (char *)EMPTY (pad->Number));
@@ -773,27 +785,22 @@ WriteElementData (FILE * FP, DataTypePtr Data)
       for (p = element->Line; p != NULL; p = g_list_next (p))
 	{
 	  LineType *line = p->data;
-	  fprintf (FP,
-		   "\tElementLine [%i %i %i %i %i]\n",
-		   (int) (line->Point1.X -
-			  element->MarkX),
-		   (int) (line->Point1.Y -
-			  element->MarkY),
-		   (int) (line->Point2.X -
-			  element->MarkX),
-		   (int) (line->Point2.Y -
-			  element->MarkY), (int) line->Thickness);
+          pcb_fprintf (FP, "\tElementLine [%mr %mr %mr %mr %mr]\n",
+                       line->Point1.X - element->MarkX,
+                       line->Point1.Y - element->MarkY,
+                       line->Point2.X - element->MarkX,
+                       line->Point2.Y - element->MarkY,
+                       line->Thickness);
 	}
       for (p = element->Arc; p != NULL; p = g_list_next (p))
 	{
 	  ArcType *arc = p->data;
-	  fprintf (FP,
-		   "\tElementArc [%i %i %i %i %i %i %i]\n",
-		   (int) (arc->X - element->MarkX),
-		   (int) (arc->Y - element->MarkY),
-		   (int) arc->Width, (int) arc->Height,
-		   (int) arc->StartAngle, (int) arc->Delta,
-		   (int) arc->Thickness);
+          pcb_fprintf (FP, "\tElementArc [%mr %mr %mr %mr %ma %ma %mr]\n",
+                       arc->X - element->MarkX,
+                       arc->Y - element->MarkY,
+                       arc->Width, arc->Height,
+                       arc->StartAngle, arc->Delta,
+                       arc->Thickness);
 	}
       fputs ("\n\t)\n", FP);
     }
@@ -803,7 +810,7 @@ WriteElementData (FILE * FP, DataTypePtr Data)
  * writes layer data
  */
 static void
-WriteLayerData (FILE * FP, Cardinal Number, LayerTypePtr layer)
+WriteLayerData (FILE * FP, Cardinal Number, LayerType *layer)
 {
   GList *n;
   /* write information about non empty layers */
@@ -818,27 +825,27 @@ WriteLayerData (FILE * FP, Cardinal Number, LayerTypePtr layer)
       for (n = layer->Line; n != NULL; n = g_list_next (n))
 	{
 	  LineType *line = n->data;
-	  fprintf (FP, "\tLine[%i %i %i %i %i %i %s]\n",
-		   (int) line->Point1.X, (int) line->Point1.Y,
-		   (int) line->Point2.X, (int) line->Point2.Y,
-		   (int) line->Thickness, (int) line->Clearance,
-		   F2S (line, LINE_TYPE));
+          pcb_fprintf (FP, "\tLine[%mr %mr %mr %mr %mr %mr %s]\n",
+                       line->Point1.X, line->Point1.Y,
+                       line->Point2.X, line->Point2.Y,
+                       line->Thickness, line->Clearance,
+                       F2S (line, LINE_TYPE));
 	}
       for (n = layer->Arc; n != NULL; n = g_list_next (n))
 	{
 	  ArcType *arc = n->data;
-	  fprintf (FP, "\tArc[%i %i %i %i %i %i %i %i %s]\n",
-		   (int) arc->X, (int) arc->Y, (int) arc->Width,
-		   (int) arc->Height, (int) arc->Thickness,
-		   (int) arc->Clearance, (int) arc->StartAngle,
-		   (int) arc->Delta, F2S (arc, ARC_TYPE));
+          pcb_fprintf (FP, "\tArc[%mr %mr %mr %mr %mr %mr %ma %ma %s]\n",
+                       arc->X, arc->Y, arc->Width,
+                       arc->Height, arc->Thickness,
+                       arc->Clearance, arc->StartAngle,
+                       arc->Delta, F2S (arc, ARC_TYPE));
 	}
       for (n = layer->Text; n != NULL; n = g_list_next (n))
 	{
 	  TextType *text = n->data;
-	  fprintf (FP, "\tText[%i %i %i %i ",
-		   (int) text->X, (int) text->Y,
-		   (int) text->Direction, (int) text->Scale);
+          pcb_fprintf (FP, "\tText[%mr %mr %d %d ",
+                       text->X, text->Y,
+                       text->Direction, text->Scale);
 	  PrintQuotedString (FP, (char *)EMPTY (text->TextString));
 	  fprintf (FP, " %s]\n", F2S (text, TEXT_TYPE));
 	}
@@ -850,7 +857,7 @@ WriteLayerData (FILE * FP, Cardinal Number, LayerTypePtr layer)
 	  fprintf (FP, "\tPolygon(%s)\n\t(", F2S (polygon, POLYGON_TYPE));
 	  for (p = 0; p < polygon->PointN; p++)
 	    {
-	      PointTypePtr point = &polygon->Points[p];
+	      PointType *point = &polygon->Points[p];
 
 	      if (hole < polygon->HoleIndexN &&
 		  p == polygon->HoleIndex[hole])
@@ -868,7 +875,7 @@ WriteLayerData (FILE * FP, Cardinal Number, LayerTypePtr layer)
 		  if (hole)
 		    fputs ("\t", FP);
 		}
-	      fprintf (FP, "[%i %i] ", (int) point->X, (int) point->Y);
+              pcb_fprintf (FP, "[%mr %mr] ", point->X, point->Y);
 	    }
 	  if (hole > 0)
 	    fputs ("\n\t\t)", FP);
@@ -1167,8 +1174,8 @@ LoadNewlibFootprintsFromDir(char *libpath, char *toppath)
   DIR *subdirobj;                 /* Interable object holding all subdir entries */
   struct dirent *subdirentry;     /* Individual subdir entry */
   struct stat buffer;             /* Buffer used in stat */
-  LibraryMenuTypePtr menu = NULL; /* Pointer to PCB's library menu structure */
-  LibraryEntryTypePtr entry;      /* Pointer to individual menu entry */
+  LibraryMenuType *menu = NULL; /* Pointer to PCB's library menu structure */
+  LibraryEntryType *entry;      /* Pointer to individual menu entry */
   size_t l;
   size_t len;
   int n_footprints = 0;           /* Running count of footprints found in this subdir */
@@ -1239,7 +1246,8 @@ LoadNewlibFootprintsFromDir(char *libpath, char *toppath)
       && NSTRCMP (subdirentry->d_name, "Makefile.am") != 0
       && NSTRCMP (subdirentry->d_name, "Makefile.in") != 0
       && (l < 4 || NSTRCMP(subdirentry->d_name + (l - 4), ".png") != 0) 
-      && (l < 5 || NSTRCMP(subdirentry->d_name + (l - 5), ".html") != 0) )
+      && (l < 5 || NSTRCMP(subdirentry->d_name + (l - 5), ".html") != 0)
+      && (l < 4 || NSTRCMP(subdirentry->d_name + (l - 4), ".pcb") != 0) )
       {
 #ifdef DEBUG
 /*	printf("...  Found a footprint %s ... \n", subdirentry->d_name); */
@@ -1390,6 +1398,7 @@ ParseLibraryTree (void)
   printf("Leaving ParseLibraryTree, found %d footprints.\n", n_footprints);
 #endif
 
+  free (libpaths);
   return n_footprints;
 }
 
@@ -1404,86 +1413,93 @@ ReadLibraryContents (void)
   static char *command = NULL;
   char inputline[MAX_LIBRARY_LINE_LENGTH + 1];
   FILE *resultFP = NULL;
-  LibraryMenuTypePtr menu = NULL;
-  LibraryEntryTypePtr entry;
+  LibraryMenuType *menu = NULL;
+  LibraryEntryType *entry;
 
-
-  /*  First load the M4 stuff.  The variable Settings.LibraryPath
-   *  points to it.
+  /* If we don't have a command to execute to find the library contents,
+   * skip this. This is used by default on Windows builds (set in main.c),
+   * as we can't normally run shell scripts or expect to have m4 present.
    */
-  free (command);
-  command = EvaluateFilename (Settings.LibraryContentsCommand,
-			      Settings.LibraryPath, Settings.LibraryFilename,
-			      NULL);
+  if (Settings.LibraryContentsCommand != NULL &&
+      Settings.LibraryContentsCommand[0] != '\0')
+    {
+      /*  First load the M4 stuff.  The variable Settings.LibraryPath
+       *  points to it.
+       */
+      free (command);
+      command = EvaluateFilename (Settings.LibraryContentsCommand,
+				  Settings.LibraryPath, Settings.LibraryFilename,
+				  NULL);
 
 #ifdef DEBUG
-  printf("In ReadLibraryContents, about to execute command %s\n", command);
+      printf("In ReadLibraryContents, about to execute command %s\n", command);
 #endif
 
-  /* This uses a pipe to execute a shell script which provides the names of
-   * all M4 libs and footprints.  The results are placed in resultFP.
-   */
-  if (command && *command && (resultFP = popen (command, "r")) == NULL)
-    {
-      PopenErrorMessage (command);
-    }
-
-  /* the M4 library contents are separated by colons;
-   * template : package : name : description
-   */
-  while (resultFP != NULL && fgets (inputline, MAX_LIBRARY_LINE_LENGTH, resultFP))
-    {
-      size_t len = strlen (inputline);
-
-      /* check for maximum linelength */
-      if (len)
+      /* This uses a pipe to execute a shell script which provides the names of
+       * all M4 libs and footprints.  The results are placed in resultFP.
+       */
+      if (command && *command && (resultFP = popen (command, "r")) == NULL)
 	{
-	  len--;
-	  if (inputline[len] != '\n')
-	    Message
-	      ("linelength (%i) exceeded; following characters will be ignored\n",
-	       MAX_LIBRARY_LINE_LENGTH);
-	  else
-	    inputline[len] = '\0';
+	  PopenErrorMessage (command);
 	}
 
-      /* if the line defines a menu */
-      if (!strncmp (inputline, "TYPE=", 5))
+      /* the M4 library contents are separated by colons;
+       * template : package : name : description
+       */
+      while (resultFP != NULL && fgets (inputline, MAX_LIBRARY_LINE_LENGTH, resultFP))
 	{
-	  menu = GetLibraryMenuMemory (&Library);
-	  menu->Name = strdup (UNKNOWN (&inputline[5]));
-	  menu->directory = strdup (Settings.LibraryFilename);
-	}
-      else
-	{
-	  /* allocate a new menu entry if not already done */
-	  if (!menu)
+	  size_t len = strlen (inputline);
+
+	  /* check for maximum linelength */
+	  if (len)
+	    {
+	      len--;
+	      if (inputline[len] != '\n')
+		Message
+		  ("linelength (%i) exceeded; following characters will be ignored\n",
+		   MAX_LIBRARY_LINE_LENGTH);
+	      else
+		inputline[len] = '\0';
+	    }
+
+	  /* if the line defines a menu */
+	  if (!strncmp (inputline, "TYPE=", 5))
 	    {
 	      menu = GetLibraryMenuMemory (&Library);
-	      menu->Name = strdup (UNKNOWN ((char *) NULL));
+	      menu->Name = strdup (UNKNOWN (&inputline[5]));
 	      menu->directory = strdup (Settings.LibraryFilename);
 	    }
-	  entry = GetLibraryEntryMemory (menu);
-	  entry->AllocatedMemory = strdup (inputline);
+	  else
+	    {
+	      /* allocate a new menu entry if not already done */
+	      if (!menu)
+		{
+		  menu = GetLibraryMenuMemory (&Library);
+		  menu->Name = strdup (UNKNOWN ((char *) NULL));
+		  menu->directory = strdup (Settings.LibraryFilename);
+		}
+	      entry = GetLibraryEntryMemory (menu);
+	      entry->AllocatedMemory = strdup (inputline);
 
-	  /* now break the line into pieces separated by colons */
-	  if ((entry->Template = strtok (entry->AllocatedMemory, ":")) !=
-	      NULL)
-	    if ((entry->Package = strtok (NULL, ":")) != NULL)
-	      if ((entry->Value = strtok (NULL, ":")) != NULL)
-		entry->Description = strtok (NULL, ":");
+	      /* now break the line into pieces separated by colons */
+	      if ((entry->Template = strtok (entry->AllocatedMemory, ":")) !=
+		  NULL)
+		if ((entry->Package = strtok (NULL, ":")) != NULL)
+		  if ((entry->Value = strtok (NULL, ":")) != NULL)
+		    entry->Description = strtok (NULL, ":");
 
-	  /* create the list entry */
-	  len = strlen (EMPTY (entry->Value)) +
-	    strlen (EMPTY (entry->Description)) + 4;
-	  entry->ListEntry = (char *)calloc (len, sizeof (char));
-	  sprintf (entry->ListEntry,
-		   "%s, %s", EMPTY (entry->Value),
-		   EMPTY (entry->Description));
+	      /* create the list entry */
+	      len = strlen (EMPTY (entry->Value)) +
+		strlen (EMPTY (entry->Description)) + 4;
+	      entry->ListEntry = (char *)calloc (len, sizeof (char));
+	      sprintf (entry->ListEntry,
+		       "%s, %s", EMPTY (entry->Value),
+		       EMPTY (entry->Description));
+	    }
 	}
+      if (resultFP != NULL)
+	pclose (resultFP);
     }
-  if (resultFP != NULL)
-    pclose (resultFP);
 
   /* Now after reading in the M4 libs, call a function to
    * read the newlib footprint libraries.  Then sort the whole
@@ -1512,14 +1528,15 @@ ReadNetlist (char *filename)
   char inputline[MAX_NETLIST_LINE_LENGTH + 1];
   char temp[MAX_NETLIST_LINE_LENGTH + 1];
   FILE *fp;
-  LibraryMenuTypePtr menu = NULL;
-  LibraryEntryTypePtr entry;
+  LibraryMenuType *menu = NULL;
+  LibraryEntryType *entry;
   int i, j, lines, kind;
   bool continued;
-  int used_popen = 0;
+  bool used_popen = false;
+  int retval = 0;
 
   if (!filename)
-    return (1);			/* nothing to do */
+    return 1;			/* nothing to do */
 
   Message (_("Importing PCB netlist %s\n"), filename);
 
@@ -1534,7 +1551,7 @@ ReadNetlist (char *filename)
     }
   else
     {
-      used_popen = 1;
+      used_popen = true;
       free (command);
       command = EvaluateFilename (Settings.RatCommand,
 				  Settings.RatPath, filename, NULL);
@@ -1543,7 +1560,7 @@ ReadNetlist (char *filename)
       if (*command == '\0' || (fp = popen (command, "r")) == NULL)
 	{
 	  PopenErrorMessage (command);
-	  return (1);
+	  return 1;
 	}
     }
   lines = 0;
@@ -1614,15 +1631,14 @@ ReadNetlist (char *filename)
   if (!lines)
     {
       Message (_("Empty netlist file!\n"));
-      pclose (fp);
-      return (1);
+      retval = 1;
     }
   if (used_popen)
     pclose (fp);
   else
     fclose (fp);
   sort_netlist ();
-  return (0);
+  return retval;
 }
 
 static int ReadEdifNetlist (char *filename);

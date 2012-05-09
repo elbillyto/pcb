@@ -1,5 +1,5 @@
-#ifndef _HID_H_
-#define _HID_H_
+#ifndef PCB_HID_H
+#define PCB_HID_H
 
 #include <stdarg.h>
 
@@ -79,7 +79,7 @@ extern "C"
     /* Called when the action is triggered.  If this function returns
        non-zero, no further actions will be invoked for this key/mouse
        event.  */
-    int (*trigger_cb) (int argc, char **argv, int x, int y);
+    int (*trigger_cb) (int argc, char **argv, Coord x, Coord y);
     /* Short description that sometimes accompanies the name.  */
     const char *description;
     /* Full allowed syntax; use \n to separate lines.  */
@@ -157,13 +157,15 @@ extern "C"
   typedef struct
   {
     int int_value;
-    char *str_value;
+    const char *str_value;
     double real_value;
+    Coord coord_value;
   } HID_Attr_Val;
 
   enum hids
     { HID_Label, HID_Integer, HID_Real, HID_String,
-      HID_Boolean, HID_Enum, HID_Mixed, HID_Path
+      HID_Boolean, HID_Enum, HID_Mixed, HID_Path,
+      HID_Unit, HID_Coord
     };
 
   typedef struct
@@ -354,7 +356,7 @@ typedef enum
        different values each time may be expensive, so grouping items by
        line style is helpful.  */
     void (*set_line_cap) (hidGC gc_, EndCapStyle style_);
-    void (*set_line_width) (hidGC gc_, int width_);
+    void (*set_line_width) (hidGC gc_, Coord width_);
     void (*set_draw_xor) (hidGC gc_, int xor_);
     /* Blends 20% or so color with 80% background.  Only used for
        assembly drawings so far. */
@@ -363,12 +365,12 @@ typedef enum
     /* The usual drawing functions.  "draw" means to use segments of the
        given width, whereas "fill" means to fill to a zero-width
        outline.  */
-    void (*draw_line) (hidGC gc_, int x1_, int y1_, int x2_, int y2_);
-    void (*draw_arc) (hidGC gc_, int cx_, int cy_, int xradius_, int yradius_,
-		      int start_angle_, int delta_angle_);
-    void (*draw_rect) (hidGC gc_, int x1_, int y1_, int x2_, int y2_);
-    void (*fill_circle) (hidGC gc_, int cx_, int cy_, int radius_);
-    void (*fill_polygon) (hidGC gc_, int n_coords_, int *x_, int *y_);
+    void (*draw_line) (hidGC gc_, Coord x1_, Coord y1_, Coord x2_, Coord y2_);
+    void (*draw_arc) (hidGC gc_, Coord cx_, Coord cy_, Coord xradius_, Coord yradius_,
+		      Angle start_angle_, Angle delta_angle_);
+    void (*draw_rect) (hidGC gc_, Coord x1_, Coord y1_, Coord x2_, Coord y2_);
+    void (*fill_circle) (hidGC gc_, Coord cx_, Coord cy_, Coord radius_);
+    void (*fill_polygon) (hidGC gc_, int n_coords_, Coord *x_, Coord *y_);
     void (*fill_pcb_polygon) (hidGC gc_, PolygonType *poly,
                               const BoxType *clip_box);
     void (*thindraw_pcb_polygon) (hidGC gc_, PolygonType *poly,
@@ -377,7 +379,7 @@ typedef enum
     void (*thindraw_pcb_pad) (hidGC gc_, PadType *pad, bool clip, bool mask);
     void (*fill_pcb_pv) (hidGC fg_gc, hidGC bg_gc, PinType *pv, bool drawHole, bool mask);
     void (*thindraw_pcb_pv) (hidGC fg_gc, hidGC bg_gc, PinType *pv, bool drawHole, bool mask);
-    void (*fill_rect) (hidGC gc_, int x1_, int y1_, int x2_, int y2_);
+    void (*fill_rect) (hidGC gc_, Coord x1_, Coord y1_, Coord x2_, Coord y2_);
 
 
     /* This is for the printer.  If you call this for the GUI, xval and
@@ -396,8 +398,8 @@ typedef enum
     /* Temporary */
     int (*shift_is_pressed) (void);
     int (*control_is_pressed) (void);
-	int (*mod1_is_pressed) (void);
-    void (*get_coords) (const char *msg_, int *x_, int *y_);
+    int (*mod1_is_pressed) (void);
+    void (*get_coords) (const char *msg_, Coord *x_, Coord *y_);
 
     /* Sets the crosshair, which may differ from the pointer depending
        on grid and pad snap.  Note that the HID is responsible for
@@ -565,6 +567,19 @@ typedef enum
      * Any remaining rendering will be flushed to the screen.
      */
     void (*finish_debug_draw)  (void);
+
+    /* Notification to the GUI around saving the PCB file.
+     *
+     * Called with a false parameter before the save, called again
+     * with true after the save.
+     *
+     * Allows GUIs which watch for file-changes on disk to ignore
+     * our deliberate changes.
+     */
+    void (*notify_save_pcb) (const char *filename, bool done);
+
+    /* Notification to the GUI that the PCB file has been renamed. */
+    void (*notify_filename_changed) (void);
   };
 
 /* Call this as soon as possible from main().  No other HID calls are

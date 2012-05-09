@@ -1,9 +1,10 @@
 /*
  *                            COPYRIGHT
  *
- *  Topological Autorouter for 
+ *  Topological Autorouter for
  *  PCB, interactive printed circuit board design
  *  Copyright (C) 2009 Anthony Blake
+ *  Copyright (C) 2009-2011 PCB Contributors (see ChangeLog for details)
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -27,9 +28,9 @@
  *                 This is *EXPERIMENTAL* code.
  *
  *  As the code is experimental, the algorithms and code
- *  are likely to change. Which means it isn't documented  
+ *  are likely to change. Which means it isn't documented
  *  or optimized. If you would like to learn about Topological
- *  Autorouters, the following papers are good starting points: 
+ *  Autorouters, the following papers are good starting points:
  *
  * This file implements a topological autorouter, and uses techniques from the
  * following publications:
@@ -55,6 +56,12 @@
 
 
 #include "toporouter.h"
+#include "pcb-printf.h"
+
+#define BOARD_EDGE_RESOLUTION MIL_TO_COORD (100.)
+#define VIA_COST_AS_DISTANCE  MIL_TO_COORD (100.)
+#define ROAR_DETOUR_THRESHOLD MIL_TO_COORD (10.)
+
 
 static void 
 toporouter_edge_init (toporouter_edge_t *edge)
@@ -335,7 +342,7 @@ toporouter_draw_vertex(gpointer item, gpointer data)
       cairo_arc(dc->cr, 
           tv->v.p.x * dc->s + MARGIN, 
           tv->v.p.y * dc->s + MARGIN, 
-          500. * dc->s, 0, 2 * M_PI);
+          MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
       cairo_fill(dc->cr);
 
     }else if(tv->flags & VERTEX_FLAG_GREEN) {
@@ -343,7 +350,7 @@ toporouter_draw_vertex(gpointer item, gpointer data)
       cairo_arc(dc->cr, 
           tv->v.p.x * dc->s + MARGIN, 
           tv->v.p.y * dc->s + MARGIN, 
-          500. * dc->s, 0, 2 * M_PI);
+          MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
       cairo_fill(dc->cr);
     
     }else if(tv->flags & VERTEX_FLAG_BLUE) {
@@ -351,7 +358,7 @@ toporouter_draw_vertex(gpointer item, gpointer data)
       cairo_arc(dc->cr, 
           tv->v.p.x * dc->s + MARGIN, 
           tv->v.p.y * dc->s + MARGIN, 
-          500. * dc->s, 0, 2 * M_PI);
+          MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
       cairo_fill(dc->cr);
 
 
@@ -403,7 +410,7 @@ toporouter_draw_vertex(gpointer item, gpointer data)
             cairo_arc(dc->cr, 
                 tv->v.p.x * dc->s + MARGIN, 
                 tv->v.p.y * dc->s + MARGIN, 
-                400. * dc->s, 0, 2 * M_PI);
+                MIL_TO_COORD (4.) * dc->s, 0, 2 * M_PI);
             cairo_fill(dc->cr);
 
             break;
@@ -417,14 +424,14 @@ toporouter_draw_vertex(gpointer item, gpointer data)
         cairo_arc(dc->cr, 
             tv->v.p.x * dc->s + MARGIN, 
             tv->v.p.y * dc->s + MARGIN, 
-            500. * dc->s, 0, 2 * M_PI);
+            MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
         cairo_fill(dc->cr);
       }else if(tv->flags & VERTEX_FLAG_RED) {
         cairo_set_source_rgba(dc->cr, 1., 0., 0., 0.8f);
         cairo_arc(dc->cr, 
             tv->v.p.x * dc->s + MARGIN, 
             tv->v.p.y * dc->s + MARGIN, 
-            500. * dc->s, 0, 2 * M_PI);
+            MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
         cairo_fill(dc->cr);
 
       }else if(tv->flags & VERTEX_FLAG_GREEN) {
@@ -432,7 +439,7 @@ toporouter_draw_vertex(gpointer item, gpointer data)
         cairo_arc(dc->cr, 
             tv->v.p.x * dc->s + MARGIN, 
             tv->v.p.y * dc->s + MARGIN, 
-            500. * dc->s, 0, 2 * M_PI);
+            MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
         cairo_fill(dc->cr);
       }
 
@@ -696,72 +703,19 @@ vertex_net_keepaway(toporouter_vertex_t *v)
   if(!box || !box->cluster) return Settings.Keepaway;
   return cluster_keepaway(box->cluster);
 }
-/*
-void
-print_trace (void)
-{
-  void *array[10];
-  size_t size;
-  char **strings;
-  size_t i;
 
-  size = backtrace (array, 10);
-  strings = backtrace_symbols (array, size);
-
-  printf ("Obtained %zd stack frames.\n", size);
-
-  for (i = 0; i < size; i++)
-    printf ("%s\n", strings[i]);
-
-  free (strings);
-}
-*/
 /* fills in x and y with coordinates of point from a towards b of distance d */
-void
-point_from_point_to_point(toporouter_vertex_t *a, toporouter_vertex_t *b, gdouble d, gdouble *x, gdouble *y)
+static void
+point_from_point_to_point (toporouter_vertex_t *a,
+                           toporouter_vertex_t *b,
+                           double d,
+                           double *x, double *y)
 {
-  gdouble dx = vx(b) - vx(a);
-  gdouble dy = vy(b) - vy(a);
-  gdouble theta = atan(fabs(dy/dx));
+  double theta = atan2 (vy(b) - vy(a), vx(b) - vx(a));
 
-//#ifdef DEBUG_EXPORT  
-  if(!finite(theta)) {
-//    printf("!finte(theta): a = %f,%f b = %f,%f d = %f\n", vx(a), vy(a), vx(b), vy(b), d);
-//    print_trace();
-    //TODO: this shouldn't happen, fix the hack
-    *x = vx(a);
-    *y = vy(a);
-    return;
-  }
-//#endif
-
-  g_assert(finite(theta));
-
-  *x = vx(a); *y = vy(a);
-
-  if( dx >= 0. ) {
-
-    if( dy >= 0. ) {
-      *x += d * cos(theta);
-      *y += d * sin(theta);
-    }else{
-      *x += d * cos(theta);
-      *y -= d * sin(theta);
-    }
-
-  }else{
-    
-    if( dy >= 0. ) {
-      *x -= d * cos(theta);
-      *y += d * sin(theta);
-    }else{
-      *x -= d * cos(theta);
-      *y -= d * sin(theta);
-    }
-
-  }
+  *x = vx(a) + d * cos (theta);
+  *y = vy(a) + d * sin (theta);
 }
-
 
 static inline gint
 coord_wind(gdouble ax, gdouble ay, gdouble bx, gdouble by, gdouble cx, gdouble cy) 
@@ -798,129 +752,31 @@ tvertex_wind(toporouter_vertex_t  *a, toporouter_vertex_t  *b, toporouter_vertex
   return point_wind(GTS_POINT(a), GTS_POINT(b), GTS_POINT(c));
 }
 
-int 
-sloppy_point_wind(GtsPoint *a, GtsPoint *b, GtsPoint *c) 
+/* moves vertex v d units in the direction of vertex p */
+static void
+coord_move_towards_coord_values (double ax, double ay,
+                                 double px, double py,
+                                 double d,
+                                 double *x, double *y)
 {
-  gdouble rval, dx1, dx2, dy1, dy2;
-  dx1 = b->x - a->x; dy1 = b->y - a->y;
-  dx2 = c->x - b->x; dy2 = c->y - b->y;
-  rval = (dx1*dy2)-(dy1*dx2);
-  return (rval > 10.) ? 1 : ((rval < -10.) ? -1 : 0);
-}
+  double theta = atan2 (py - ay, px - ax);
 
-static inline int
-sloppy_vertex_wind(GtsVertex *a, GtsVertex *b, GtsVertex *c) 
-{
-  return point_wind(GTS_POINT(a), GTS_POINT(b), GTS_POINT(c));
+  *x = ax + d * cos (theta);
+  *y = ay + d * sin (theta);
 }
 
 /* moves vertex v d units in the direction of vertex p */
-void
-coord_move_towards_coord_values(gdouble ax, gdouble ay, gdouble px, gdouble py, gdouble d, gdouble *x, gdouble *y) 
+static void
+vertex_move_towards_vertex_values (GtsVertex *v,
+                                   GtsVertex *p,
+                                   double d,
+                                   double *x, double *y)
 {
-  gdouble dx = px - ax;
-  gdouble dy = py - ay;
-  gdouble theta = atan(fabs(dy/dx));
+  double theta = atan2 (GTS_POINT(p)->y - GTS_POINT(v)->y,
+                        GTS_POINT(p)->x - GTS_POINT(v)->x);
 
-
-  if(!finite(theta)) {
-    printf("!finite(theta) a = %f,%f p = %f,%f d = %f\n", 
-        ax, ay, px, py, d);
-
-  }
-
-  g_assert(finite(theta));
-
-  if( dx >= 0. ) {
-
-    if( dy >= 0. ) {
-      *x = ax + (d * cos(theta));
-      *y = ay + (d * sin(theta));
-    }else{
-      *x = ax + (d * cos(theta));
-      *y = ay - (d * sin(theta));
-    }
-
-  }else{
-    
-    if( dy >= 0. ) {
-      *x = ax - (d * cos(theta));
-      *y = ay + (d * sin(theta));
-    }else{
-      *x = ax - (d * cos(theta));
-      *y = ay - (d * sin(theta));
-    }
-
-  }
-
-}
-
-/* moves vertex v d units in the direction of vertex p */
-void
-vertex_move_towards_point_values(GtsVertex *v, gdouble px, gdouble py, gdouble d, gdouble *x, gdouble *y) 
-{
-  gdouble dx = px - GTS_POINT(v)->x;
-  gdouble dy = py - GTS_POINT(v)->y;
-  gdouble theta = atan(fabs(dy/dx));
-
-  g_assert(finite(theta));
-
-  if( dx >= 0. ) {
-
-    if( dy >= 0. ) {
-      *x = GTS_POINT(v)->x + (d * cos(theta));
-      *y = GTS_POINT(v)->y + (d * sin(theta));
-    }else{
-      *x = GTS_POINT(v)->x + (d * cos(theta));
-      *y = GTS_POINT(v)->y - (d * sin(theta));
-    }
-
-  }else{
-    
-    if( dy >= 0. ) {
-      *x = GTS_POINT(v)->x - (d * cos(theta));
-      *y = GTS_POINT(v)->y + (d * sin(theta));
-    }else{
-      *x = GTS_POINT(v)->x - (d * cos(theta));
-      *y = GTS_POINT(v)->y - (d * sin(theta));
-    }
-
-  }
-
-}
-
-/* moves vertex v d units in the direction of vertex p */
-void
-vertex_move_towards_vertex_values(GtsVertex *v, GtsVertex *p, gdouble d, gdouble *x, gdouble *y) 
-{
-  gdouble dx = GTS_POINT(p)->x - GTS_POINT(v)->x;
-  gdouble dy = GTS_POINT(p)->y - GTS_POINT(v)->y;
-  gdouble theta = atan(fabs(dy/dx));
-
-  g_assert(finite(theta));
-
-  if( dx >= 0. ) {
-
-    if( dy >= 0. ) {
-      *x = GTS_POINT(v)->x + (d * cos(theta));
-      *y = GTS_POINT(v)->y + (d * sin(theta));
-    }else{
-      *x = GTS_POINT(v)->x + (d * cos(theta));
-      *y = GTS_POINT(v)->y - (d * sin(theta));
-    }
-
-  }else{
-    
-    if( dy >= 0. ) {
-      *x = GTS_POINT(v)->x - (d * cos(theta));
-      *y = GTS_POINT(v)->y + (d * sin(theta));
-    }else{
-      *x = GTS_POINT(v)->x - (d * cos(theta));
-      *y = GTS_POINT(v)->y - (d * sin(theta));
-    }
-
-  }
-
+  *x = GTS_POINT(v)->x + d * cos (theta);
+  *y = GTS_POINT(v)->y + d * sin (theta);
 }
 
 #define tv_on_layer(v,l) (l == TOPOROUTER_BBOX(TOPOROUTER_VERTEX(v)->boxes->data)->layer)
@@ -1028,7 +884,7 @@ toporouter_draw_cluster(toporouter_t *r, drawing_context_t *dc, toporouter_clust
 
 //  if(box->point && vz(box->point) == layer) {
 //    cairo_set_source_rgba(dc->cr, red, green, blue, 0.8f);
-//    cairo_arc(dc->cr, vx(box->point) * dc->s + MARGIN, vy(box->point) * dc->s + MARGIN, 500. * dc->s, 0, 2 * M_PI);
+//    cairo_arc(dc->cr, vx(box->point) * dc->s + MARGIN, vy(box->point) * dc->s + MARGIN, MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
 //    cairo_fill(dc->cr);
 //  }
 
@@ -1075,7 +931,7 @@ toporouter_draw_surface(toporouter_t *r, GtsSurface *s, char *filename, int w, i
           cairo_arc(dc->cr, 
               tv->v.p.x * dc->s + MARGIN, 
               tv->v.p.y * dc->s + MARGIN, 
-              500. * dc->s, 0, 2 * M_PI);
+              MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
           cairo_fill(dc->cr);
 
         }else if(tv->flags & VERTEX_FLAG_GREEN) {
@@ -1083,7 +939,7 @@ toporouter_draw_surface(toporouter_t *r, GtsSurface *s, char *filename, int w, i
           cairo_arc(dc->cr, 
               tv->v.p.x * dc->s + MARGIN, 
               tv->v.p.y * dc->s + MARGIN, 
-              500. * dc->s, 0, 2 * M_PI);
+              MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
           cairo_fill(dc->cr);
 
         }else if(tv->flags & VERTEX_FLAG_BLUE) {
@@ -1091,7 +947,7 @@ toporouter_draw_surface(toporouter_t *r, GtsSurface *s, char *filename, int w, i
           cairo_arc(dc->cr, 
               tv->v.p.x * dc->s + MARGIN, 
               tv->v.p.y * dc->s + MARGIN, 
-              500. * dc->s, 0, 2 * M_PI);
+              MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
           cairo_fill(dc->cr);
 
         } 
@@ -1101,7 +957,7 @@ toporouter_draw_surface(toporouter_t *r, GtsSurface *s, char *filename, int w, i
           cairo_arc(dc->cr, 
               tv->v.p.x * dc->s + MARGIN, 
               tv->v.p.y * dc->s + MARGIN, 
-              500. * dc->s, 0, 2 * M_PI);
+              MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
           cairo_fill(dc->cr);
 
 
@@ -1190,14 +1046,14 @@ toporouter_draw_surface(toporouter_t *r, GtsSurface *s, char *filename, int w, i
           cairo_arc(dc->cr, 
               tv->v.p.x * dc->s + MARGIN, 
               tv->v.p.y * dc->s + MARGIN, 
-              500. * dc->s, 0, 2 * M_PI);
+              MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
           cairo_fill(dc->cr);
         }else if(tv->flags & VERTEX_FLAG_RED) {
           cairo_set_source_rgba(dc->cr, 1., 0., 0., 0.8f);
           cairo_arc(dc->cr, 
               tv->v.p.x * dc->s + MARGIN, 
               tv->v.p.y * dc->s + MARGIN, 
-              500. * dc->s, 0, 2 * M_PI);
+              MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
           cairo_fill(dc->cr);
 
         }else if(tv->flags & VERTEX_FLAG_GREEN) {
@@ -1205,14 +1061,14 @@ toporouter_draw_surface(toporouter_t *r, GtsSurface *s, char *filename, int w, i
           cairo_arc(dc->cr, 
               tv->v.p.x * dc->s + MARGIN, 
               tv->v.p.y * dc->s + MARGIN, 
-              500. * dc->s, 0, 2 * M_PI);
+              MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
           cairo_fill(dc->cr);
         }else{
           cairo_set_source_rgba(dc->cr, 1., 1., 1., 0.8f);
           cairo_arc(dc->cr, 
               tv->v.p.x * dc->s + MARGIN, 
               tv->v.p.y * dc->s + MARGIN, 
-              500. * dc->s, 0, 2 * M_PI);
+              MIL_TO_COORD (5.) * dc->s, 0, 2 * M_PI);
           cairo_fill(dc->cr);
         }
         i = i->next;
@@ -1250,26 +1106,19 @@ groupcount(void)
 void
 toporouter_free(toporouter_t *r)
 {
-  struct timeval endtime;  
-  int secs, usecs;
+  struct timeval endtime;
+  double time_delta;
 
   int i;
   for(i=0;i<groupcount();i++) {
     toporouter_layer_free(&r->layers[i]);
   }
 
+  gettimeofday (&endtime, NULL);
+  time_delta = endtime.tv_sec - r->starttime.tv_sec +
+               (endtime.tv_usec - r->starttime.tv_usec) / 1000000.;
 
-  gettimeofday(&endtime, NULL);  
-
-  secs = (int)(endtime.tv_sec - r->starttime.tv_sec);
-  usecs = (int)((endtime.tv_usec - r->starttime.tv_usec) / 1000);
-
-  if(usecs < 0) {
-    secs -= 1;
-    usecs += 1000;
-  }
-
-  Message(_("Elapsed time: %d.%02d seconds\n"), secs, usecs);
+  Message(_("Elapsed time: %.2f seconds\n"), time_delta);
   free(r->layers);  
   free(r);
 
@@ -1285,20 +1134,7 @@ wind(toporouter_spoint_t *p1, toporouter_spoint_t *p2, toporouter_spoint_t *p3)
   dx1 = p2->x - p1->x; dy1 = p2->y - p1->y;
   dx2 = p3->x - p2->x; dy2 = p3->y - p2->y;
   rval = (dx1*dy2)-(dy1*dx2);
-  return (rval > 0.0001) ? 1 : ((rval < -0.0001) ? -1 : 0);
-}
-
-/* wind_double:
- * returns 1,0,-1 for counterclockwise, collinear or clockwise, respectively.
- */
-int 
-wind_double(gdouble p1_x, gdouble p1_y, gdouble p2_x, gdouble p2_y, gdouble p3_x, gdouble p3_y) 
-{
-  double rval, dx1, dx2, dy1, dy2;
-  dx1 = p2_x - p1_x; dy1 = p2_y - p1_y;
-  dx2 = p3_x - p2_x; dy2 = p3_y - p2_y;
-  rval = (dx1*dy2)-(dy1*dx2);
-  return (rval > 0.0001) ? 1 : ((rval < -0.0001) ? -1 : 0);
+  return (rval > 0.0001) ? 1 : ((rval < -0.0001) ? -1 : 0); /* XXX: Depends on PCB coordinate scaling */
 }
 
 static inline void
@@ -1320,104 +1156,75 @@ print_toporouter_vertex(toporouter_vertex_t *tv)
 
 /**
  * vertices_on_line:
- * Given vertex a, gradient m, and radius r: 
+ * Given vertex a, gradient m, and radius r:
  *
  * Return vertices on line of a & m at r from a
  */ 
-void
-vertices_on_line(toporouter_spoint_t *a, gdouble m, gdouble r, toporouter_spoint_t *b0, toporouter_spoint_t *b1)
+static void
+vertices_on_line (toporouter_spoint_t *a,
+                  double m,
+                  double r,
+                  toporouter_spoint_t *b0,
+                  toporouter_spoint_t *b1)
 {
 
-  gdouble c, temp;
-  
-  if(m == INFINITY || m == -INFINITY) {
-    b0->y = a->y + r;
-    b1->y = a->y - r;
+  double c, dx;
+
+  if (m == INFINITY || m == -INFINITY) {
 
     b0->x = a->x;
+    b0->y = a->y + r;
+
     b1->x = a->x;
-  
+    b1->y = a->y - r;
+
     return;
   }
 
-  c = a->y - (m * a->x);
+  c = a->y - m * a->x;
+  dx = r / sqrt (1 + pow (m, 2));
 
-  temp = sqrt( pow(r, 2) / ( 1 + pow(m, 2) ) );
+  b0->x = a->x + dx;
+  b0->y = m * b0->x + c;
 
-  b0->x = a->x + temp;
-  b1->x = a->x - temp;
-  
-  b0->y = b0->x * m + c;
-  b1->y = b1->x * m + c;
-
+  b1->x = a->x - dx;
+  b1->y = m * b1->x + c;
 }
 
 /**
- * vertices_on_line:
- * Given vertex a, gradient m, and radius r: 
+ * coords_on_line:
+ * Given coordinates ax, ay, gradient m, and radius r:
  *
- * Return vertices on line of a & m at r from a
- */ 
-void
-coords_on_line(gdouble ax, gdouble ay, gdouble m, gdouble r, gdouble *b0x, gdouble *b0y, gdouble *b1x, gdouble *b1y)
+ * Return coordinates on line of a & m at r from a
+ */
+static void
+coords_on_line (double ax, gdouble ay,
+                double m,
+                double r,
+                double *b0x, double *b0y,
+                double *b1x, double *b1y)
 {
+  double c, dx;
 
-  gdouble c, temp;
-  
-  if(m == INFINITY || m == -INFINITY) {
-    *b0y = ay + r;
-    *b1y = ay - r;
+  if (m == INFINITY || m == -INFINITY) {
 
     *b0x = ax;
+    *b0y = ay + r;
+
     *b1x = ax;
-  
+    *b1y = ay - r;
+
     return;
   }
 
-  c = ay - (m * ax);
+  c = ay - m * ax;
+  dx = r / sqrt (1 + pow (m, 2));
 
-  temp = sqrt( pow(r, 2) / ( 1 + pow(m, 2) ) );
+  *b0x = ax + dx;
+  *b0y = m * *b0x + c;
 
-  *b0x = ax + temp;
-  *b1x = ax - temp;
-  
-  *b0y = *b0x * m + c;
-  *b1y = *b1x * m + c;
-
-}
-
-/**
- * vertices_on_line:
- * Given vertex a, gradient m, and radius r: 
- *
- * Return vertices on line of a & m at r from a
- */ 
-void
-points_on_line(GtsPoint *a, gdouble m, gdouble r, GtsPoint *b0, GtsPoint *b1)
-{
-
-  gdouble c, temp;
-  
-  if(m == INFINITY || m == -INFINITY) {
-    b0->y = a->y + r;
-    b1->y = a->y - r;
-
-    b0->x = a->x;
-    b1->x = a->x;
-  
-    return;
-  }
-
-  c = a->y - (m * a->x);
-
-  temp = sqrt( pow(r, 2) / ( 1 + pow(m, 2) ) );
-
-  b0->x = a->x + temp;
-  b1->x = a->x - temp;
-  
-  b0->y = b0->x * m + c;
-  b1->y = b1->x * m + c;
-
+  *b1x = ax - dx;
+  *b1y = m * *b1x + c;
 }
 
 /*
@@ -1486,13 +1293,10 @@ vertices_plane_distance(toporouter_spoint_t *a, toporouter_spoint_t *b) {
 static inline void
 vertex_outside_segment(toporouter_spoint_t *a, toporouter_spoint_t *b, gdouble r, toporouter_spoint_t *p) 
 {
-  gdouble m;
   toporouter_spoint_t temp[2];
 
-  m = vertex_gradient(a,b);
-  
   vertices_on_line(a, vertex_gradient(a,b), r, &temp[0], &temp[1]);
-  
+
   if(vertices_plane_distance(&temp[0], b) > vertices_plane_distance(&temp[1], b)) {
     p->x = temp[0].x;
     p->y = temp[0].y;
@@ -1507,34 +1311,41 @@ vertex_outside_segment(toporouter_spoint_t *a, toporouter_spoint_t *b, gdouble r
  * AB and CD must share a point interior to both segments.
  * returns TRUE if AB properly intersects CD.
  */
-gint
-coord_intersect_prop(gdouble ax, gdouble ay, gdouble bx, gdouble by, gdouble cx, gdouble cy, gdouble dx, gdouble dy)
+static bool
+coord_intersect_prop (double ax, double ay,
+                      double bx, double by,
+                      double cx, double cy,
+                      double dx, double dy)
 {
-  gint wind_abc = coord_wind(ax, ay, bx, by, cx, cy);
-  gint wind_abd = coord_wind(ax, ay, bx, by, dx, dy);
-  gint wind_cda = coord_wind(cx, cy, dx, dy, ax, ay);
-  gint wind_cdb = coord_wind(cx, cy, dx, dy, bx, by);
+  int wind_abc = coord_wind (ax, ay, bx, by, cx, cy);
+  int wind_abd = coord_wind (ax, ay, bx, by, dx, dy);
+  int wind_cda = coord_wind (cx, cy, dx, dy, ax, ay);
+  int wind_cdb = coord_wind (cx, cy, dx, dy, bx, by);
 
-  if( !wind_abc || !wind_abd || !wind_cda || !wind_cdb ) return 0;
+  /* If any of the line end-points are colinear with the other line, return false */
+  if (wind_abc == 0 || wind_abd == 0 || wind_cda == 0 || wind_cdb == 0)
+    return false;
 
-  return ( wind_abc ^ wind_abd ) && ( wind_cda ^ wind_cdb );
+  return (wind_abc != wind_abd) && (wind_cda != wind_cdb);
 }
 
 /* proper intersection:
  * AB and CD must share a point interior to both segments.
  * returns TRUE if AB properly intersects CD.
  */
-int
-point_intersect_prop(GtsPoint *a, GtsPoint *b, GtsPoint *c, GtsPoint *d) 
+static bool
+point_intersect_prop (GtsPoint *a, GtsPoint *b, GtsPoint *c, GtsPoint *d)
 {
+  int wind_abc = point_wind (a, b, c);
+  int wind_abd = point_wind (a, b, d);
+  int wind_cda = point_wind (c, d, a);
+  int wind_cdb = point_wind (c, d, b);
 
-  if( point_wind(a, b, c) == 0 || 
-      point_wind(a, b, d) == 0 ||
-      point_wind(c, d, a) == 0 || 
-      point_wind(c, d, b) == 0 ) return 0;
+  /* If any of the line end-points are colinear with the other line, return false */
+  if (wind_abc == 0 || wind_abd == 0 || wind_cda == 0 || wind_cdb == 0)
+    return false;
 
-  return ( point_wind(a, b, c) ^ point_wind(a, b, d) ) && 
-    ( point_wind(c, d, a) ^ point_wind(c, d, b) );
+  return (wind_abc != wind_abd) && (wind_cda != wind_cdb);
 }
 
 static inline int
@@ -1542,23 +1353,6 @@ vertex_intersect_prop(GtsVertex *a, GtsVertex *b, GtsVertex *c, GtsVertex *d)
 {
   return point_intersect_prop(GTS_POINT(a), GTS_POINT(b), GTS_POINT(c), GTS_POINT(d));
 }
-
-static inline int
-tvertex_intersect_prop(toporouter_vertex_t *a, toporouter_vertex_t *b, toporouter_vertex_t *c, toporouter_vertex_t *d) 
-{
-  return point_intersect_prop(GTS_POINT(a), GTS_POINT(b), GTS_POINT(c), GTS_POINT(d));
-}
-/*
-static inline int
-tvertex_intersect(toporouter_vertex_t *a, toporouter_vertex_t *b, toporouter_vertex_t *c, toporouter_vertex_t *d) 
-{
-  if( !point_wind(GTS_POINT(a), GTS_POINT(d), GTS_POINT(b)) || !point_wind(GTS_POINT(a), GTS_POINT(c), GTS_POINT(b)) ) return 1;
-
-  return 
-    ( point_wind(GTS_POINT(a), GTS_POINT(b), GTS_POINT(c)) ^ point_wind(GTS_POINT(a), GTS_POINT(b), GTS_POINT(d)) ) && 
-    ( point_wind(GTS_POINT(c), GTS_POINT(d), GTS_POINT(a)) ^ point_wind(GTS_POINT(c), GTS_POINT(d), GTS_POINT(b)) );
-}
-*/
 
 /* intersection vertex:
  * AB and CD must share a point interior to both segments.
@@ -1904,7 +1698,6 @@ read_pads(toporouter_t *r, toporouter_layer_t *l, guint layer)
 {
   toporouter_spoint_t p[2], rv[5];
   gdouble x[2], y[2], t, m;
-  GList *objectconstraints;
 
   GList *vlist = NULL;
   toporouter_bbox_t *bbox = NULL;
@@ -1925,8 +1718,6 @@ read_pads(toporouter_t *r, toporouter_layer_t *l, guint layer)
       if( (l - r->layers == back && TEST_FLAG(ONSOLDERFLAG, pad)) || 
           (l - r->layers == front && !TEST_FLAG(ONSOLDERFLAG, pad)) ) {
 
-
-        objectconstraints = NULL;
         t = (gdouble)pad->Thickness / 2.0f;
         x[0] = pad->Point1.X;
         x[1] = pad->Point2.X;
@@ -2211,52 +2002,44 @@ read_lines(toporouter_t *r, toporouter_layer_t *l, LayerType *layer, int ln)
   return 0;
 }
 
-void
-create_board_edge(gdouble x0, gdouble y0, gdouble x1, gdouble y1, gdouble max, gint layer, GList **vlist)
+static void
+create_board_edge (double x0, double y0,
+                   double x1, double y1,
+                   int layer,
+                   GList **vlist)
 {
   GtsVertexClass *vertex_class = GTS_VERTEX_CLASS (toporouter_vertex_class ());
-  gdouble d = sqrt(pow(x0-x1,2) + pow(y0-y1,2));
-  guint n = d / max, count = 1;
-  gdouble inc = n ? d / n : d;
-  gdouble x = x0, y = y0;
+  double edge_length = sqrt (pow (x0 - x1, 2) + pow (y0 - y1, 2));
+  unsigned int vertices_per_edge = MIN (1, edge_length / BOARD_EDGE_RESOLUTION);
+  unsigned int count;
+  double inc = edge_length / vertices_per_edge;
+  double x = x0, y = y0;
 
-  *vlist = g_list_prepend(*vlist, gts_vertex_new (vertex_class, x0, y0, layer));
- 
-  while(count < n) {
-    coord_move_towards_coord_values(x0, y0, x1, y1, inc, &x, &y);
-    *vlist = g_list_prepend(*vlist, gts_vertex_new (vertex_class, x, y, layer));
+  *vlist = g_list_prepend (*vlist, gts_vertex_new (vertex_class, x, y, layer));
 
-    x0 = x; y0 = y;
-    count++;
+  for (count = 1; count < vertices_per_edge; count ++) {
+    coord_move_towards_coord_values (x, y, x1, y1, inc, &x, &y);
+    *vlist = g_list_prepend (*vlist, gts_vertex_new (vertex_class, x, y, layer));
   }
-
 }
 
 
-int
-read_board_constraints(toporouter_t *r, toporouter_layer_t *l, int layer) 
+static void
+read_board_constraints (toporouter_t *r, toporouter_layer_t *l, int layer)
 {
-//  GtsVertexClass *vertex_class = GTS_VERTEX_CLASS (toporouter_vertex_class ());
   GList *vlist = NULL;
-  toporouter_bbox_t *bbox = NULL;
-  
-  /* Add points for corners of board, and constrain those edges */
-//  vlist = g_list_prepend(NULL, gts_vertex_new (vertex_class, 0., 0., layer));
-//  vlist = g_list_prepend(vlist, gts_vertex_new (vertex_class, PCB->MaxWidth, 0., layer));
-//  vlist = g_list_prepend(vlist, gts_vertex_new (vertex_class, PCB->MaxWidth, PCB->MaxHeight, layer));
-//  vlist = g_list_prepend(vlist, gts_vertex_new (vertex_class, 0., PCB->MaxHeight, layer));
+  toporouter_bbox_t *bbox;
 
-  create_board_edge(0., 0., PCB->MaxWidth, 0., 10000., layer, &vlist);
-  create_board_edge(PCB->MaxWidth, 0., PCB->MaxWidth, PCB->MaxHeight, 10000., layer, &vlist);
-  create_board_edge(PCB->MaxWidth, PCB->MaxHeight, 0., PCB->MaxHeight, 10000., layer, &vlist);
-  create_board_edge(0., PCB->MaxHeight, 0., 0., 10000., layer, &vlist);
-  
-  bbox = toporouter_bbox_create(layer, vlist, BOARD, NULL);
-  r->bboxes = g_slist_prepend(r->bboxes, bbox);
-  insert_constraints_from_list(r, l, vlist, bbox);
-  g_list_free(vlist);
+  /* Create points for the board edges and constrain those edges */
+  create_board_edge (0.,            0.,             PCB->MaxWidth, 0.,             layer, &vlist);
+  create_board_edge (PCB->MaxWidth, 0.,             PCB->MaxWidth, PCB->MaxHeight, layer, &vlist);
+  create_board_edge (PCB->MaxWidth, PCB->MaxHeight, 0.,            PCB->MaxHeight, layer, &vlist);
+  create_board_edge (0.,            PCB->MaxHeight, 0.,            0.,             layer, &vlist);
 
-  return 0;
+  bbox = toporouter_bbox_create (layer, vlist, BOARD, NULL);
+  r->bboxes = g_slist_prepend (r->bboxes, bbox);
+  insert_constraints_from_list (r, l, vlist, bbox);
+  g_list_free (vlist);
 }
 
 gdouble 
@@ -2643,50 +2426,11 @@ visited_cmp(gconstpointer a, gconstpointer b)
   return 0;
 }
 
-gdouble 
-coord_xangle(gdouble ax, gdouble ay, gdouble bx, gdouble by) 
+static double
+coord_angle (double ax, double ay, double bx, double by)
 {
-  gdouble dx, dy, theta;
-
-  dx = fabs(ax - bx);
-  dy = fabs(ay - by);
-  
-  if(dx < EPSILON) {
-    theta = M_PI / 2.;
-  } else theta = atan(dy/dx);
-
-  if(by <= ay) {
-    if(bx < ax) theta = M_PI - theta;
-  }else{
-    if(bx < ax) theta += M_PI;
-    else theta = (2 * M_PI) - theta;
-  }
-  
-  return theta;  
+  return atan2 (by - ay, bx - ax);
 }
-
-gdouble 
-point_xangle(GtsPoint *a, GtsPoint *b) 
-{
-  gdouble dx, dy, theta;
-
-  dx = fabs(a->x - b->x);
-  dy = fabs(a->y - b->y);
-  
-  if(dx < EPSILON) {
-    theta = M_PI / 2.;
-  } else theta = atan(dy/dx);
-
-  if(b->y >= a->y) {
-    if(b->x < a->x) theta = M_PI - theta;
-  }else{
-    if(b->x < a->x) theta += M_PI;
-    else theta = (2 * M_PI) - theta;
-  }
-
-  return theta;  
-}
-
 
 GList *
 cluster_vertices(toporouter_t *r, toporouter_cluster_t *c)
@@ -2822,7 +2566,7 @@ import_clusters(toporouter_t *r)
             cluster_join_bbox(cluster, box);
 
 #ifdef DEBUG_MERGING  
-            printf("\tLINE %d,%d\n", connection->X, connection->Y);
+            pcb_printf("\tLINE %#mD\n", connection->X, connection->Y);
 #endif        
           }else if(connection->type == PAD_TYPE) {
             PadType *pad = (PadType *) connection->ptr2;
@@ -2830,7 +2574,7 @@ import_clusters(toporouter_t *r)
             cluster_join_bbox(cluster, box);
 
 #ifdef DEBUG_MERGING  
-            printf("\tPAD %d,%d\n", connection->X, connection->Y);
+            pcb_printf("\tPAD %#mD\n", connection->X, connection->Y);
 #endif        
           }else if(connection->type == PIN_TYPE) {
 
@@ -2841,7 +2585,7 @@ import_clusters(toporouter_t *r)
             }
 
 #ifdef DEBUG_MERGING  
-            printf("\tPIN %d,%d\n", connection->X, connection->Y);
+            pcb_printf("\tPIN %#mD\n", connection->X, connection->Y);
 #endif        
           }else if(connection->type == VIA_TYPE) {
 
@@ -2852,7 +2596,7 @@ import_clusters(toporouter_t *r)
             }
 
 #ifdef DEBUG_MERGING  
-            printf("\tVIA %d,%d\n", connection->X, connection->Y);
+            pcb_printf("\tVIA %#mD\n", connection->X, connection->Y);
 #endif        
           }else if(connection->type == POLYGON_TYPE) {
             PolygonType *polygon = (PolygonType *) connection->ptr2;
@@ -2860,7 +2604,7 @@ import_clusters(toporouter_t *r)
             cluster_join_bbox(cluster, box);
 
 #ifdef DEBUG_MERGING  
-            printf("\tPOLYGON %d,%d\n", connection->X, connection->Y);
+            pcb_printf("\tPOLYGON %#mD\n", connection->X, connection->Y);
 #endif        
 
           }
@@ -3092,21 +2836,6 @@ angle_span(gdouble a1, gdouble a2)
   if(a1 > a2) 
     return ((2*M_PI)-a1 + a2);  
   return a2-a1;
-}
-
-gdouble
-region_span(toporouter_vertex_region_t *region) 
-{
-  gdouble a1,a2; 
-
-  g_assert(region->v1 != NULL);
-  g_assert(region->v2 != NULL);
-  g_assert(region->origin != NULL);
-
-  a1 = point_xangle(GTS_POINT(region->origin), GTS_POINT(region->v1));
-  a2 = point_xangle(GTS_POINT(region->origin), GTS_POINT(region->v2));
-
-  return angle_span(a1, a2);
 }
 
 gdouble
@@ -3406,8 +3135,11 @@ gdouble
 triangle_interior_capacity(GtsTriangle *t, toporouter_vertex_t *v)
 {
   toporouter_edge_t *e = TOPOROUTER_EDGE(gts_triangle_edge_opposite(t, GTS_VERTEX(v)));
-  gdouble x, y, m1, m2, c2, c1, len;
-  
+  gdouble x, y, m1, m2, c2, c1;
+#ifdef DEBUG_ROUTE
+  gdouble len;
+#endif
+
   g_assert(e);
 
   m1 = toporouter_edge_gradient(e);
@@ -3424,9 +3156,8 @@ triangle_interior_capacity(GtsTriangle *t, toporouter_vertex_t *v)
 
   y = (isinf(m2)) ? vy(edge_v1(e)) : (m2 * x) + c2;
 
-  len = gts_point_distance2(GTS_POINT(edge_v1(e)), GTS_POINT(edge_v2(e)));
-
 #ifdef DEBUG_ROUTE
+  len = gts_point_distance2(GTS_POINT(edge_v1(e)), GTS_POINT(edge_v2(e)));
   printf("%f,%f len = %f v = %f,%f\n", x, y, len, vx(v), vy(v));
 #endif
 
@@ -4842,7 +4573,7 @@ route(toporouter_t *r, toporouter_route_t *data, guint debug)
   gint count = 0;
 
   toporouter_vertex_t *srcv = NULL, *destv = NULL, *curpoint = NULL;
-  toporouter_layer_t *cur_layer, *dest_layer;
+  toporouter_layer_t *cur_layer; //, *dest_layer;
 
   g_assert(data->src->c != data->dest->c);
   
@@ -4857,7 +4588,8 @@ route(toporouter_t *r, toporouter_route_t *data, guint debug)
   if(!curpoint || !destv) goto routing_return;
 
   srcv = curpoint;
-  cur_layer = vlayer(curpoint); dest_layer = vlayer(destv);
+  cur_layer = vlayer(curpoint);
+  //dest_layer = vlayer(destv);
 
   data->path = NULL; 
   
@@ -4896,7 +4628,7 @@ route(toporouter_t *r, toporouter_route_t *data, guint debug)
         tempv = closest_dest_vertex(r, curpoint, data);
         if(tempv) {
           destv = tempv;
-          dest_layer = vlayer(destv);//&r->layers[(int)vz(destv)];
+          //dest_layer = vlayer(destv);//&r->layers[(int)vz(destv)];
 
         }
       }
@@ -5199,70 +4931,15 @@ routing_return:
 
 /* moves vertex v d units in the direction of vertex p */
 void
-vertex_move_towards_point(GtsVertex *v, gdouble px, gdouble py, gdouble d) 
+vertex_move_towards_vertex (GtsVertex *v,
+                            GtsVertex *p,
+                            double d)
 {
-  gdouble dx = px - GTS_POINT(v)->x;
-  gdouble dy = py - GTS_POINT(v)->y;
-  gdouble theta = atan(fabs(dy/dx));
+  double theta = atan2 (GTS_POINT(p)->y - GTS_POINT(v)->y,
+                        GTS_POINT(p)->x - GTS_POINT(v)->x);
 
-  g_assert(finite(theta));
-
-  if( dx >= 0. ) {
-
-    if( dy >= 0. ) {
-      GTS_POINT(v)->x += d * cos(theta);
-      GTS_POINT(v)->y += d * sin(theta);
-    }else{
-      GTS_POINT(v)->x += d * cos(theta);
-      GTS_POINT(v)->y -= d * sin(theta);
-    }
-
-  }else{
-    
-    if( dy >= 0. ) {
-      GTS_POINT(v)->x -= d * cos(theta);
-      GTS_POINT(v)->y += d * sin(theta);
-    }else{
-      GTS_POINT(v)->x -= d * cos(theta);
-      GTS_POINT(v)->y -= d * sin(theta);
-    }
-
-  }
-
-}
-
-/* moves vertex v d units in the direction of vertex p */
-void
-vertex_move_towards_vertex(GtsVertex *v, GtsVertex *p, gdouble d) 
-{
-  gdouble dx = GTS_POINT(p)->x - GTS_POINT(v)->x;
-  gdouble dy = GTS_POINT(p)->y - GTS_POINT(v)->y;
-  gdouble theta = atan(fabs(dy/dx));
-
-  g_assert(finite(theta));
-
-  if( dx >= 0. ) {
-
-    if( dy >= 0. ) {
-      GTS_POINT(v)->x += d * cos(theta);
-      GTS_POINT(v)->y += d * sin(theta);
-    }else{
-      GTS_POINT(v)->x += d * cos(theta);
-      GTS_POINT(v)->y -= d * sin(theta);
-    }
-
-  }else{
-    
-    if( dy >= 0. ) {
-      GTS_POINT(v)->x -= d * cos(theta);
-      GTS_POINT(v)->y += d * sin(theta);
-    }else{
-      GTS_POINT(v)->x -= d * cos(theta);
-      GTS_POINT(v)->y -= d * sin(theta);
-    }
-
-  }
-
+  GTS_POINT(v)->x += d * cos (theta);
+  GTS_POINT(v)->y += d * sin (theta);
 }
 
 
@@ -5491,14 +5168,14 @@ gdouble
 export_pcb_drawline(guint layer, guint x0, guint y0, guint x1, guint y1, guint thickness, guint keepaway) 
 {
   gdouble d = 0.;
-  LineTypePtr line;
+  LineType *line;
   line = CreateDrawnLineOnLayer( LAYER_PTR(layer), x0, y0, x1, y1, 
       thickness, keepaway, 
       MakeFlags (AUTOFLAG | (TEST_FLAG (CLEARNEWFLAG, PCB) ? CLEARLINEFLAG : 0)));
 
   if(line) {
     AddObjectToCreateUndoList (LINE_TYPE, LAYER_PTR(layer), line, line);
-    d = coord_distance((double)x0, (double)y0, (double)x1, (double)y1) / 100.;
+    d = coord_distance((double)x0, (double)y0, (double)x1, (double)y1);
   }
   return d;
 }
@@ -5520,18 +5197,17 @@ gdouble
 export_pcb_drawarc(guint layer, toporouter_arc_t *a, guint thickness, guint keepaway) 
 {
   gdouble sa, da, theta;
-  gdouble x0, y0, x1, y1, d=0.;
-  ArcTypePtr arc;
+  gdouble d = 0.;
+  ArcType *arc;
   gint wind;
 
   wind = coord_wind(a->x0, a->y0, a->x1, a->y1, vx(a->centre), vy(a->centre));
 
-  sa = coord_xangle(a->x0, a->y0, vx(a->centre), vy(a->centre)) * 180. / M_PI;
-  
-  x0 = a->x0 - vx(a->centre);
-  x1 = a->x1 - vx(a->centre);
-  y0 = a->y0 - vy(a->centre);
-  y1 = a->y1 - vy(a->centre);
+  /* NB: PCB's arcs have a funny coorindate system, with 0 degrees as the -ve X axis (left),
+   *     continuing clockwise, with +90 degrees being along the +ve Y axis (bottom). Because
+   *     Y+ points down, our internal angles increase clockwise from the +ve X axis.
+   */
+  sa = (M_PI - coord_angle (vx (a->centre), vy (a->centre), a->x0, a->y0)) * 180. / M_PI;
 
   theta = arc_angle(a);
 
@@ -5550,7 +5226,7 @@ export_pcb_drawarc(guint layer, toporouter_arc_t *a, guint thickness, guint keep
 
   if(arc) {
     AddObjectToCreateUndoList( ARC_TYPE, LAYER_PTR(layer), arc, arc);
-    d = a->r * theta / 100.;
+    d = a->r * theta;
   }
   
   return d;
@@ -6032,8 +5708,8 @@ check_non_intersect_vertex(gdouble x0, gdouble y0, gdouble x1, gdouble y1, topor
   }else{
     m = cartesian_gradient(x0, y0, x1, y1);
   }
-  
-  coords_on_line(vx(arcv), vy(arcv), m, 100., &tx0, &ty0, &tx1, &ty1);
+
+  coords_on_line(vx(arcv), vy(arcv), m, MIL_TO_COORD (1.), &tx0, &ty0, &tx1, &ty1);
 
   wind1 = coord_wind(tx0, ty0, tx1, ty1, line_int_x, line_int_y);
   wind2 = coord_wind(tx0, ty0, tx1, ty1, vx(opv), vy(opv)); 
@@ -6200,17 +5876,18 @@ check_adj_pushing_vertex(toporouter_oproute_t *oproute, gdouble x0, gdouble y0, 
     if(vertex_line_normal_intersection(x0, y0, x1, y1, vx(n), vy(n), &segintx, &seginty)) {
       toporouter_edge_t *e = tedge(n, v);
       gdouble ms = 0., d = coord_distance(segintx, seginty, vx(n), vy(n));
-      toporouter_vertex_t *a, *b;
+      //toporouter_vertex_t *a;
+      toporouter_vertex_t *b;
       GList *closestnet = NULL;
 
       g_assert(e);
 
       if(v == tedge_v1(e)) {
-        a = tedge_v1(e);
+        //a = tedge_v1(e);
         b = tedge_v2(e);
         closestnet = edge_routing(e);
       }else{
-        a = tedge_v2(e);
+        //a = tedge_v2(e);
         b = tedge_v1(e);
         closestnet = g_list_last(edge_routing(e));
       }
@@ -6785,8 +6462,11 @@ oproute_rubberband(toporouter_t *r, GList *path)
   oproute_path_speccut(oproute);
 
 #ifdef DEBUG_RUBBERBAND
-  if(!strcmp(oproute->netlist, "  VCC3V3") && vx(oproute->term1) == 95700. && vy(oproute->term1) == 70800. &&
-    vx(oproute->term2) == 196700. && vy(oproute->term2) == 67300.)
+  if(strcmp(oproute->netlist, "  VCC3V3" == 0) &&
+     vx(oproute->term1) == MIL_TO_COORD (957.) &&
+     vy(oproute->term1) == MIL_TO_COORD (708.) &&
+     vx(oproute->term2) == MIL_TO_COORD (1967.) &&
+     vy(oproute->term2) == MIL_TO_COORD (673.))
   {
 //    printf("OPROUTE %s - %f,%f %f,%f\n", oproute->netlist, vx(oproute->term1), vy(oproute->term1), vx(oproute->term2), vy(oproute->term2));
 //    print_path(path);
@@ -6821,9 +6501,13 @@ toporouter_export(toporouter_t *r)
     i = i->next;
   }
 
-  Message(_("Reticulating splines... successful\n\n"));
-  Message(_("Wiring cost: %f inches\n"), r->wiring_score / 1000.);
-  printf("Wiring cost: %f inches\n", r->wiring_score / 1000.);
+  Message (_("Reticulating splines... successful\n\n"));
+  /* NB: We could use the %$mS specifier to print these distances, but we would
+   *     have to cast to Coord, which might overflow for complex routing when
+   *     PCB is built with Coord as a 32-bit integer.
+   */
+  Message (_("Wiring cost: %f inches\n"), COORD_TO_INCH (r->wiring_score));
+  printf ("Wiring cost: %f inches\n", COORD_TO_INCH (r->wiring_score));
 
   g_list_free(oproutes);
 
@@ -6877,7 +6561,7 @@ import_route(toporouter_t *r, RatType *line)
   if(!routedata->dest) printf("couldn't locate dest\n");
 
   if(!routedata->src || !routedata->dest) {
-    printf("PROBLEM: couldn't locate rat src or dest for rat %d,%d,%d -> %d,%d,%d\n",
+    pcb_printf("PROBLEM: couldn't locate rat src or dest for rat %#mD, %d -> %#mD, %d\n",
         line->Point1.X, line->Point1.Y, line->group1, line->Point2.X, line->Point2.Y, line->group2);
     free(routedata);
     return NULL;
@@ -7757,7 +7441,7 @@ detour_router(toporouter_t *r)
 //        vx(curroute->mergebox1->point), vy(curroute->mergebox1->point),
 //        vx(curroute->mergebox2->point), vy(curroute->mergebox2->point));
 
-      if(curroute->score - curroute->detourscore > 1000.) {
+      if(curroute->score - curroute->detourscore > ROAR_DETOUR_THRESHOLD) {
         roar_detour_route(r, curroute);
       }else break;
 
@@ -7832,6 +7516,7 @@ parse_arguments(toporouter_t *r, int argc, char **argv)
   int i, tempint;
   for(i=0;i<argc;i++) {
     if(sscanf(argv[i], "viacost=%d", &tempint)) {
+      /* XXX: We should be using PCB's generic value with unit parsing here */
       r->viacost = (double)tempint;
     }else if(sscanf(argv[i], "l%d", &tempint)) {
       gdouble *layer = (gdouble *)malloc(sizeof(gdouble));
@@ -7867,10 +7552,7 @@ toporouter_new(void)
 
   r->layers = NULL;
   r->flags = 0;
-  r->viamax     = 3;
-  r->viacost    = 10000.;
-  r->stublength = 300.;
-  r->serpintine_half_amplitude = 1500.;
+  r->viacost = VIA_COST_AS_DISTANCE;
 
   r->wiring_score = 0.;
 
@@ -7892,7 +7574,6 @@ toporouter_new(void)
   Message(_("Topological Autorouter\n"));
   Message(_("Started %s"),asctime(localtime(&ltime)));  
   Message(_("-------------------------------------\n"));
-  Message(_("Copyright 2009 Anthony Blake (tonyb33@gmail.com)\n\n"));
   return r;
 }
 
@@ -7931,7 +7612,7 @@ toporouter_set_pair(toporouter_t *r, toporouter_netlist_t *n1, toporouter_netlis
 }
 
 static int 
-toporouter (int argc, char **argv, int x, int y)
+toporouter (int argc, char **argv, Coord x, Coord y)
 {
   toporouter_t *r = toporouter_new();
   parse_arguments(r, argc, argv);
@@ -7971,7 +7652,7 @@ toporouter (int argc, char **argv, int x, int y)
 }
 
 static int 
-escape (int argc, char **argv, int x, int y)
+escape (int argc, char **argv, Coord x, Coord y)
 {
   guint dir, viax, viay;
   gdouble pitch, length, dx, dy;
@@ -7984,8 +7665,8 @@ escape (int argc, char **argv, int x, int y)
   ALLPAD_LOOP(PCB->Data);
   {
     if( TEST_FLAG(SELECTEDFLAG, pad) ) {
-      PinTypePtr via;
-      LineTypePtr line;
+      PinType *via;
+      LineType *line;
 
       PadType *pad0 = element->Pad->data;
       PadType *pad1 = g_list_next (element->Pad)->data;

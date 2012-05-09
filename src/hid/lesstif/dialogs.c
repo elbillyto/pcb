@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -16,6 +14,7 @@
 #include "data.h"
 #include "crosshair.h"
 #include "misc.h"
+#include "pcb-printf.h"
 
 #include "hid.h"
 #include "../hidint.h"
@@ -24,8 +23,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 #define CRASH fprintf(stderr, "HID error: pcb called unimplemented GUI function %s\n", __FUNCTION__), abort()
 
@@ -73,14 +70,14 @@ setup_fsb_dialog ()
   if (fsb)
     return;
 
-  xms_pcb = XmStringCreateLocalized ("*.pcb");
-  xms_fp = XmStringCreateLocalized ("*.fp");
-  xms_net = XmStringCreateLocalized ("*.net");
-  xms_vend = XmStringCreateLocalized ("*.vend");
-  xms_all = XmStringCreateLocalized ("*");
-  xms_load = XmStringCreateLocalized ("Load From");
-  xms_loadv = XmStringCreateLocalized ("Load Vendor");
-  xms_save = XmStringCreateLocalized ("Save As");
+  xms_pcb = XmStringCreatePCB ("*.pcb");
+  xms_fp = XmStringCreatePCB ("*.fp");
+  xms_net = XmStringCreatePCB ("*.net");
+  xms_vend = XmStringCreatePCB ("*.vend");
+  xms_all = XmStringCreatePCB ("*");
+  xms_load = XmStringCreatePCB ("Load From");
+  xms_loadv = XmStringCreatePCB ("Load Vendor");
+  xms_save = XmStringCreatePCB ("Save As");
 
   n = 0;
   fsb = XmCreateFileSelectionDialog (mainwind, "file", args, n);
@@ -109,7 +106,7 @@ called with that filename.
 %end-doc */
 
 static int
-Load (int argc, char **argv, int x, int y)
+Load (int argc, char **argv, Coord x, Coord y)
 {
   const char *function;
   char *name;
@@ -170,7 +167,7 @@ load that vendor file.
 %end-doc */
 
 static int
-LoadVendor (int argc, char **argv, int x, int y)
+LoadVendor (int argc, char **argv, Coord x, Coord y)
 {
   char *name;
   XmString xmname, pattern;
@@ -228,7 +225,7 @@ called with that filename.
 %end-doc */
 
 static int
-Save (int argc, char **argv, int x, int y)
+Save (int argc, char **argv, Coord x, Coord y)
 {
   const char *function;
   char *name;
@@ -291,8 +288,6 @@ Save (int argc, char **argv, int x, int y)
 /* ------------------------------------------------------------ */
 
 static Widget log_form, log_text;
-static char *msg_buffer = 0;
-static int msg_buffer_size = 0;
 static int log_size = 0;
 static int pending_newline = 0;
 
@@ -313,8 +308,7 @@ log_dismiss (Widget w, void *up, void *cbp)
 void
 lesstif_logv (const char *fmt, va_list ap)
 {
-  int i;
-  char *bp;
+  gchar *buf, *scan;
   if (!mainwind)
     {
       vprintf (fmt, ap);
@@ -360,42 +354,30 @@ lesstif_logv (const char *fmt, va_list ap)
       log_text = XmCreateScrolledText (log_form, "text", args, n);
       XtManageChild (log_text);
 
-      msg_buffer = (char *) malloc (1002);
-      msg_buffer_size = 1002;
       XtManageChild (log_form);
     }
-  bp = msg_buffer;
   if (pending_newline)
     {
-      *bp++ = '\n';
+      XmTextInsert (log_text, log_size++, "\n");
       pending_newline = 0;
     }
-#ifdef HAVE_VSNPRINTF
-  i = vsnprintf (bp, msg_buffer_size, fmt, ap);
-  if (i >= msg_buffer_size)
-    {
-      msg_buffer_size = i + 100;
-      msg_buffer = (char *) realloc (msg_buffer, msg_buffer_size + 2);
-      vsnprintf (bp, msg_buffer_size, fmt, ap);
-    }
-#else
-  vsprintf (bp, fmt, ap);
-#endif
-  bp = msg_buffer + strlen (msg_buffer) - 1;
-  while (bp >= msg_buffer && bp[0] == '\n')
+  buf = pcb_vprintf (fmt, ap);
+  scan = &buf[strlen (buf) - 1];
+  while (scan >= buf && *scan == '\n')
     {
       pending_newline++;
-      *bp-- = 0;
+      *scan-- = 0;
     }
-  XmTextInsert (log_text, log_size, msg_buffer);
-  log_size += strlen (msg_buffer);
+  XmTextInsert (log_text, log_size, buf);
+  log_size += strlen (buf);
 
-  bp = strrchr(msg_buffer, '\n');
-  if (bp)
-    bp++;
+  scan = strrchr(buf, '\n');
+  if (scan)
+    scan++;
   else
-    bp = msg_buffer;
-  XmTextSetCursorPosition (log_text, log_size - strlen(bp));
+    scan = buf;
+  XmTextSetCursorPosition (log_text, log_size - strlen(scan));
+  g_free (buf);
 }
 
 void
@@ -454,12 +436,12 @@ lesstif_confirm_dialog (char *msg, ...)
     }
 
   n = 0;
-  xs = XmStringCreateLocalized (cancelmsg);
+  xs = XmStringCreatePCB (cancelmsg);
 
   if (okmsg)
     {
       stdarg (XmNcancelLabelString, xs);
-      xs = XmStringCreateLocalized (okmsg);
+      xs = XmStringCreatePCB (okmsg);
       XtManageChild (confirm_cancel);
     }
   else
@@ -467,7 +449,7 @@ lesstif_confirm_dialog (char *msg, ...)
 
   stdarg (XmNokLabelString, xs);
 
-  xs = XmStringCreateLocalized (msg);
+  xs = XmStringCreatePCB (msg);
   stdarg (XmNmessageString, xs);
   XtSetValues (confirm_dialog, args, n);
 
@@ -481,7 +463,7 @@ lesstif_confirm_dialog (char *msg, ...)
 }
 
 static int
-ConfirmAction (int argc, char **argv, int x, int y)
+ConfirmAction (int argc, char **argv, Coord x, Coord y)
 {
   int rv = lesstif_confirm_dialog (argc > 0 ? argv[0] : 0,
 				   argc > 1 ? argv[1] : 0,
@@ -589,7 +571,7 @@ lesstif_prompt_for (const char *msg, const char *default_string)
   if (!msg)
     msg = "Enter text:";
   n = 0;
-  xs = XmStringCreateLocalized ((char *)msg);
+  xs = XmStringCreatePCB ((char *)msg);
   stdarg (XmNlabelString, xs);
   XtSetValues (prompt_label, args, n);
   XmTextSetString (prompt_text, (char *)default_string);
@@ -615,7 +597,7 @@ user's stdout.
 %end-doc */
 
 static int
-PromptFor (int argc, char **argv, int x, int y)
+PromptFor (int argc, char **argv, Coord x, Coord y)
 {
   char *rv = lesstif_prompt_for (argc > 0 ? argv[0] : 0,
 				 argc > 1 ? argv[1] : 0);
@@ -662,7 +644,7 @@ lesstif_attribute_dialog (HID_Attribute * attrs,
   int attrcount = 0;
 
   if (!empty)
-    empty = XmStringCreateLocalized (" ");
+    empty = XmStringCreatePCB (" ");
 
   for (i = 0; i < n_attrs; i++)
     {
@@ -763,6 +745,13 @@ lesstif_attribute_dialog (HID_Attribute * attrs,
 	  stdarg (XmNvalue, buf);
 	  wl[i] = XmCreateTextField (form, attrs[i].name, args, n);
 	  break;
+	case HID_Coord:
+	  stdarg (XmNcolumns, 13);
+	  stdarg (XmNresizeWidth, True);
+	  pcb_sprintf (buf, "%$mS", results[i].coord_value);
+	  stdarg (XmNvalue, buf);
+	  wl[i] = XmCreateTextField (form, attrs[i].name, args, n);
+	  break;
 	case HID_Real:
 	  stdarg (XmNcolumns, 16);
 	  stdarg (XmNresizeWidth, True);
@@ -777,7 +766,7 @@ lesstif_attribute_dialog (HID_Attribute * attrs,
 	    int sn = n;
 
 	    if (empty == 0)
-	      empty = XmStringCreateLocalized ("");
+	      empty = XmStringCreatePCB ("");
 
 	    submenu = XmCreatePulldownMenu (form, attrs[i].name, args+sn, n-sn);
 
@@ -791,7 +780,7 @@ lesstif_attribute_dialog (HID_Attribute * attrs,
 		Widget btn;
 		XmString label;
 		n = 0;
-		label = XmStringCreateLocalized ((char *)attrs[i].enumerations[sn]);
+		label = XmStringCreatePCB ((char *)attrs[i].enumerations[sn]);
 		stdarg (XmNuserData, & attrs[i].enumerations[sn]);
 		stdarg (XmNlabelString, label);
 		btn = XmCreatePushButton (submenu, "menubutton", args, n);
@@ -836,6 +825,10 @@ lesstif_attribute_dialog (HID_Attribute * attrs,
 	case HID_Integer:
 	  cp = XmTextGetString (wl[i]);
 	  sscanf (cp, "%d", &results[i].int_value);
+	  break;
+	case HID_Coord:
+	  cp = XmTextGetString (wl[i]);
+	  results[i].coord_value = GetValue (cp, NULL, NULL);
 	  break;
 	case HID_Real:
 	  cp = XmTextGetString (wl[i]);
@@ -901,7 +894,7 @@ Open the netlist window.
 %end-doc */
 
 static int
-DoWindows (int argc, char **argv, int x, int y)
+DoWindows (int argc, char **argv, Coord x, Coord y)
 {
   const char *a = argc == 1 ? argv[0] : "";
   if (strcmp (a, "1") == 0 || strcasecmp (a, "Layout") == 0)
@@ -945,13 +938,13 @@ This just pops up a dialog telling the user which version of
 
 
 static int
-About (int argc, char **argv, int x, int y)
+About (int argc, char **argv, Coord x, Coord y)
 {
   static Widget about = 0;
   if (!about)
     {
       Cardinal n = 0;
-      XmString xs = XmStringCreateLocalized (GetInfoString ());
+      XmString xs = XmStringCreatePCB (GetInfoString ());
       stdarg (XmNmessageString, xs);
       stdarg (XmNtitle, "About PCB");
       about = XmCreateInformationDialog (mainwind, "about", args, n);
@@ -978,7 +971,7 @@ options, and print the layout.
 %end-doc */
 
 static int
-Print (int argc, char **argv, int x, int y)
+Print (int argc, char **argv, Coord x, Coord y)
 {
   HID_Attribute *opts;
   HID *printer;
@@ -1028,7 +1021,7 @@ the measurements in, so that future printouts will be more precise.
 %end-doc */
 
 static int
-PrintCalibrate (int argc, char **argv, int x, int y)
+PrintCalibrate (int argc, char **argv, Coord x, Coord y)
 {
   HID *printer = hid_find_printer ();
   printer->calibrate (0.0, 0.0);
@@ -1055,7 +1048,7 @@ that exporter's options, and exports the layout.
 %end-doc */
 
 static int
-Export (int argc, char **argv, int x, int y)
+Export (int argc, char **argv, Coord x, Coord y)
 {
   static Widget selector = 0;
   HID_Attribute *opts;
@@ -1131,35 +1124,22 @@ static Widget sz_text;
 static Widget sz_set, sz_reset, sz_units;
 
 static int
-sz_str2val (Widget w, int pcbu)
+sz_str2val (Widget w, bool pcbu)
 {
-  double d;
-  char *buf;
-  buf = XmTextGetString (w);
+  char *buf = XmTextGetString (w);
   if (!pcbu)
-    return atoi (buf);
-  sscanf (buf, "%lf", &d);
-  if (Settings.grid_units_mm)
-    return MM_TO_COORD (d);
-  else
-    return MIL_TO_COORD (d);
+    return strtol (buf, NULL, 0);
+  return GetValueEx (buf, NULL, NULL, NULL, Settings.grid_unit->suffix);
 }
 
 static void
-sz_val2str (Widget w, int u, int pcbu)
+sz_val2str (Widget w, Coord u, int pcbu)
 {
-  double d;
   static char buf[40];
   if (pcbu)
-    {
-      if (Settings.grid_units_mm)
-	d = COORD_TO_MM (u);
-      else
-	d = COORD_TO_MIL (u);
-      sprintf (buf, "%.2f", d + 0.002);
-    }
+    pcb_sprintf (buf, "%m+%.2mS", Settings.grid_unit->allow, u);
   else
-    sprintf (buf, "%d %%", u);
+    pcb_sprintf (buf, "%#mS %%", u);
   XmTextSetString (w, buf);
 }
 
@@ -1203,13 +1183,11 @@ lesstif_sizes_reset ()
   sz_val2str (sz_drc_ring, PCB->minRing, 1);
   sz_val2str (sz_text, Settings.TextScale, 0);
 
-  if (Settings.grid_units_mm)
-    ls = "Units are MMs";
-  else
-    ls = "Units are Mils";
+  ls = g_strdup_printf (_("Units are %s."), Settings.grid_unit->in_suffix);
   n = 0;
-  stdarg (XmNlabelString, XmStringCreateLocalized (ls));
+  stdarg (XmNlabelString, XmStringCreatePCB (ls));
   XtSetValues (sz_units, args, n);
+  g_free (ls);
 }
 
 static Widget
@@ -1234,7 +1212,7 @@ size_field (Widget parent, char *label, int posn)
   stdarg (XmNtopPosition, posn);
   stdarg (XmNbottomAttachment, XmATTACH_POSITION);
   stdarg (XmNbottomPosition, posn + 1);
-  stdarg (XmNlabelString, XmStringCreateLocalized (label));
+  stdarg (XmNlabelString, XmStringCreatePCB (label));
   stdarg (XmNalignment, XmALIGNMENT_END);
   l = XmCreateLabel (parent, "label", args, n);
   XtManageChild (l);
@@ -1258,7 +1236,7 @@ The units are determined by the default display units.
 %end-doc */
 
 static int
-AdjustSizes (int argc, char **argv, int x, int y)
+AdjustSizes (int argc, char **argv, Coord x, Coord y)
 {
   if (!sizes_dialog)
     {
@@ -1526,7 +1504,7 @@ lesstif_update_layer_groups ()
 	name = SOLDER_SIDE_NAME;
       else if (i == component_silk_layer)
 	name = COMPONENT_SIDE_NAME;
-      stdarg (XmNlabelString, XmStringCreateLocalized (name));
+      stdarg (XmNlabelString, XmStringCreatePCB (name));
       XtSetValues (lglabels[i], args, n);
       for (j = 0; j < max_group; j++)
 	{
@@ -1582,7 +1560,7 @@ See @ref{ChangeName Action}.
 %end-doc */
 
 static int
-EditLayerGroups (int argc, char **argv, int x, int y)
+EditLayerGroups (int argc, char **argv, Coord x, Coord y)
 {
   if (!layer_groups_form)
     {
@@ -1638,7 +1616,7 @@ EditLayerGroups (int argc, char **argv, int x, int y)
 	      stdarg (XmNtopPosition, i * MAX_LAYER);
 	      stdarg (XmNbottomAttachment, XmATTACH_POSITION);
 	      stdarg (XmNbottomPosition, (i + 1) * MAX_LAYER);
-	      stdarg (XmNlabelString, XmStringCreateLocalized (" "));
+	      stdarg (XmNlabelString, XmStringCreatePCB (" "));
 	      stdarg (XmNspacing, 0);
 	      stdarg (XmNvisibleWhenOff, True);
 	      stdarg (XmNfillOnSelect, True);
@@ -2024,7 +2002,7 @@ future imports.
 %end-doc */
 
 static int
-ImportGUI (int argc, char **argv, int x, int y)
+ImportGUI (int argc, char **argv, Coord x, Coord y)
 {
   static int I_am_recursing = 0;
   static XmString xms_sch = 0, xms_import = 0;
@@ -2037,9 +2015,9 @@ ImportGUI (int argc, char **argv, int x, int y)
     return 1;
 
   if (xms_sch == 0)
-    xms_sch = XmStringCreateLocalized ("*.sch");
+    xms_sch = XmStringCreatePCB ("*.sch");
   if (xms_import == 0)
-    xms_import = XmStringCreateLocalized ("Import from");
+    xms_import = XmStringCreatePCB ("Import from");
 
   setup_fsb_dialog ();
 

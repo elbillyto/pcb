@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -64,14 +62,11 @@
 
 #define NET_HIERARCHY_SEPARATOR "/"
 
-RCSID ("$Id$");
-
 static GtkWidget	*netlist_window;
 static GtkWidget	*disable_all_button;
 
 static GtkTreeModel *node_model;
 static GtkTreeView *node_treeview;
-static GtkTreeSelection *node_selection;
 
 static gboolean selection_holdoff;
 
@@ -111,9 +106,6 @@ static LibraryMenuType *node_selected_net;
    |		PCB calls this to tell the gui netlist code the layout net has
    |		changed and the gui data structures (net and optionally node data
    |		models) should be rebuilt.
-   |
-   |   ghid_netlist_nodes_update(LibraryMenuType *net)
-   |		Called when the node model should be updated to a netlist.
 */
 
 
@@ -210,6 +202,19 @@ node_model_update (LibraryMenuType * menu)
     g_object_unref (G_OBJECT (model));
 }
 
+static void
+toggle_pin_selected (LibraryEntryType *entry)
+{
+  ConnectionType conn;
+
+  if (!SeekPad (entry, &conn, false))
+    return;
+
+  AddObjectToFlagUndoList (conn.type, conn.ptr1, conn.ptr2, conn.ptr2);
+  TOGGLE_FLAG (SELECTEDFLAG, (AnyObjectType *)conn.ptr2);
+  DrawObject (conn.type, conn.ptr1, conn.ptr2);
+}
+
 
 /* Callback when the user clicks on a PCB node in the right node treeview.
  */
@@ -220,8 +225,9 @@ node_selection_changed_cb (GtkTreeSelection * selection, gpointer data)
   GtkTreeModel *model;
   LibraryMenuType *node_net;
   LibraryEntryType *node;
+  ConnectionType conn;
+  Coord x, y;
   static gchar *node_name;
-	gint		x0, y0, margin;
 
   if (selection_holdoff)	/* PCB is highlighting, user is not selecting */
     return;
@@ -237,7 +243,10 @@ node_selection_changed_cb (GtkTreeSelection * selection, gpointer data)
       |  if off here will get our on/off toggling out of sync.
       */
       if (node_net == node_selected_net)
-	SelectPin (node, TRUE);
+        {
+          toggle_pin_selected (node);
+          ghid_cancel_lead_user ();
+        }
       g_free (node_name);
       node_name = NULL;
     }
@@ -260,26 +269,33 @@ node_selection_changed_cb (GtkTreeSelection * selection, gpointer data)
   dup_string (&node_name, node->ListEntry);
   node_selected_net = selected_net;
 
-  /* Now just toggle a select of the node on the layout and pan.
+  /* Now just toggle a select of the node on the layout
    */
-  SelectPin (node, TRUE);
+  toggle_pin_selected (node);
   IncrementUndoSerialNumber ();
-	margin = gport->view_width / 20;
-	if (   Crosshair.X < gport->view_x0 + margin
-	    || Crosshair.X > gport->view_x0 + gport->view_width - margin
-	    || Crosshair.Y < gport->view_y0 + margin
-	    || Crosshair.Y > gport->view_y0 + gport->view_height - margin
-	   )
-	  {
 
-	    x0 = SIDE_X (Crosshair.X) - gport->view_width / 2;
-	    y0 = SIDE_Y (Crosshair.Y) - gport->view_height / 2;
-	    gport->view_x0 = x0;
-	    gport->view_y0 = y0;
-	    ghid_pan_fixup ();
-	    gui->set_crosshair (Crosshair.X, Crosshair.Y, HID_SC_WARP_POINTER);
-	  }
-	ghid_screen_update();
+  /* And lead the user to the location */
+  if (SeekPad (node, &conn, false))
+    switch (conn.type) {
+      case PIN_TYPE:
+        {
+          PinType *pin = (PinType *) conn.ptr2;
+          x = pin->X;
+          y = pin->Y;
+          gui->set_crosshair (x, y, 0);
+          ghid_lead_user_to_location (x, y);
+          break;
+        }
+      case PAD_TYPE:
+        {
+          PadType *pad = (PadType *) conn.ptr2;
+          x = pad->Point1.X + (pad->Point2.X - pad->Point1.X) / 2;
+          y = pad->Point1.Y + (pad->Point2.Y - pad->Point1.Y) / 2;
+          gui->set_crosshair (x, y, 0);
+          ghid_lead_user_to_location (x, y);
+          break;
+        }
+    }
 }
 
 
@@ -578,14 +594,44 @@ netlist_rip_up_cb (GtkWidget * widget, gpointer data)
 
 }
 
+/**/
+typedef struct {
+  LibraryEntryType *ret_val;
+  LibraryMenuType *node_net;
+  const gchar *node_name;
+  bool found;
+} node_get_node_from_name_state;
+
+static gboolean
+node_get_node_from_name_helper (GtkTreeModel *model, GtkTreePath *path,
+                                GtkTreeIter *iter, gpointer data)
+{
+  LibraryMenuType *net;
+  LibraryEntryType *node;
+  node_get_node_from_name_state *state = data;
+
+  gtk_tree_model_get (net_model, iter, NET_LIBRARY_COLUMN, &net, -1);
+  /* Ignore non-nets (category headers) */
+  if (net == NULL)
+    return FALSE;
+
+  /* Look for the node name in this net. */
+  for (node = net->Entry; node - net->Entry < net->EntryN; node++)
+    if (node->ListEntry && !strcmp (state->node_name, node->ListEntry))
+      {
+        state->node_net = net;
+        state->ret_val = node;
+        /* stop iterating */
+        state->found = TRUE;
+	return TRUE;
+      }
+  return FALSE;
+}
 
 LibraryEntryType *
 node_get_node_from_name (gchar * node_name, LibraryMenuType ** node_net)
 {
-  GtkTreeIter iter;
-  LibraryMenuType *net;
-  LibraryEntryType *node;
-  gint j;
+  node_get_node_from_name_state state;
 
   if (!node_name)
     return NULL;
@@ -593,34 +639,23 @@ node_get_node_from_name (gchar * node_name, LibraryMenuType ** node_net)
   /* Have to force the netlist window created because we need the treeview
      |  models constructed to do the search.
    */
-  if (!netlist_window)
-    ghid_netlist_window_create (gport);
-
-  while (gtk_events_pending ())	/* Make sure everything gets built */
-    gtk_main_iteration ();
+  ghid_netlist_window_create (gport);
 
   /* Now walk through node entries of each net in the net model looking for
      |  the node_name.
    */
-  if (gtk_tree_model_get_iter_first (net_model, &iter))
-    do
-      {
-	gtk_tree_model_get (net_model, &iter, NET_LIBRARY_COLUMN, &net, -1);
-
-	/* Look for the node name in this net.
-	 */
-	for (j = net->EntryN, node = net->Entry; j; j--, node++)
-	  if (node->ListEntry && !strcmp (node_name, node->ListEntry))
-	    {
-	      if (node_net)
-		*node_net = net;
-	      return node;
-	    }
-      }
-    while (gtk_tree_model_iter_next (net_model, &iter));
-
+  state.found = 0;
+  state.node_name = node_name;
+  gtk_tree_model_foreach (net_model, node_get_node_from_name_helper, &state);
+  if (state.found)
+    {
+      if (node_net)
+        *node_net = state.node_net;
+      return state.ret_val;
+    }
   return NULL;
 }
+/**/
 
 /* ---------- Manage the GUI treeview of the data models -----------
  */
@@ -628,7 +663,10 @@ static gint
 netlist_window_configure_event_cb (GtkWidget * widget, GdkEventConfigure * ev,
 				   gpointer data)
 {
-  ghidgui->netlist_window_height = widget->allocation.height;
+  GtkAllocation allocation;
+
+  gtk_widget_get_allocation (widget, &allocation);
+  ghidgui->netlist_window_height = allocation.height;
   ghidgui->config_modified = TRUE;
   return FALSE;
 }
@@ -639,6 +677,9 @@ netlist_close_cb (GtkWidget * widget, gpointer data)
   gtk_widget_destroy (netlist_window);
   selected_net = NULL;
   netlist_window = NULL;
+
+  /* For now, we are the only consumer of this API, so we can just do this */
+  ghid_cancel_lead_user ();
 }
 
 
@@ -655,14 +696,8 @@ ghid_netlist_window_create (GHidPort * out)
   GtkWidget *vbox, *hbox, *button, *label, *sep;
   GtkTreeView *treeview;
   GtkTreeModel *model;
-  GtkTreeSelection *selection;
   GtkCellRenderer *renderer;
   GtkTreeViewColumn *column;
-
-  /* No point in putting up the window if no netlist is loaded.
-   */
-  if (!PCB->NetlistLib.MenuN)
-    return;
 
   if (netlist_window)
     return;
@@ -714,10 +749,10 @@ ghid_netlist_window_create (GHidPort * out)
    */
   gtk_tree_view_expand_all (treeview);
 
-  selection = ghid_scrolled_selection (treeview, hbox,
-				       GTK_SELECTION_SINGLE,
-				       GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC,
-				       net_selection_changed_cb, NULL);
+  ghid_scrolled_selection (treeview, hbox,
+                           GTK_SELECTION_SINGLE,
+                           GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC,
+                           net_selection_changed_cb, NULL);
 
   /* Connect to the double click event.
    */
@@ -739,11 +774,10 @@ ghid_netlist_window_create (GHidPort * out)
 					       "text", NODE_NAME_COLUMN,
 					       NULL);
 
-  selection = ghid_scrolled_selection (treeview, hbox,
-				       GTK_SELECTION_SINGLE,
-				       GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC,
-				       node_selection_changed_cb, NULL);
-  node_selection = selection;
+  ghid_scrolled_selection (treeview, hbox,
+                           GTK_SELECTION_SINGLE,
+                           GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC,
+                           node_selection_changed_cb, NULL);
 
   hbox = gtk_hbox_new (FALSE, 0);
   gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
@@ -792,7 +826,7 @@ ghid_netlist_window_create (GHidPort * out)
 
   gtk_widget_realize (netlist_window);
   if (Settings.AutoPlace)
-    gtk_widget_set_uposition (GTK_WIDGET (netlist_window), 10, 10);
+    gtk_window_move (GTK_WINDOW (netlist_window), 10, 10);
 
 }
 
@@ -862,11 +896,7 @@ ghid_get_net_from_node_name (gchar * node_name, gboolean enabled_only)
      |  models constructed so we can find the LibraryMenuType pointer the
      |  caller wants.
    */
-  if (!netlist_window)
-    ghid_netlist_window_create (gport);
-
-  while (gtk_events_pending ())	/* Make sure everything gets built */
-    gtk_main_iteration ();
+  ghid_netlist_window_create (gport);
 
   /* If no netlist is loaded the window doesn't appear. */
   if (netlist_window == NULL)
@@ -942,12 +972,6 @@ ghid_netlist_highlight_node (gchar * node_name)
     while (gtk_tree_model_iter_next (node_model, &iter));
 }
 
-void
-ghid_netlist_nodes_update (LibraryMenuType * net)
-{
-  node_model_update (net);
-}
-
 /* If code in PCB should change the netlist, call this to update
    |  what's in the netlist window.
 */
@@ -978,8 +1002,17 @@ ghid_netlist_window_update (gboolean init_nodes)
 }
 
 static gint
-GhidNetlistChanged (int argc, char **argv, int x, int y)
+GhidNetlistChanged (int argc, char **argv, Coord x, Coord y)
 {
+  /* XXX: We get called before the GUI is up when
+   *         exporting from the command-line. */
+  if (ghidgui == NULL || !ghidgui->is_up)
+    return 0;
+
+  /* There is no need to update if the netlist window isn't open */
+  if (netlist_window == NULL)
+    return 0;
+
   loading_new_netlist = TRUE;
   ghid_netlist_window_update (TRUE);
   gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (disable_all_button),
@@ -996,7 +1029,7 @@ static const char netlistshow_help[] =
 show the window if it isn't already shown.";
 
 static gint
-GhidNetlistShow (int argc, char **argv, int x, int y)
+GhidNetlistShow (int argc, char **argv, Coord x, Coord y)
 {
   ghid_netlist_window_create (gport);
   if (argc > 0)
@@ -1011,7 +1044,7 @@ static const char netlistpresent_help[] =
 "Presents the netlist window.";
 
 static gint
-GhidNetlistPresent (int argc, char **argv, int x, int y)
+GhidNetlistPresent (int argc, char **argv, Coord x, Coord y)
 {
   ghid_netlist_window_show (gport, TRUE);
   return 0;

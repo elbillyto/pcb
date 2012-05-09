@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -34,12 +32,11 @@
 #endif
 
 #include "gui.h"
+#include "pcb-printf.h"
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 static GtkWidget *log_window, *log_text;
 static gboolean log_show_on_append = FALSE;
@@ -49,8 +46,11 @@ static gint
 log_window_configure_event_cb (GtkWidget * widget,
 			       GdkEventConfigure * ev, gpointer data)
 {
-  ghidgui->log_window_width = widget->allocation.width;
-  ghidgui->log_window_height = widget->allocation.height;
+  GtkAllocation allocation;
+
+  gtk_widget_get_allocation (widget, &allocation);
+  ghidgui->log_window_width = allocation.width;
+  ghidgui->log_window_height = allocation.height;
   ghidgui->config_modified = TRUE;
 
   return FALSE;
@@ -106,7 +106,7 @@ ghid_log_window_create ()
 
   gtk_widget_realize (log_window);
   if (Settings.AutoPlace)
-    gtk_widget_set_uposition (GTK_WIDGET (log_window), 10, 10);
+    gtk_window_move (GTK_WINDOW (log_window), 10, 10);
 }
 
 void
@@ -137,64 +137,12 @@ ghid_log (const char *fmt, ...)
   va_end (ap);
 }
 
-static char *msg_buffer = 0;
-static int msg_buffer_size = 0;
-
 void
 ghid_logv (const char *fmt, va_list args)
 {
-  int i;
-
-  if (msg_buffer == NULL)
-    {
-      msg_buffer = (char *) malloc (1002);
-      if (msg_buffer == NULL)
-	{
-	  fprintf (stderr, "ghid_logv():  malloc failed\n\n");
-	  exit (1);
-	}
-      msg_buffer_size = 1000;
-    }
-
-  /* 
-   * FIXME -- fix check to see if the main window is up.  Is 
-   * that needed here?  Lesstif does it.
-   */
-#ifdef FIXME
-  if (!mainwind)
-    {
-      vprintf (fmt, args);
-      return;
-    }
-#endif
-
-#ifdef HAVE_VSNPRINTF
-
-  /* 
-   * NOTE:  some implementations of vsnprintf(), for example
-   * solaris-2.9, will not return the formatted length if you
-   * use a length of 0 in the initial call.  So, we use a small
-   * buffer.
-   */
-  i = vsnprintf (msg_buffer, msg_buffer_size, fmt, args);
-  if (i >= msg_buffer_size)
-    {
-      msg_buffer_size = i + 100;
-      msg_buffer = (char *) realloc (msg_buffer, msg_buffer_size + 2);
-      if (msg_buffer == NULL)
-	{
-	  fprintf (stderr, "ghid_logv():  malloc failed\n\n");
-	  exit (1);
-	}
-      vsnprintf (msg_buffer, msg_buffer_size, fmt, args);
-    }
-
-#else
-  vsprintf (msg_buffer, fmt, args);
-#endif /* !HAVE_VSNPRINTF */
-
-  ghid_log_append_string (msg_buffer);
-
+  gchar *msg = pcb_vprintf (fmt, args);
+  ghid_log_append_string (msg);
+  g_free (msg);
 }
 
 static const char logshowonappend_syntax[] =
@@ -206,7 +154,7 @@ to it.  If false, the log will still be updated, but the window won't \
 be shown.";
 
 static gint
-GhidLogShowOnAppend (int argc, char **argv, int x, int y)
+GhidLogShowOnAppend (int argc, char **argv, Coord x, Coord y)
 {
   char *a = argc == 1 ? argv[0] : (char *)"";
 

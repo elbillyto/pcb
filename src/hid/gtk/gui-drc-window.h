@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -26,8 +24,8 @@
  *
  */
 
-#ifndef __GUI_DRC_WINDOW_H__
-#define __GUI_DRC_WINDOW_H__
+#ifndef PCB_HID_GTK_GUI_DRC_WINDOW_H
+#define PCB_HID_GTK_GUI_DRC_WINDOW_H
 
 
 #define GHID_TYPE_DRC_VIOLATION           (ghid_drc_violation_get_type())
@@ -51,14 +49,12 @@ struct _GhidDrcViolation
 
   char *title;
   char *explanation;
-  int x_coord;
-  int y_coord;
-  int angle;
-  int have_measured;
-  double measured_value;
-  double required_value;
-  int value_digits;
-  char *value_units;
+  Coord x_coord;
+  Coord y_coord;
+  Angle angle;
+  bool have_measured;
+  Coord measured_value;
+  Coord required_value;
   int object_count;
   long int *object_id_list;
   int *object_type_list;
@@ -99,4 +95,4 @@ GType ghid_violation_renderer_get_type (void);
 
 GtkCellRenderer *ghid_violation_renderer_new (void);
 
-#endif /* __GUI_DRC_WINDOW_H__ */
+#endif /* PCB_HID_GTK_GUI_DRC_WINDOW_H */

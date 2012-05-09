@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -49,9 +47,6 @@ I NEED TO DO THE STATUS LINE THING.  for example shift-alt-v to change the
 via size.  NOte the status line label does not get updated properly until
 a zoom in/out.
 
-- do not forget I can use
-  if (!ghidgui->toggle_holdoff)
-  
 #endif
 
 /* This file was originally written by Bill Wilson for the PCB Gtk
@@ -82,6 +77,8 @@ a zoom in/out.
 #include <locale.h>
 #endif
 
+#include "ghid-layer-selector.h"
+#include "ghid-route-style-selector.h"
 #include "gtkhid.h"
 #include "gui.h"
 #include "hid.h"
@@ -107,6 +104,7 @@ a zoom in/out.
 #include "mymem.h"
 #include "misc.h"
 #include "move.h"
+#include "pcb-printf.h"
 #include "polygon.h"
 #include "rats.h"
 #include "remove.h"
@@ -128,336 +126,44 @@ a zoom in/out.
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
+static bool ignore_layer_update;
 
-/* ---------------------------------------------------------------------------
- * local types
- */
-
-
-typedef enum {GHID_FLAG_ACTIVE, GHID_FLAG_CHECKED, GHID_FLAG_VISIBLE} MenuFlagType;
-
-/* Used by the menuitems that are toggle actions */
-typedef struct
-{
-  const char *actionname;
-  const char *flagname;
-  MenuFlagType flagtype;
-  int oldval;
-  char *xres;
-} ToggleFlagType;
-
-/* Used by the route style buttons and menu */
-typedef struct
-{
-  GtkWidget *button;
-  RouteStyleType route_style;
-  gboolean shown;		/* For temp buttons */
-}
-RouteStyleButton;
-
-/* Used by the layer buttons */
-typedef struct
-{
-  GtkWidget *radio_select_button,
-    *layer_enable_button, *layer_enable_ebox, *label;
-  gchar *text;
-  gint index;
-}
-LayerButtonSet;
-
-
-/* ---------------------------------------------------------------------------
- * local macros
- */
-
-/* ---------------------------------------------------------------------------
- * local prototypes
- */
-
-
-#define N_ROUTE_STYLES (NUM_STYLES + 3)
-
-static void ghid_load_menus (void);
-static void ghid_ui_info_append (const gchar *);
-static void ghid_ui_info_indent (int);
-
-static gchar * new_ui_info;
-static size_t new_ui_info_sz = 0;
-
-/* the array of actions for "normal" menuitems */
-static GtkActionEntry *new_entries = NULL;
-static gint menuitem_cnt = 0;
-
-/* the array of actions for "toggle" menuitems */
-static GtkToggleActionEntry *new_toggle_entries = NULL;
-static gint tmenuitem_cnt = 0;
-
-static Resource **action_resources = NULL;
-static Resource **toggle_action_resources = NULL;
-
-/* actions for the @layerview menuitems */
-static GtkToggleActionEntry layerview_toggle_entries[N_LAYER_BUTTONS];
-static Resource *layerview_resources[N_LAYER_BUTTONS];
-
-/* actions for the @layerpick menuitems */
-static GtkToggleActionEntry layerpick_toggle_entries[N_LAYER_BUTTONS];
-static Resource *layerpick_resources[N_LAYER_BUTTONS];
-
-/* actions for the @routestyles menuitems */
-static GtkToggleActionEntry routestyle_toggle_entries[N_ROUTE_STYLES];
-static Resource *routestyle_resources[N_ROUTE_STYLES];
-
-#define MENUITEM "MenuItem"
-#define TMENUITEM "TMenuItem"
-#define LAYERPICK "LayerPick"
-#define LAYERVIEW "LayerView"
-#define ROUTESTYLE "RouteStyle"
-
-
-static ToggleFlagType *tflags = 0;
-static int n_tflags = 0;
-static int max_tflags = 0;
+static GtkWidget *ghid_load_menus (void);
 
 GhidGui _ghidgui, *ghidgui = NULL;
 
 GHidPort ghid_port, *gport;
 
-static GdkColor WhitePixel;
+static gchar *bg_image_file;
 
-static gchar		*bg_image_file;
+static struct { GtkAction *action; const Resource *node; }
+  ghid_hotkey_actions[256];
+#define N_HOTKEY_ACTIONS \
+        (sizeof (ghid_hotkey_actions) / sizeof (ghid_hotkey_actions[0]))
 
-static char *ghid_hotkey_actions[256];
 
-
-/* ------------------------------------------------------------------
- *  Route style buttons
- */
-
-/* Make 3 extra route style radio buttons.  2 for the extra Temp route
- * styles, and the 3rd is an always invisible button selected when the
- * route style settings in use don't match any defined route style (the
- * user can hit 'l', 'v', etc keys to change the settings without selecting
- * a new defined style.
- */
-
-static RouteStyleButton route_style_button[N_ROUTE_STYLES];
-static gint route_style_index;
-
-static GtkWidget *route_style_edit_button;
-
-static const char *
-ghid_check_unique_accel (const char *accelerator)
+/*! \brief callback for ghid_main_menu_update_toggle_state () */
+void
+menu_toggle_update_cb (GtkAction *act, const char *tflag, const char *aflag)
 {
-  static int n_list = 0;
-  static char **accel_list;
-  static int amax = 0;
-  int i;
-  const char * a = accelerator;
-
-  if (accelerator == NULL)
-    return NULL;
-
-  if (strlen (accelerator) == 0)
-    return accelerator;
-
-  if (amax >= n_list) 
+  if (tflag != NULL)
     {
-      n_list += 128;
-      if ( (accel_list = (char **)realloc (accel_list, n_list * sizeof (char *))) == NULL)
-	{
-	  fprintf (stderr, "%s():  realloc failed\n", __FUNCTION__);
-	  exit (1);
-	}
+      int v = hid_get_flag (tflag);
+      gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (act), !!v);
     }
-
-  for (i = 0; i < amax ; i++) 
+  if (aflag != NULL)
     {
-      if (strcmp (accel_list[i], accelerator) == 0)
-	{
-	  Message (_("Duplicate accelerator found: \"%s\"\n"
-		   "The second occurance will be dropped\n"),
-		   accelerator);
-	  a = NULL;
-	  break;
-	}
+      int v = hid_get_flag (aflag);
+      gtk_action_set_sensitive (act, !!v);
     }
-  accel_list[amax] = strdup (accelerator);
-  amax++;
-
-  return a;
 }
 
-
-/* ------------------------------------------------------------------
- *  note_toggle_flag()
- */
-
-static void
-note_toggle_flag (const char *actionname, MenuFlagType type, char *name)
-{
-
-  #ifdef DEBUG_MENUS
-  printf ("note_toggle_flag(\"%s\", %d, \"%s\")\n", actionname, type, name);
-  #endif
-
-  if (n_tflags >= max_tflags)
-    {
-      max_tflags += 20;
-      tflags = (ToggleFlagType *)realloc (tflags, max_tflags * sizeof (ToggleFlagType));
-    }
-  tflags[n_tflags].actionname = strdup (actionname);
-  tflags[n_tflags].flagname = name;
-  tflags[n_tflags].flagtype = type;
-  tflags[n_tflags].oldval = -1;
-  tflags[n_tflags].xres = "none";
-  n_tflags++;
-}
-
-
+/*! \brief sync the menu checkboxes with actual pcb state */
 void
 ghid_update_toggle_flags ()
 {
-  int i;
-
-  GtkAction *a;
-  gboolean old_holdoff;
-  gboolean active;
-  char tmpnm[40];
-  GValue setfalse = { 0 };
-  GValue settrue = { 0 };
-  GValue setlabel = { 0 };
-
-  g_value_init (&setfalse, G_TYPE_BOOLEAN);
-  g_value_init (&settrue, G_TYPE_BOOLEAN);
-  g_value_set_boolean (&setfalse, FALSE);
-  g_value_set_boolean (&settrue, TRUE);
-  g_value_init (&setlabel, G_TYPE_STRING);
-
-  /* mask the callbacks */
-  old_holdoff = ghidgui->toggle_holdoff;
-  ghidgui->toggle_holdoff = TRUE;
-
-  for (i = 0; i < n_tflags; i++)
-    {
-      switch (tflags[i].flagtype)
-	{
-	case GHID_FLAG_ACTIVE:
-	  {
-	    int v = hid_get_flag (tflags[i].flagname);
-	    a = gtk_action_group_get_action (ghidgui->main_actions, tflags[i].actionname);
-	    g_object_set_property (G_OBJECT (a), "sensitive", v? &settrue : &setfalse);
-	    tflags[i].oldval = v;
-	  }
-	  break;
-
-	case GHID_FLAG_CHECKED:
-	  {
-	    int v = hid_get_flag (tflags[i].flagname);
-	    a = gtk_action_group_get_action (ghidgui->main_actions, tflags[i].actionname);
-	    gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (a), v? TRUE : FALSE);
-	    tflags[i].oldval = v;
-	  }
-	  break;
-
-	default:
-	  printf ("Skipping flagtype %d\n", tflags[i].flagtype);
-	  break;
-	}
-    }
-
-
-  /* FIXME -- this probably needs to go somewhere else */
-#ifdef notdef
-  for (i = 0; i < N_LAYER_BUTTONS; i++)
-    {
-      sprintf (tmpnm, "%s%d", LAYERVIEW, i);
-      a = gtk_action_group_get_action (ghidgui->main_actions, tmpnm);
-      if (a != NULL)
-	{
-	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_copper_layer && i < MAX_LAYER) ? &setfalse : &settrue);
-	}
-
-    }
-#endif
-
-  for (i = 0; i < N_ROUTE_STYLES; i++)
-    {
-      sprintf (tmpnm, "%s%d", ROUTESTYLE, i);
-      a = gtk_action_group_get_action (ghidgui->main_actions, tmpnm);
-      if (i >= NUM_STYLES)
-	{
-	  g_object_set_property (G_OBJECT (a), "visible", &setfalse);
-	}
-
-      /* Update the toggle states */
-      active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (route_style_button[i].button));
-#ifdef DEBUG_MENUS
-      printf ("ghid_update_toggle_flags():  route style %d, value is %d\n", i, active);
-#endif
-      gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (a), active);
-	
-    }
-
-  g_value_unset (&setfalse);
-  g_value_unset (&settrue);
-  g_value_unset (&setlabel);
-  ghidgui->toggle_holdoff = old_holdoff;
-
-}
-
-#define	N_GRID_SETTINGS		11
-
-static gdouble grid_mil_values[N_GRID_SETTINGS] = {
-  MIL_TO_COORD (0.10),
-  MIL_TO_COORD (0.20),
-  MIL_TO_COORD (0.50),
-  MIL_TO_COORD (1.00),
-  MIL_TO_COORD (2.00),
-  MIL_TO_COORD (5.00),
-  MIL_TO_COORD (10.0),
-  MIL_TO_COORD (20.0),
-  MIL_TO_COORD (25.0),
-  MIL_TO_COORD (50.0),
-  MIL_TO_COORD (100)
-};
-
-static gdouble grid_mm_values[N_GRID_SETTINGS] = {
-  MM_TO_COORD (0.002),
-  MM_TO_COORD (0.005),
-  MM_TO_COORD (0.01),
-  MM_TO_COORD (0.02),
-  MM_TO_COORD (0.05),
-  MM_TO_COORD (0.1),
-  MM_TO_COORD (0.2),
-  MM_TO_COORD (0.25),
-  MM_TO_COORD (0.5),
-  MM_TO_COORD (1.0),
-  MM_TO_COORD (2.0)
-};
-
-  /* When the user toggles grid units mil<->mm, call this to get an
-     |  index into the grid values table of the current grid setting.  Then a
-     |  grid in the new units may be selected that is closest to what we had.
-     |
-     |  May want this call to fail if user has altered grid with 'g' key
-     |  and so current grid does not match any of the presets.  In that
-     |  case we want no item in the grid setting radio group to get set.
-   */
-static gint
-get_grid_value_index (gboolean allow_fail)
-{
-  gdouble *value;
-  gint i;
-
-  value = Settings.grid_units_mm ? &grid_mm_values[0] : &grid_mil_values[0];
-  for (i = 0; i < N_GRID_SETTINGS; ++i, ++value)
-    if (PCB->Grid < *value + 1.0 && PCB->Grid > *value - 1.0)
-      break;
-  if (i >= N_GRID_SETTINGS)
-    i = allow_fail ? -1 : N_GRID_SETTINGS - 1;
-
-  return i;
+  ghid_main_menu_update_toggle_state (GHID_MAIN_MENU (ghidgui->menu_bar),
+                                      menu_toggle_update_cb);
 }
 
 static void
@@ -484,13 +190,16 @@ static gint
 top_window_configure_event_cb (GtkWidget * widget, GdkEventConfigure * ev,
 			       GHidPort * port)
 {
+  GtkAllocation allocation;
   gboolean new_w, new_h;
 
-  new_w = (ghidgui->top_window_width != widget->allocation.width);
-  new_h = (ghidgui->top_window_height != widget->allocation.height);
+  gtk_widget_get_allocation (widget, &allocation);
 
-  ghidgui->top_window_width = widget->allocation.width;
-  ghidgui->top_window_height = widget->allocation.height;
+  new_w = (ghidgui->top_window_width != allocation.width);
+  new_h = (ghidgui->top_window_height != allocation.height);
+
+  ghidgui->top_window_width = allocation.width;
+  ghidgui->top_window_height = allocation.height;
 
   if (new_w || new_h)
     ghidgui->config_modified = TRUE;
@@ -498,348 +207,213 @@ top_window_configure_event_cb (GtkWidget * widget, GdkEventConfigure * ev,
   return FALSE;
 }
 
+static void
+info_bar_response_cb (GtkInfoBar *info_bar,
+                      gint        response_id,
+                      GhidGui    *_gui)
+{
+  gtk_widget_destroy (_gui->info_bar);
+  _gui->info_bar = NULL;
 
-/*
- * This is the main menu callback function.  The callback looks at
- * the gtk action name to figure out which menuitem was chosen.  Then
- * it looks up in a table to find the pcb actions which should be
- * executed.  All menus go through this callback.  The tables of
- * actions are loaded from the menu resource file at startup.
+  if (response_id == GTK_RESPONSE_ACCEPT)
+    RevertPCB ();
+}
+
+static void
+close_file_modified_externally_prompt (void)
+{
+  if (ghidgui->info_bar != NULL)
+    gtk_widget_destroy (ghidgui->info_bar);
+  ghidgui->info_bar = NULL;
+}
+
+static void
+show_file_modified_externally_prompt (void)
+{
+  GtkWidget *button;
+  GtkWidget *button_image;
+  GtkWidget *icon;
+  GtkWidget *label;
+  GtkWidget *content_area;
+  char *file_path_utf8;
+  char *secondary_text;
+  char *markup;
+
+  close_file_modified_externally_prompt ();
+
+  ghidgui->info_bar = gtk_info_bar_new ();
+
+  button = gtk_info_bar_add_button (GTK_INFO_BAR (ghidgui->info_bar),
+                                    _("Reload"),
+                                    GTK_RESPONSE_ACCEPT);
+  button_image = gtk_image_new_from_stock (GTK_STOCK_REFRESH,
+                                           GTK_ICON_SIZE_BUTTON);
+  gtk_button_set_image (GTK_BUTTON (button), button_image);
+
+  gtk_info_bar_add_button (GTK_INFO_BAR (ghidgui->info_bar),
+                           GTK_STOCK_CANCEL,
+                           GTK_RESPONSE_CANCEL);
+  gtk_info_bar_set_message_type (GTK_INFO_BAR (ghidgui->info_bar),
+                                 GTK_MESSAGE_WARNING);
+  gtk_box_pack_start (GTK_BOX (ghidgui->vbox_middle),
+                      ghidgui->info_bar, FALSE, FALSE, 0);
+  gtk_box_reorder_child (GTK_BOX (ghidgui->vbox_middle), ghidgui->info_bar, 0);
+
+
+  g_signal_connect (ghidgui->info_bar, "response",
+                    G_CALLBACK (info_bar_response_cb), ghidgui);
+
+  file_path_utf8 = g_filename_to_utf8 (PCB->Filename, -1, NULL, NULL, NULL);
+
+  secondary_text = PCB->Changed ? "Do you want to drop your changes and reload the file?" :
+                                  "Do you want to reload the file?";
+
+  markup =  g_markup_printf_escaped (_("<b>The file %s has changed on disk</b>\n\n%s"),
+                                     file_path_utf8, secondary_text);
+  g_free (file_path_utf8);
+
+  content_area = gtk_info_bar_get_content_area (GTK_INFO_BAR (ghidgui->info_bar));
+
+  icon = gtk_image_new_from_stock (GTK_STOCK_DIALOG_WARNING,
+                                   GTK_ICON_SIZE_DIALOG);
+  gtk_box_pack_start (GTK_BOX (content_area),
+                      icon, FALSE, FALSE, 0);
+
+  label = gtk_label_new ("");
+  gtk_box_pack_start (GTK_BOX (content_area),
+                      label, TRUE, TRUE, 6);
+
+  gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
+  gtk_label_set_markup (GTK_LABEL (label), markup);
+  g_free (markup);
+
+  gtk_misc_set_alignment (GTK_MISC (label), 0., 0.5);
+
+  gtk_widget_show_all (ghidgui->info_bar);
+}
+
+static bool
+check_externally_modified (void)
+{
+  GFile *file;
+  GFileInfo *info;
+  GTimeVal timeval;
+
+  /* Treat zero time as a flag to indicate we've not got an mtime yet */
+  if (PCB->Filename == NULL ||
+      (ghidgui->our_mtime.tv_sec == 0 &&
+       ghidgui->our_mtime.tv_usec == 0))
+    return false;
+
+  file = g_file_new_for_path (PCB->Filename);
+  info = g_file_query_info (file, G_FILE_ATTRIBUTE_TIME_MODIFIED,
+                            G_FILE_QUERY_INFO_NONE, NULL, NULL);
+  g_object_unref (file);
+
+  if (info == NULL ||
+      !g_file_info_has_attribute (info, G_FILE_ATTRIBUTE_TIME_MODIFIED))
+    return false;
+
+  g_file_info_get_modification_time (info, &timeval); //&ghidgui->last_seen_mtime);
+  g_object_unref (info);
+
+  /* Ignore when the file on disk is the same age as when we last looked */
+  if (timeval.tv_sec == ghidgui->last_seen_mtime.tv_sec &&
+      timeval.tv_usec == ghidgui->last_seen_mtime.tv_usec)
+    return false;
+
+  ghidgui->last_seen_mtime = timeval;
+
+  return (ghidgui->last_seen_mtime.tv_sec > ghidgui->our_mtime.tv_sec) ||
+         (ghidgui->last_seen_mtime.tv_sec == ghidgui->our_mtime.tv_sec &&
+         ghidgui->last_seen_mtime.tv_usec > ghidgui->our_mtime.tv_usec);
+}
+
+static gboolean
+top_window_enter_cb (GtkWidget *widget, GdkEvent  *event, GHidPort *port)
+{
+  if (check_externally_modified ())
+    show_file_modified_externally_prompt ();
+
+  return FALSE;
+}
+
+/*! \brief Menu action callback function
+ *  \par Function Description
+ *  This is the main menu callback function.  The callback receives
+ *  the original Resource pointer containing the HID actions to be
+ *  executed.
  *
- * In addition, all hotkeys go through the menus which means they go
- * through here.
+ *  All hotkeys go through the menus which means they go through here.
+ *  Some, such as tab, are caught by Gtk instead of passed here, so
+ *  pcb calls this function directly through ghid_hotkey_cb() for them.
+ *
+ *  \param [in]   The action that was activated
+ *  \param [in]   The menu resource associated with the action
  */
 
 static void
-ghid_menu_cb (GtkAction * action, gpointer data)
+ghid_menu_cb (GtkAction *action, const Resource *node)
 {
-  const gchar * name;
-  int id = 0;
-  int vi;
-  Resource *node = NULL;
-  static int in_cb = 0;
-  gboolean old_holdoff;
+  int i;
 
-  /* If we don't do this then we can end up in loops where changing
-   * the state of the toggle actions triggers the callbacks and
-   * the call back updates the state of the actions.
-   */
-  if (in_cb)
+  if (action == NULL || node == NULL) 
     return;
-  else
-    in_cb = 1;
 
-  /* 
-   * Normally this callback is triggered by the menus in which case
-   * action will be the gtk action which was triggered.  In the case
-   * of the "special" hotkeys we will call this callback directly and
-   * pass in the name of the menu that it corresponds to in via the
-   * data argument
-   */
-  if (action != NULL) 
-    {
-      name = gtk_action_get_name (action);
-    }
-  else
-    {
-      name = (char *) data;
+  for (i = 1; i < node->c; i++)
+    if (resource_type (node->v[i]) == 10)
+      {
 #ifdef DEBUG_MENUS
-      printf ("ghid_menu_cb():  name = \"%s\"\n", UNKNOWN (name));
+        printf ("    %s\n", node->v[i].value);
 #endif
-    }
+        hid_parse_actions (node->v[i].value);
+      }
 
-  if (name == NULL)
-    {
-      fprintf (stderr, "%s(%p, %p):  name == NULL\n", 
-	       __FUNCTION__, action, data);
-      in_cb = 0;
-      return;
-    }
-
-  if ( strncmp (name, MENUITEM, strlen (MENUITEM)) == 0)
-    {
-      /* This is a "normal" menuitem as opposed to a toggle menuitem
-       */
-      id = atoi (name + strlen (MENUITEM));
-      node = action_resources[id];
-    }
-  else if ( strncmp (name, TMENUITEM, strlen (TMENUITEM)) == 0)
-    {
-      /* This is a "toggle" menuitem */
-      id = atoi (name + strlen (TMENUITEM));
-
-      /* toggle_holdoff lets us update the state of the menus without
-       * actually triggering all the callbacks
-       */
-      if (ghidgui->toggle_holdoff == TRUE) 
-	node = NULL;
-      else
-	node = toggle_action_resources[id];
-    }
-  else if ( strncmp (name, LAYERPICK, strlen (LAYERPICK)) == 0)
-    {
-      id = atoi (name + strlen (LAYERPICK));
-
-      if (ghidgui->toggle_holdoff == TRUE) 
-	node = NULL;
-      else
-	node = layerpick_resources[id];
-    }
-  else if ( strncmp (name, LAYERVIEW, strlen (LAYERVIEW)) == 0)
-    {
-      id = atoi (name + strlen (LAYERVIEW));
-
-      if (ghidgui->toggle_holdoff == TRUE) 
-	node = NULL;
-      else
-	node = layerview_resources[id];
-    }
-  else if ( strncmp (name, ROUTESTYLE, strlen (ROUTESTYLE)) == 0)
-    {
-      id = atoi (name + strlen (ROUTESTYLE));
-      if (ghidgui->toggle_holdoff != TRUE) 
-	ghid_route_style_button_set_active (id);
-      node = NULL;
-    }
-  else
-    {
-      fprintf (stderr, "ERROR:  ghid_menu_cb():  name = \"%s\" is unknown\n", name);
-    }
-    
-
-#ifdef DEBUG_MENUS
-  printf ("ghid_menu_cb():  name = \"%s\", id = %d\n", name, id);
-#endif
-
-  /* Now we should have a pointer to the actions to execute */
-  if (node != NULL)
-    {
-      for (vi = 1; vi < node->c; vi++)
-	if (resource_type (node->v[vi]) == 10)
-	  {
-#ifdef DEBUG_MENUS
-	    printf ("    %s\n", node->v[vi].value);
-#endif
-	    hid_parse_actions (node->v[vi].value);
-	  }
-    }
-  else {
-#ifdef DEBUG_MENUS
-    printf ("    NOOP\n");
-#endif
-  }
-
-
-  /*
-   * Now mask off any callbacks and update the state of any toggle
-   * menuitems.  This is where we do things like sync the layer or
-   * tool checks marks in the menus with the layer or tool buttons
-   */
-  old_holdoff = ghidgui->toggle_holdoff;
-  ghidgui->toggle_holdoff = TRUE;
+  /* Sync gui widgets with pcb state */
   ghid_update_toggle_flags ();
-  ghidgui->toggle_holdoff = old_holdoff;
-  
-  in_cb = 0;
+  ghid_mode_buttons_update ();
 
-  /*
-   * and finally, make any changes show up in the status line and the
-   * screen 
-   */
-  if (ghidgui->toggle_holdoff == FALSE) 
-    {
-      AdjustAttachedObjects ();
-      ghid_invalidate_all ();
-      ghid_window_set_name_label (PCB->Name);
-      ghid_set_status_line_label ();
-#ifdef FIXME
-      g_idle_add (ghid_idle_cb, NULL);
-#endif
-    }
-
+  /* Sync gui status display with pcb state */
+  AdjustAttachedObjects ();
+  ghid_invalidate_all ();
+  ghid_window_set_name_label (PCB->Name);
+  ghid_set_status_line_label ();
 }
 
+/* \brief Accelerator callback for accelerators gtk tries to hide from us */
 void ghid_hotkey_cb (int which)
 {
-#ifdef DEBUG_MENUS
-  printf ("%s(%d) -> \"%s\"\n", __FUNCTION__, 
-	  which, UNKNOWN (ghid_hotkey_actions[which]));
-#endif
-  if (ghid_hotkey_actions[which] != NULL)
-    ghid_menu_cb (NULL, ghid_hotkey_actions[which]);
-}
-
-
-/* ============== ViewMenu callbacks =============== */
-
-
-  /* Do grid units handling common to a grid units change from the menu or
-     |  the grid units button.
-   */
-static void
-handle_grid_units_change (gboolean active)
-{
-  gchar *grid;
-  gint i;
-
-  i = get_grid_value_index (FALSE);
-  Settings.grid_units_mm = active;
-  PCB->Grid = Settings.grid_units_mm ? grid_mm_values[i] : grid_mil_values[i];
-
-  ghid_grid_setting_update_menu_actions ();
-
-  grid = g_strdup_printf ("%f", PCB->Grid);
-  hid_actionl ("SetValue", "Grid", grid, "", NULL);
-  g_free (grid);
-
-  ghid_config_handle_units_changed ();
-
-  ghid_set_status_line_label ();
+  if (ghid_hotkey_actions[which].action != NULL)
+    ghid_menu_cb (ghid_hotkey_actions[which].action,
+                  (gpointer) ghid_hotkey_actions[which].node);
 }
 
 static void
-radio_grid_mil_setting_cb (GtkAction * action, GtkRadioAction * current)
+update_board_mtime_from_disk (void)
 {
-  gdouble value;
-  gchar *grid;
-  gint index;
+  GFile *file;
+  GFileInfo *info;
 
-  printf ("radio_grid_mil_setting_cb()\n");
-  if (ghidgui->toggle_holdoff)
+  ghidgui->our_mtime.tv_sec = 0;
+  ghidgui->our_mtime.tv_usec = 0;
+  ghidgui->last_seen_mtime = ghidgui->our_mtime;
+
+  if (PCB->Filename == NULL)
     return;
-  index = gtk_radio_action_get_current_value (current);
-  value = grid_mil_values[index];
-  grid = g_strdup_printf ("%f", value);
-  hid_actionl ("SetValue", "Grid", grid, "", NULL);
-  g_free (grid);
-  ghid_set_status_line_label ();
-}
 
-static void
-radio_grid_mm_setting_cb (GtkAction * action, GtkRadioAction * current)
-{
-  gdouble value;
-  gchar *grid;
-  gint index;
+  file = g_file_new_for_path (PCB->Filename);
+  info = g_file_query_info (file, G_FILE_ATTRIBUTE_TIME_MODIFIED,
+                            G_FILE_QUERY_INFO_NONE, NULL, NULL);
+  g_object_unref (file);
 
-  printf ("radio_grid_mm_setting_cb()\n");
-  if (ghidgui->toggle_holdoff)
+  if (info == NULL ||
+      !g_file_info_has_attribute (info, G_FILE_ATTRIBUTE_TIME_MODIFIED))
     return;
-  index = gtk_radio_action_get_current_value (current);
-  value = grid_mm_values[index];
-  grid = g_strdup_printf ("%f", value);
-  hid_actionl ("SetValue", "Grid", grid, "", NULL);
-  g_free (grid);
-  ghid_set_status_line_label ();
-}
 
+  g_file_info_get_modification_time (info, &ghidgui->our_mtime);
+  g_object_unref (info);
 
-static GtkRadioActionEntry radio_grid_mil_setting_entries[] = {
-  /* name, stock_id, label, accelerator, tooltip, value */
-  {"grid-user", NULL, "user value", NULL, NULL, 0},
-  {"grid0", NULL, "0.1 mil", NULL, NULL, 0},
-  {"grid1", NULL, "0.2 mil", NULL, NULL, 1},
-  {"grid2", NULL, "0.5 mil", NULL, NULL, 2},
-  {"grid3", NULL, "1 mil", NULL, NULL, 3},
-  {"grid4", NULL, "2 mil", NULL, NULL, 4},
-  {"grid5", NULL, "5 mil", NULL, NULL, 5},
-  {"grid6", NULL, "10 mil", NULL, NULL, 6},
-  {"grid7", NULL, "20 mil", NULL, NULL, 7},
-  {"grid8", NULL, "25 mil", NULL, NULL, 8},
-  {"grid9", NULL, "50 mil", NULL, NULL, 9},
-  {"grid10", NULL, "100 mil", NULL, NULL, 10}
-};
-
-static gint n_radio_grid_mil_setting_entries
-  = G_N_ELEMENTS (radio_grid_mil_setting_entries);
-
-
-static GtkRadioActionEntry radio_grid_mm_setting_entries[] = {
-  /* name, stock_id, label, accelerator, tooltip, value */
-  {"grid-user", NULL, "user value", NULL, NULL, 0},
-  {"grid0", NULL, "0.002 mm", NULL, NULL, 0},
-  {"grid1", NULL, "0.005 mm", NULL, NULL, 1},
-  {"grid2", NULL, "0.01 mm", NULL, NULL, 2},
-  {"grid3", NULL, "0.02 mm", NULL, NULL, 3},
-  {"grid4", NULL, "0.05 mm", NULL, NULL, 4},
-  {"grid5", NULL, "0.1 mm", NULL, NULL, 5},
-  {"grid6", NULL, "0.2 mm", NULL, NULL, 6},
-  {"grid7", NULL, "0.25 mm", NULL, NULL, 7},
-  {"grid8", NULL, "0.5 mm", NULL, NULL, 8},
-  {"grid9", NULL, "1 mm", NULL, NULL, 9},
-  {"grid10", NULL, "2 mm", NULL, NULL, 10},
-};
-
-static gint n_radio_grid_mm_setting_entries
-  = G_N_ELEMENTS (radio_grid_mm_setting_entries);
-
-
-
-  /* Grid setting labels must also match user and new layout unit changes.
-   */
-void
-ghid_grid_setting_update_menu_actions (void)
-{
-  GtkAction *action;
-  gint i;
-
-  if (ghidgui->grid_actions)
-    {
-      /* Remove the existing radio grid actions from the menu.
-       */
-      gtk_ui_manager_remove_action_group (ghidgui->ui_manager,
-					  ghidgui->grid_actions);
-      g_object_unref (ghidgui->grid_actions);
-    }
-
-  /* And add back actions appropriate for mil or mm grid settings.
-   */
-  ghidgui->grid_actions = gtk_action_group_new ("GridActions");
-  gtk_action_group_set_translation_domain (ghidgui->grid_actions, NULL);
-  gtk_ui_manager_insert_action_group (ghidgui->ui_manager,
-				      ghidgui->grid_actions, 0);
-
-  /* Get the index of the radio button to set depending on current
-     |  PCB Grid value.  But if user hits 'g' key and no grid index matches,
-     |  'i' will be -1 and no button will be set active.  At least Gtk docs
-     |  say so, but I see different.
-   */
-  i = get_grid_value_index (TRUE);
-
-  if (Settings.grid_units_mm)
-    gtk_action_group_add_radio_actions (ghidgui->grid_actions,
-					radio_grid_mm_setting_entries,
-					n_radio_grid_mm_setting_entries,
-					i,
-					G_CALLBACK (radio_grid_mm_setting_cb),
-					NULL);
-  else
-    gtk_action_group_add_radio_actions (ghidgui->grid_actions,
-					radio_grid_mil_setting_entries,
-					n_radio_grid_mil_setting_entries,
-					i,
-					G_CALLBACK
-					(radio_grid_mil_setting_cb), NULL);
-  action = gtk_action_group_get_action (ghidgui->grid_actions, "grid-user");
-  if (action)
-    g_object_set (action, "sensitive", FALSE, NULL);
-}
-
-
-
-void
-ghid_set_menu_toggle_button (GtkActionGroup * ag, gchar * name,
-			     gboolean state)
-{
-  GtkAction *action;
-  gboolean old_holdoff;
-
-  old_holdoff = ghidgui->toggle_holdoff;
-  ghidgui->toggle_holdoff = TRUE;
-  action = gtk_action_group_get_action (ag, name);
-  if (action)
-    gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action), state);
-  ghidgui->toggle_holdoff = old_holdoff;
+  ghidgui->last_seen_mtime = ghidgui->our_mtime;
 }
 
   /* Sync toggle states that were saved with the layout and notify the
@@ -848,109 +422,36 @@ ghid_set_menu_toggle_button (GtkActionGroup * ag, gchar * name,
 void
 ghid_sync_with_new_layout (void)
 {
-  gboolean old_holdoff;
-
-  /* Just want to update the state of the menus without calling the
-     |  action functions at this time because causing a toggle action can
-     |  undo the initial condition set we want here.
-   */
-  old_holdoff = ghidgui->toggle_holdoff;
-  ghidgui->toggle_holdoff = TRUE;
-
-  /* FIXME - need toggle_holdoff?  Need other calls to sync here? */
-
-  ghidgui->toggle_holdoff = old_holdoff;
-
   pcb_use_route_style (&PCB->RouteStyle[0]);
+  ghid_route_style_selector_select_style
+    (GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector),
+     &PCB->RouteStyle[0]);
 
-  ghid_route_style_button_set_active (0);
   ghid_config_handle_units_changed ();
 
   ghid_window_set_name_label (PCB->Name);
   ghid_set_status_line_label ();
+  close_file_modified_externally_prompt ();
+  update_board_mtime_from_disk ();
 }
 
-/*
- * Sync toggle states in the menus at startup to Settings values loaded
- * in the config.
- */
 void
-ghid_init_toggle_states (void)
+ghid_notify_save_pcb (const char *filename, bool done)
 {
-  GtkAction *action;
-  gboolean old_holdoff;
-
-  /* Just want to update the state of the menus without calling the
-     |  action functions at this time because causing a toggle action can
-     |  undo the initial condition set we want here.
+  /* Do nothing if it is not the active PCB file that is being saved.
    */
-  old_holdoff = ghidgui->toggle_holdoff;
-  ghidgui->toggle_holdoff = TRUE;
+  if (PCB->Filename == NULL || strcmp (filename, PCB->Filename) != 0)
+    return;
 
-  action =
-    gtk_action_group_get_action (ghidgui->main_actions, "ToggleDrawGrid");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.DrawGrid);
+  if (done)
+    update_board_mtime_from_disk ();
+}
 
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleGridUnitsMm");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.grid_units_mm);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"TogglePinoutShowsNumber");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.ShowNumber);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"Toggle45degree");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.AllDirectionLines);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleRubberBand");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.RubberBandMode);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleStartDirection");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.SwapStartDirection);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleUniqueNames");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.UniqueNames);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleSnapPin");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action), Settings.SnapPin);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleClearLine");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.ClearLine);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleOrthogonalMoves");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.OrthogonalMoves);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleLiveRoute");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action),
-				Settings.liveRouting);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleShowDRC");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action), Settings.ShowDRC);
-
-  action = gtk_action_group_get_action (ghidgui->main_actions,
-					"ToggleAutoDrC");
-  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (action), Settings.AutoDRC);
-
-  ghidgui->toggle_holdoff = old_holdoff;
-  ghid_set_status_line_label ();
+void
+ghid_notify_filename_changed (void)
+{
+  /* Pick up the mtime of the new PCB file */
+  update_board_mtime_from_disk ();
 }
 
 /* ---------------------------------------------------------------------------
@@ -985,210 +486,188 @@ layer_process (gchar **color_string, char **text, int *set, int i)
   switch (i)
     {
     case LAYER_BUTTON_SILK:
-      *color_string = PCB->ElementColor;
+      *color_string = Settings.ElementColor;
       *text = _( "silk");
       *set = PCB->ElementOn;
       break;
     case LAYER_BUTTON_RATS:
-      *color_string = PCB->RatColor;
+      *color_string = Settings.RatColor;
       *text = _( "rat lines");
       *set = PCB->RatOn;
       break;
     case LAYER_BUTTON_PINS:
-      *color_string = PCB->PinColor;
+      *color_string = Settings.PinColor;
       *text = _( "pins/pads");
       *set = PCB->PinOn;
       break;
     case LAYER_BUTTON_VIAS:
-      *color_string = PCB->ViaColor;
+      *color_string = Settings.ViaColor;
       *text = _( "vias");
       *set = PCB->ViaOn;
       break;
     case LAYER_BUTTON_FARSIDE:
-      *color_string = PCB->InvisibleObjectsColor;
+      *color_string = Settings.InvisibleObjectsColor;
       *text = _( "far side");
       *set = PCB->InvisibleObjectsOn;
       break;
     case LAYER_BUTTON_MASK:
-      *color_string = PCB->MaskColor;
+      *color_string = Settings.MaskColor;
       *text = _( "solder mask");
       *set = TEST_FLAG (SHOWMASKFLAG, PCB);
       break;
     default:		/* layers */
-      *color_string = PCB->Data->Layer[i].Color;
+      *color_string = Settings.LayerColor[i];
       *text = (char *)UNKNOWN (PCB->Data->Layer[i].Name);
       *set = PCB->Data->Layer[i].On;
       break;
     }
 }
 
-/*
- * The intial loading of all actions at startup.
- */
+/*! \brief Callback for GHidLayerSelector layer selection */
 static void
-ghid_make_programmed_menu_actions ()
+layer_selector_select_callback (GHidLayerSelector *ls, int layer, gpointer d)
 {
-  int i;
-  gchar * text;
-  
-  Resource *ar;
-  char av[64];
-
-  for (i = 0; i < N_LAYER_BUTTONS; i++)
+  ignore_layer_update = true;
+  /* Select Layer */
+  PCB->SilkActive = (layer == LAYER_BUTTON_SILK);
+  PCB->RatDraw  = (layer == LAYER_BUTTON_RATS);
+  if (layer == LAYER_BUTTON_SILK)
     {
-      layer_process (NULL, &text, NULL, i);
-#ifdef DEBUG_MENUS
-      printf ("ghid_make_programmed_menu_actions():  Added #%2d \"%s\".  max_copper_layer = %d, MAX_LAYER = %d\n", i, text, max_copper_layer, MAX_LAYER);
-#endif
-      /* name, stock_id, label, accelerator, tooltip, callback */
-      layerview_toggle_entries[i].name = g_strdup_printf ("%s%d", LAYERVIEW, i);
-      layerview_toggle_entries[i].stock_id = NULL;
-      layerview_toggle_entries[i].label = g_strdup (text);
-      layerview_toggle_entries[i].accelerator = NULL;
-      layerview_toggle_entries[i].tooltip = NULL;
-      layerview_toggle_entries[i].callback = G_CALLBACK (ghid_menu_cb);
-      layerview_toggle_entries[i].is_active = FALSE;
-      
-      ar = resource_create (0);
-      sprintf (av, "ToggleView(%d)", i + 1);
-      resource_add_val (ar, 0, strdup (av), 0);
-      resource_add_val (ar, 0, strdup (av), 0);
-      ar->flags |= FLAG_V;
-      layerview_resources[i] = ar;
-
-      /* name, stock_id, label, accelerator, tooltip, callback */
-      layerpick_toggle_entries[i].name = g_strdup_printf ("%s%d", LAYERPICK, i);
-      layerpick_toggle_entries[i].stock_id = NULL;
-      layerpick_toggle_entries[i].label = g_strdup (text);
-      layerpick_toggle_entries[i].accelerator = NULL;
-      layerpick_toggle_entries[i].tooltip = NULL;
-      layerpick_toggle_entries[i].callback = G_CALLBACK (ghid_menu_cb);
-      layerpick_toggle_entries[i].is_active = FALSE;
-
-      ar = resource_create (0);
-      switch (i)
-	{
-	case LAYER_BUTTON_SILK:
-	  sprintf (av, "SelectLayer(Silk) LayersChanged()");
-	  break; 
-	case LAYER_BUTTON_RATS:
-	  sprintf (av, "SelectLayer(Rats) LayersChanged()");
-	  break;
-	default:
-	  if (i <= 8)
-	    layerpick_toggle_entries[i].accelerator = 
-	      g_strdup_printf ("<Key>%d", i + 1);
-
-	  sprintf (av, "SelectLayer(%d) LayersChanged()",
-		   i + 1);
-	    
-	  break;
-	}
-      resource_add_val (ar, 0, strdup (av), 0);
-      resource_add_val (ar, 0, strdup (av), 0);
-      ar->flags |= FLAG_V;
-      layerpick_resources[i] = ar;
+      PCB->ElementOn = true;
+      hid_action ("LayersChanged");
     }
-
-    for (i = 0; i < N_ROUTE_STYLES; i++)
+  else if (layer == LAYER_BUTTON_RATS)
     {
-      routestyle_toggle_entries[i].name = g_strdup_printf ("%s%d", ROUTESTYLE, i);
-      routestyle_toggle_entries[i].stock_id = NULL;
-      if (i < NUM_STYLES && PCB)
-	{
-	  routestyle_toggle_entries[i].label = g_strdup ( (PCB->RouteStyle)[i].Name);
-	}
+      PCB->RatOn = true;
+      hid_action ("LayersChanged");
+    }
+  else if (layer < max_copper_layer)
+    ChangeGroupVisibility (layer, TRUE, true);
+
+  ignore_layer_update = false;
+
+  ghid_invalidate_all ();
+}
+
+/*! \brief Callback for GHidLayerSelector layer renaming */
+static void
+layer_selector_rename_callback (GHidLayerSelector *ls,
+                                int layer_id,
+                                char *new_name,
+                                void *userdata)
+{
+  LayerType *layer = LAYER_PTR (layer_id);
+
+  /* Check for a legal layer name - for now, allow anything non-empty */
+  if (new_name[0] == '\0')
+    return;
+
+  /* Don't bother if the name is identical to the current one */
+  if (strcmp (layer->Name, new_name) == 0)
+    return;
+
+  free (layer->Name);
+  layer->Name = strdup (new_name);
+  ghid_layer_buttons_update ();
+  if (!PCB->Changed)
+    {
+      SetChangedFlag (true);
+      ghid_window_set_name_label (PCB->Name);
+    }
+}
+
+/*! \brief Callback for GHidLayerSelector layer toggling */
+static void
+layer_selector_toggle_callback (GHidLayerSelector *ls, int layer, gpointer d)
+{
+  gboolean redraw = FALSE;
+  gboolean active;
+  layer_process (NULL, NULL, &active, layer);
+
+  active = !active;
+  ignore_layer_update = true;
+  switch (layer)
+    {
+    case LAYER_BUTTON_SILK:
+      PCB->ElementOn = active;
+      PCB->Data->SILKLAYER.On = PCB->ElementOn;
+      PCB->Data->BACKSILKLAYER.On = PCB->ElementOn;
+      redraw = 1;
+      break;
+    case LAYER_BUTTON_RATS:
+      PCB->RatOn = active;
+      redraw = 1;
+      break;
+    case LAYER_BUTTON_PINS:
+      PCB->PinOn = active;
+      redraw |= (PCB->Data->ElementN != 0);
+      break;
+    case LAYER_BUTTON_VIAS:
+      PCB->ViaOn = active;
+      redraw |= (PCB->Data->ViaN != 0);
+      break;
+    case LAYER_BUTTON_FARSIDE:
+      PCB->InvisibleObjectsOn = active;
+      PCB->Data->BACKSILKLAYER.On = (active && PCB->ElementOn);
+      redraw = TRUE;
+      break;
+    case LAYER_BUTTON_MASK:
+      if (active)
+        SET_FLAG (SHOWMASKFLAG, PCB);
       else
-	{
-	  routestyle_toggle_entries[i].label = g_strdup (routestyle_toggle_entries[i].name);
-	}
-      routestyle_toggle_entries[i].accelerator = NULL;
-      routestyle_toggle_entries[i].tooltip = NULL;
-      routestyle_toggle_entries[i].callback = G_CALLBACK (ghid_menu_cb);
-      routestyle_toggle_entries[i].is_active = FALSE;
-
-      ar = resource_create (0);
-      sprintf (av, "RouteStyle(%d)", i + 1);
-      resource_add_val (ar, 0, strdup (av), 0);
-      resource_add_val (ar, 0, strdup (av), 0);
-      ar->flags |= FLAG_V;
-      routestyle_resources[i] = ar;
-
-      // FIXME
-      //sprintf (av, "current_style,%d", i + 1);
-      //note_toggle_flag (routestyle_toggle_entries[i].name, strdup (av));
-
-    }
-}
-
-static void
-make_menu_actions (GtkActionGroup * actions, GHidPort * port)
-{
-  gtk_action_group_add_actions (actions, new_entries, menuitem_cnt, port);
-
-  gtk_action_group_add_toggle_actions (actions, new_toggle_entries,
-				       tmenuitem_cnt, port);
-
-  ghid_make_programmed_menu_actions ();
-
-  gtk_action_group_add_toggle_actions (actions, 
-				       layerpick_toggle_entries, 
-				       N_LAYER_BUTTONS, port);
-
-  gtk_action_group_add_toggle_actions (actions,
-				       layerview_toggle_entries,
-				       N_LAYER_BUTTONS, port);
-
-  gtk_action_group_add_toggle_actions (actions,
-				       routestyle_toggle_entries,
-				       N_ROUTE_STYLES, port);
-
-}
-
-
-/*
- * Make a frame for the top menubar, load in actions for the menus and
- * load the ui_manager string.
- */
-static void
-make_top_menubar (GtkWidget * hbox, GHidPort * port)
-{
-  GtkUIManager *ui;
-  GtkWidget *frame;
-  GtkActionGroup *actions;
-  GError *error = NULL;
-
-  frame = gtk_frame_new (NULL);
-  gtk_box_pack_start (GTK_BOX (hbox), frame, FALSE, TRUE, 0);
-  gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_ETCHED_OUT);
-
-  ui = gtk_ui_manager_new ();
-  ghidgui->ui_manager = ui;
-
-  actions = gtk_action_group_new ("Actions");
-  gtk_action_group_set_translation_domain (actions, NULL);
-  ghidgui->main_actions = actions;
-
-  make_menu_actions (actions, port);
-
-  gtk_ui_manager_insert_action_group (ui, actions, 0);
-
-  gtk_window_add_accel_group (GTK_WINDOW (gport->top_window),
-			      gtk_ui_manager_get_accel_group (ui));
-
-  if (!gtk_ui_manager_add_ui_from_string (ui, new_ui_info, -1, &error))
-    {
-      g_message ("building menus failed: %s", error->message);
-      g_error_free (error);
+        CLEAR_FLAG (SHOWMASKFLAG, PCB);
+      redraw = TRUE;
+      break;
+    default:
+      /* Flip the visibility */
+      ChangeGroupVisibility (layer, active, false);
+      redraw = TRUE;
+      break;
     }
 
-  gtk_ui_manager_set_add_tearoffs (ui, TRUE);
+  /* Select the next visible layer. (If there is none, this will
+   * select the currently-selected layer, triggering the selection
+   * callback, which will turn the visibility on.) This way we
+   * will never have an invisible layer selected.
+   */
+  if (!active)
+    ghid_layer_selector_select_next_visible (ls);
 
-  gtk_container_add (GTK_CONTAINER (frame),
-		     gtk_ui_manager_get_widget (ui, "/MenuBar"));
+  ignore_layer_update = false;
 
+  if (redraw)
+    ghid_invalidate_all();
 }
 
+/*! \brief Install menu bar and accelerator groups */
+void
+ghid_install_accel_groups (GtkWindow *window, GhidGui *gui)
+{
+  gtk_window_add_accel_group
+    (window, ghid_main_menu_get_accel_group
+               (GHID_MAIN_MENU (gui->menu_bar)));
+  gtk_window_add_accel_group
+    (window, ghid_layer_selector_get_accel_group
+               (GHID_LAYER_SELECTOR (gui->layer_selector)));
+  gtk_window_add_accel_group
+    (window, ghid_route_style_selector_get_accel_group
+               (GHID_ROUTE_STYLE_SELECTOR (gui->route_style_selector)));
+}
+
+/*! \brief Remove menu bar and accelerator groups */
+void
+ghid_remove_accel_groups (GtkWindow *window, GhidGui *gui)
+{
+  gtk_window_remove_accel_group
+    (window, ghid_main_menu_get_accel_group
+               (GHID_MAIN_MENU (gui->menu_bar)));
+  gtk_window_remove_accel_group
+    (window, ghid_layer_selector_get_accel_group
+               (GHID_LAYER_SELECTOR (gui->layer_selector)));
+  gtk_window_remove_accel_group
+    (window, ghid_route_style_selector_get_accel_group
+               (GHID_ROUTE_STYLE_SELECTOR (gui->route_style_selector)));
+}
 
 /* Refreshes the window title bar and sets the PCB name to the
  * window title bar or to a seperate label
@@ -1208,29 +687,13 @@ ghid_window_set_name_label (gchar * name)
   if (!ghidgui->name_label_string || !*ghidgui->name_label_string)
     ghidgui->name_label_string = g_strdup (_("Unnamed"));
 
-  if (!ghidgui->name_label)
-    return;
-
   if (!PCB->Filename  || !*PCB->Filename)
     filename = g_strdup(_("Unsaved.pcb"));
   else
     filename = g_strdup(PCB->Filename);
 
-  if (ghidgui->ghid_title_window)
-    {
-      gtk_widget_hide (ghidgui->label_hbox);
-      str = g_strdup_printf ("%s%s (%s) - PCB", PCB->Changed ? "*": "",
-                             ghidgui->name_label_string, filename);
-    }
-  else
-    {
-      gtk_widget_show (ghidgui->label_hbox);
-      str = g_strdup_printf (" <b><big>%s</big></b> ",
-                             ghidgui->name_label_string);
-      gtk_label_set_markup (GTK_LABEL (ghidgui->name_label), str);
-      str = g_strdup_printf ("%s%s - PCB", PCB->Changed ? "*": "",
-                             filename);
-    }
+  str = g_strdup_printf ("%s%s (%s) - PCB", PCB->Changed ? "*": "",
+                         ghidgui->name_label_string, filename);
   gtk_window_set_title (GTK_WINDOW (gport->top_window), str);
   g_free (str);
   g_free (filename);
@@ -1239,11 +702,11 @@ ghid_window_set_name_label (gchar * name)
 static void
 grid_units_button_cb (GtkWidget * widget, gpointer data)
 {
-
-  /* Do handling common to when units are changed from the menu.
-   */
-  handle_grid_units_change (!Settings.grid_units_mm);
-
+  /* Button only toggles between mm and mil */
+  if (Settings.grid_unit == get_unit_struct ("mm"))
+    hid_actionl ("SetUnits", "mil", NULL);
+  else
+    hid_actionl ("SetUnits", "mm", NULL);
 }
 
 /*
@@ -1278,27 +741,26 @@ relative_label_size_req_cb (GtkWidget * widget,
 static void
 make_cursor_position_labels (GtkWidget * hbox, GHidPort * port)
 {
-  GtkWidget *frame, *label, *button;
+  GtkWidget *frame, *label;
 
   /* The grid units button next to the cursor position labels.
    */
-  button = gtk_button_new ();
+  ghidgui->grid_units_button = gtk_button_new ();
   label = gtk_label_new ("");
   gtk_label_set_markup (GTK_LABEL (label),
-			Settings.grid_units_mm ?
-			"<b>mm</b> " : "<b>mil</b> ");
+			Settings.grid_unit->in_suffix);
   ghidgui->grid_units_label = label;
   gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
-  gtk_container_add (GTK_CONTAINER (button), label);
-  gtk_box_pack_end (GTK_BOX (hbox), button, FALSE, TRUE, 0);
-  g_signal_connect (G_OBJECT (button), "clicked",
-		    G_CALLBACK (grid_units_button_cb), NULL);
+  gtk_container_add (GTK_CONTAINER (ghidgui->grid_units_button), label);
+  gtk_box_pack_end (GTK_BOX (hbox), ghidgui->grid_units_button, FALSE, TRUE, 0);
+  g_signal_connect (ghidgui->grid_units_button, "clicked",
+                    G_CALLBACK (grid_units_button_cb), NULL);
 
   /* The absolute cursor position label
    */
   frame = gtk_frame_new (NULL);
   gtk_box_pack_end (GTK_BOX (hbox), frame, FALSE, TRUE, 0);
-  gtk_container_border_width (GTK_CONTAINER (frame), 2);
+  gtk_container_set_border_width (GTK_CONTAINER (frame), 2);
   gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_ETCHED_OUT);
 
   label = gtk_label_new ("");
@@ -1312,7 +774,7 @@ make_cursor_position_labels (GtkWidget * hbox, GHidPort * port)
    */
   frame = gtk_frame_new (NULL);
   gtk_box_pack_end (GTK_BOX (hbox), frame, FALSE, TRUE, 0);
-  gtk_container_border_width (GTK_CONTAINER (frame), 2);
+  gtk_container_set_border_width (GTK_CONTAINER (frame), 2);
   gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_ETCHED_OUT);
   label = gtk_label_new (" __.__  __.__ ");
   gtk_container_add (GTK_CONTAINER (frame), label);
@@ -1322,650 +784,153 @@ make_cursor_position_labels (GtkWidget * hbox, GHidPort * port)
 
 }
 
-
-  /* ------------------------------------------------------------------
-     |  Handle the layer buttons.
-   */
-static LayerButtonSet layer_buttons[N_LAYER_BUTTONS];
-
-static gint layer_select_button_index;
-
-static gboolean layer_enable_button_cb_hold_off,
-  layer_select_button_cb_hold_off;
-
+/* \brief Add "virtual layers" to a layer selector */
 static void
-layer_select_button_cb (GtkWidget * widget, LayerButtonSet * lb)
+make_virtual_layer_buttons (GtkWidget *layer_selector)
 {
-  gboolean active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (widget));
-  static gboolean in_cb = FALSE;
-
-  if (!active || layer_select_button_cb_hold_off || in_cb)
-    return;
-
-  in_cb = TRUE;
-
-  PCB->SilkActive = (lb->index == LAYER_BUTTON_SILK);
-  PCB->RatDraw = (lb->index == LAYER_BUTTON_RATS);
-
-  if (lb->index < max_copper_layer)
-    ChangeGroupVisibility (lb->index, true, true);
-
-  layer_select_button_index = lb->index;
-
-  layer_select_button_cb_hold_off = TRUE;
-  layer_enable_button_cb_hold_off = TRUE;
-  ghid_layer_buttons_update ();
-  layer_select_button_cb_hold_off = FALSE;
-  layer_enable_button_cb_hold_off = FALSE;
-
-  ghid_invalidate_all ();
-  in_cb = FALSE;
-}
-
-static void
-layer_enable_button_cb (GtkWidget * widget, gpointer data)
-{
-  LayerButtonSet *lb;
-  gint i, group, layer = GPOINTER_TO_INT (data);
-  gboolean active, redraw = FALSE;
-
-  active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (widget));
-
-  if (layer_enable_button_cb_hold_off)
-    return;
-
-  lb = &layer_buttons[layer];
-  switch (layer)
-    {
-    case LAYER_BUTTON_SILK:
-      PCB->ElementOn = active;
-      PCB->Data->SILKLAYER.On = PCB->ElementOn;
-      PCB->Data->BACKSILKLAYER.On = PCB->ElementOn;
-      redraw = 1;
-      break;
-
-    case LAYER_BUTTON_RATS:
-      PCB->RatOn = active;
-      redraw = 1;
-      break;
-
-    case LAYER_BUTTON_PINS:
-      PCB->PinOn = active;
-      redraw |= (PCB->Data->ElementN != 0);
-      break;
-
-    case LAYER_BUTTON_VIAS:
-      PCB->ViaOn = active;
-      redraw |= (PCB->Data->ViaN != 0);
-      break;
-
-    case LAYER_BUTTON_FARSIDE:
-      PCB->InvisibleObjectsOn = active;
-      PCB->Data->BACKSILKLAYER.On = (active && PCB->ElementOn);
-      redraw = TRUE;
-      break;
-
-    case LAYER_BUTTON_MASK:
-      if (active)
-	SET_FLAG (SHOWMASKFLAG, PCB);
-      else
-	CLEAR_FLAG (SHOWMASKFLAG, PCB);
-      redraw = TRUE;
-      break;
-
-    default:
-      /* check if active layer is in the group;
-         |  if YES, make a different one active if possible.  Logic from
-         |  Xt PCB code.
-       */
-      if ((group = GetGroupOfLayer (layer)) ==
-	  GetGroupOfLayer (MIN (max_copper_layer, INDEXOFCURRENT)))
-	{
-	  for (i = (layer + 1) % (max_copper_layer + 1); i != layer;
-	       i = (i + 1) % (max_copper_layer + 1))
-	    if (PCB->Data->Layer[i].On == true &&
-		GetGroupOfLayer (i) != group)
-	      break;
-	  if (i != layer)
-	    {
-	      ChangeGroupVisibility ((int) i, true, true);
-	    }
-	  else
-	    {
-	      /* everything else off, we can't turn this off too */
-	      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (widget), TRUE);
-	      return;
-	    }
-	}
-      /* switch layer group on/off */
-      ChangeGroupVisibility (layer, active, false);
-      redraw = TRUE;
-      break;
-    }
-
-  layer_select_button_cb_hold_off = TRUE;
-  layer_enable_button_cb_hold_off = TRUE;
-  ghid_layer_buttons_update ();
-  layer_select_button_cb_hold_off = FALSE;
-  layer_enable_button_cb_hold_off = FALSE;
-
-  if (redraw)
-    ghid_invalidate_all();
-}
-
-static void
-layer_button_set_color (LayerButtonSet * lb, gchar * color_string,
-                        bool set_prelight)
-{
-  GdkColor color;
-
-  if (!lb->layer_enable_ebox)
-    return;
-
-  color.red = color.green = color.blue = 0;
-  ghid_map_color_string (color_string, &color);
-  gtk_widget_modify_bg (lb->layer_enable_ebox, GTK_STATE_ACTIVE, &color);
-  gtk_widget_modify_bg (lb->layer_enable_ebox, GTK_STATE_PRELIGHT,
-                        set_prelight ? &color : NULL);
-
-  gtk_widget_modify_fg (lb->label, GTK_STATE_ACTIVE, &WhitePixel);
-}
-
-void
-layer_enable_button_set_label (GtkWidget * label, gchar * text)
-{
-  gchar *s;
-
-  if (ghidgui->small_label_markup)
-    s = g_strdup_printf ("<small>%s</small>", text);
-  else
-    s = g_strdup (text);
-  gtk_label_set_markup (GTK_LABEL (label), s);
-  g_free (s);
-}
-
-static void
-ghid_show_layer_buttons(void)
-{
-	LayerButtonSet *lb;
-	gint	i;
-
-	for (i = 0; i < MAX_LAYER; ++i)
-	{
-		lb = &layer_buttons[i];
-		if (i < max_copper_layer)
-		  {
-			gtk_widget_show(lb->layer_enable_button);
-			gtk_widget_show(lb->radio_select_button);
-		  }
-		else
-		  {
-			gtk_widget_hide(lb->layer_enable_button);
-			gtk_widget_hide(lb->radio_select_button);
-		  }
-	}
-}
-
-  /* After layers comes some special cases.  Since silk and netlist (rats)
-     |  are selectable as separate drawing areas, they are more consistently
-     |  placed after the layers in the gui so the select radio buttons will
-     |  be grouped.  This is different from Xt PCB which had a different looking
-     |  select interface.
-   */
-static void
-make_layer_buttons (GtkWidget * vbox, GHidPort * port)
-{
-  LayerButtonSet *lb;
-  GtkWidget *table, *ebox, *label, *button, *hbox;
-  GSList *group = NULL;
+  GHidLayerSelector *layersel = GHID_LAYER_SELECTOR (layer_selector);
   gchar *text;
-  gint i;
   gchar *color_string;
-  gboolean active = TRUE;
-
-  hbox = gtk_hbox_new (FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 4);
-  table = gtk_table_new (N_LAYER_BUTTONS, 2, FALSE);
-  gtk_box_pack_start(GTK_BOX(hbox), table, FALSE, FALSE, 3);
-
-  for (i = 0; i < N_LAYER_BUTTONS; ++i)
-    {
-      lb = &layer_buttons[i];
-      lb->index = i;
-
-      if (i < N_SELECTABLE_LAYER_BUTTONS)
-	{
-	  button = gtk_radio_button_new (group);
-	  group = gtk_radio_button_get_group (GTK_RADIO_BUTTON (button));
-	  gtk_table_attach_defaults (GTK_TABLE (table), button,
-				     0, 1, i, i + 1);
-
-	  lb->radio_select_button = button;
-	  g_signal_connect (G_OBJECT (button), "toggled",
-			    G_CALLBACK (layer_select_button_cb), lb);
-	}
-
-      layer_process (&color_string, &text, &active, i);
-      
-      button = gtk_check_button_new ();
-      label = gtk_label_new ("");
-      gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
-      layer_enable_button_set_label (label, text);
-
-      ebox = gtk_event_box_new ();
-      gtk_container_add (GTK_CONTAINER (ebox), label);
-      gtk_container_add (GTK_CONTAINER (button), ebox);
-      gtk_table_attach_defaults (GTK_TABLE (table), button, 1, 2, i, i + 1);
-/*		gtk_box_pack_start(GTK_BOX(hbox), button, TRUE, TRUE, 0); */
-      gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (button), FALSE);
-
-      lb->layer_enable_button = button;
-      lb->layer_enable_ebox = ebox;
-      lb->text = g_strdup (text);
-      lb->label = label;
-
-      layer_button_set_color (lb, color_string, active);
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), active);
-
-      g_signal_connect (G_OBJECT (button), "toggled",
-			G_CALLBACK (layer_enable_button_cb),
-			GINT_TO_POINTER (i));
-
-
-    }
+  gboolean active;
+ 
+  layer_process (&color_string, &text, &active, LAYER_BUTTON_SILK);
+  ghid_layer_selector_add_layer (layersel, LAYER_BUTTON_SILK,
+                                 text, color_string, active, TRUE, FALSE);
+  layer_process (&color_string, &text, &active, LAYER_BUTTON_RATS);
+  ghid_layer_selector_add_layer (layersel, LAYER_BUTTON_RATS,
+                                 text, color_string, active, TRUE, FALSE);
+  layer_process (&color_string, &text, &active, LAYER_BUTTON_PINS);
+  ghid_layer_selector_add_layer (layersel, LAYER_BUTTON_PINS,
+                                 text, color_string, active, FALSE, FALSE);
+  layer_process (&color_string, &text, &active, LAYER_BUTTON_VIAS);
+  ghid_layer_selector_add_layer (layersel, LAYER_BUTTON_VIAS,
+                                 text, color_string, active, FALSE, FALSE);
+  layer_process (&color_string, &text, &active, LAYER_BUTTON_FARSIDE);
+  ghid_layer_selector_add_layer (layersel, LAYER_BUTTON_FARSIDE,
+                                 text, color_string, active, FALSE, FALSE);
+  layer_process (&color_string, &text, &active, LAYER_BUTTON_MASK);
+  ghid_layer_selector_add_layer (layersel, LAYER_BUTTON_MASK,
+                                 text, color_string, active, FALSE, FALSE);
 }
 
+/*! \brief callback for ghid_layer_selector_update_colors */
+const gchar *
+get_layer_color (gint layer)
+{
+  gchar *rv;
+  layer_process (&rv, NULL, NULL, layer);
+  return rv;
+}
 
-  /* If new color scheme is loaded from the config or user changes a color
-     |  in the preferences, make sure our layer button colors get updated.
-   */
+/*! \brief Update a layer selector's color scheme */
 void
 ghid_layer_buttons_color_update (void)
 {
-  gchar *color_string;
-  LayerButtonSet *lb;
-  gint i;
-
-  if (!gport->drawing_area)
-    return;
-
-  /* Fixme: should the color set be maintained in both the PCB and the
-     |  Settings struct?
-   */
+  ghid_layer_selector_update_colors
+    (GHID_LAYER_SELECTOR (ghidgui->layer_selector), get_layer_color);
   pcb_colors_from_settings (PCB);
-
-  for (i = 0; i < N_LAYER_BUTTONS; ++i)
-    {
-      bool active;
-
-      lb = &layer_buttons[i];
-
-      layer_process (&color_string, NULL, NULL, i);
-      active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (lb));
-      layer_button_set_color (lb, color_string, active);
-    }
 }
-
-
-  /* Update layer button labels and enabled state to match current PCB.
-   */
-void
-ghid_layer_enable_buttons_update (void)
+ 
+/*! \brief Populate a layer selector with all layers Gtk is aware of */
+static void
+make_layer_buttons (GtkWidget *layersel)
 {
-  LayerButtonSet *lb;
-  gchar *s;
-  gchar *color_string;
   gint i;
+  gchar *text;
+  gchar *color_string;
+  gboolean active = TRUE;
 
-#ifdef DEBUG_MENUS
-  printf ("ghid_layer_enable_buttons_update()\n");
-#endif
-
-  /* Update layer button labels and active state to state inside of PCB
-   */
-  layer_enable_button_cb_hold_off = TRUE;
   for (i = 0; i < max_copper_layer; ++i)
     {
-      lb = &layer_buttons[i];
-      s = (gchar *)UNKNOWN (PCB->Data->Layer[i].Name);
-      if (dup_string (&lb->text, s))
-	{
-	  layer_enable_button_set_label (lb->label, _(s));
-	  ghid_config_layer_name_update (_(s), i);
-	}
-      if (Settings.verbose)
-	{
-	  gboolean active, newone;
-
-	  active =
-	    gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON
-					  (lb->layer_enable_button));
-	  newone = PCB->Data->Layer[i].On;
-	  if (active != newone)
-	    printf ("ghid_layer_enable_buttons_update: active=%d new=%d\n",
-		    active, newone);
-	}
-      layer_process (&color_string, NULL, NULL, i);
-      layer_button_set_color (lb, color_string, PCB->Data->Layer[i].On);
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON
-				    (lb->layer_enable_button),
-				    PCB->Data->Layer[i].On);
+      layer_process (&color_string, &text, &active, i);
+      ghid_layer_selector_add_layer (GHID_LAYER_SELECTOR (layersel), i,
+                                     text, color_string, active, TRUE, TRUE);
     }
-  /* Buttons for elements (silk), rats, pins, vias, and far side don't
-     |  change labels.
-   */
-  lb = &layer_buttons[LAYER_BUTTON_SILK];
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (lb->layer_enable_button),
-				PCB->ElementOn);
-
-  lb = &layer_buttons[LAYER_BUTTON_RATS];
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (lb->layer_enable_button),
-				PCB->RatOn);
-
-  lb = &layer_buttons[LAYER_BUTTON_PINS];
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (lb->layer_enable_button),
-				PCB->PinOn);
-
-  lb = &layer_buttons[LAYER_BUTTON_VIAS];
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (lb->layer_enable_button),
-				PCB->ViaOn);
-
-  lb = &layer_buttons[LAYER_BUTTON_FARSIDE];
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (lb->layer_enable_button),
-				PCB->InvisibleObjectsOn);
-  layer_enable_button_cb_hold_off = FALSE;
 }
 
-void
-ghid_layer_button_select (gint layer)
+
+/*! \brief callback for ghid_layer_selector_delete_layers */
+gboolean
+get_layer_delete (gint layer)
 {
-  if (layer != layer_select_button_index)
-    {
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON
-				    (layer_buttons[layer].
-				     radio_select_button), TRUE);
-      layer_select_button_index = layer;
-    }
+  return layer >= max_copper_layer;
 }
 
-  /* Main layer button synchronization with current PCB state.  Called when
-     |  user toggles layer visibility or changes drawing layer or when internal
-     |  PCB code changes layer visibility.
-   */
-
+/*! \brief Synchronize layer selector widget with current PCB state
+ *  \par Function Description
+ *  Called when user toggles layer visibility or changes drawing layer,
+ *  or when layer visibility is changed programatically.
+ */
 void
 ghid_layer_buttons_update (void)
 {
   gint layer;
-  gboolean active = FALSE;
-  gboolean old_holdoff;
-  char tmpnm[40];
-  int i;
-  int set;
-  gchar *text;
-  GtkAction *a;
-  GValue setfalse = { 0 };
-  GValue settrue = { 0 };
-  GValue setlabel = { 0 };
 
-  g_value_init (&setfalse, G_TYPE_BOOLEAN);
-  g_value_init (&settrue, G_TYPE_BOOLEAN);
-  g_value_set_boolean (&setfalse, FALSE);
-  g_value_set_boolean (&settrue, TRUE);
-  g_value_init (&setlabel, G_TYPE_STRING);
-
-#ifdef DEBUG_MENUS
-  printf ("ghid_layer_buttons_update()\n");
-#endif
-
-  if (!ghidgui || ghidgui->creating)
+  if (ignore_layer_update)
     return;
+ 
+  ghid_layer_selector_delete_layers
+    (GHID_LAYER_SELECTOR (ghidgui->layer_selector),
+     get_layer_delete);
+  make_layer_buttons (ghidgui->layer_selector);
+  make_virtual_layer_buttons (ghidgui->layer_selector);
+  ghid_main_menu_install_layer_selector
+      (GHID_MAIN_MENU (ghidgui->menu_bar),
+       GHID_LAYER_SELECTOR (ghidgui->layer_selector));
 
-  ghid_layer_enable_buttons_update ();
-
-  /* Turning off a layer that was selected will cause PCB to switch to
-     |  another layer.
-   */
+  /* Sync selected layer with PCB's state */
   if (PCB->RatDraw)
     layer = LAYER_BUTTON_RATS;
+  else if (PCB->SilkActive)
+    layer = LAYER_BUTTON_SILK;
   else
-    layer = PCB->SilkActive ? LAYER_BUTTON_SILK : LayerStack[0];
+    layer = LayerStack[0];
 
-  if (layer < max_copper_layer)
-    active = PCB->Data->Layer[layer].On;
-  else if (layer == LAYER_BUTTON_SILK)
-    active = PCB->ElementOn;
-  else if (layer == LAYER_BUTTON_RATS)
-    active = PCB->RatOn;
-
-  if (Settings.verbose)
-    {
-      printf ("ghid_layer_buttons_update cur_index=%d update_index=%d\n",
-	      layer_select_button_index, layer);
-      if (active && layer != layer_select_button_index)
-	printf ("\tActivating button %d\n", layer);
-    }
-
-  /* mask the callbacks */
-  old_holdoff = ghidgui->toggle_holdoff;
-  ghidgui->toggle_holdoff = TRUE;
-  
-  /* update the check marks in the layer pick menu */
-  for (i = 0; i < N_LAYER_BUTTONS ; i++)
-    {
-      sprintf (tmpnm, "%s%d", LAYERPICK, i);
-      a = gtk_action_group_get_action (ghidgui->main_actions, tmpnm);
-
-      layer_process (NULL, &text, &set, i);
-      g_value_set_string (&setlabel, text);
-
-      if (a != NULL)
-	{
-	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_copper_layer && i < MAX_LAYER) ? &setfalse : &settrue);
-	  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (a), (set && (i == layer) ) ? TRUE : FALSE);
-	  g_object_set_property (G_OBJECT (a), "label", &setlabel);
-	}
-
-      sprintf (tmpnm, "%s%d", LAYERVIEW, i);
-      a = gtk_action_group_get_action (ghidgui->main_actions, tmpnm);
-      if (a != NULL)
-	{
-	  g_object_set_property (G_OBJECT (a), "visible", (i >= max_copper_layer && i < MAX_LAYER) ? &setfalse : &settrue);
-	  gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (a), set ? TRUE : FALSE);
-	  g_value_set_string (&setlabel, text);
-	  g_object_set_property (G_OBJECT (a), "label", &setlabel);
-	}
-
-
-    }
-  g_value_unset (&setfalse);
-  g_value_unset (&settrue);
-  g_value_unset (&setlabel);
-  ghidgui->toggle_holdoff = old_holdoff;
-
-  if (active && layer != layer_select_button_index)
-    {
-      layer_select_button_cb_hold_off = TRUE;
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON
-				    (layer_buttons[layer].
-				     radio_select_button), TRUE);
-      layer_select_button_index = layer;
-      layer_select_button_cb_hold_off = FALSE;
-    }
+  ghid_layer_selector_select_layer
+    (GHID_LAYER_SELECTOR (ghidgui->layer_selector), layer);
 }
 
-
+/*! \brief Called when user clicks OK on route style dialog */
 static void
-route_style_edit_cb (GtkWidget * widget, GHidPort * port)
+route_styles_edited_cb (GHidRouteStyleSelector *rss, gboolean save,
+                        gpointer data)
 {
-  hid_action("AdjustStyle");
+  if (save)
+    {
+      g_free (Settings.Routes);
+      Settings.Routes = make_route_string (PCB->RouteStyle, NUM_STYLES);
+      ghidgui->config_modified = TRUE;
+      ghid_config_files_write ();
+    }
+  ghid_main_menu_install_route_style_selector
+      (GHID_MAIN_MENU (ghidgui->menu_bar),
+       GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector));
 }
 
+/*! \brief Called when a route style is selected */
 static void
-route_style_select_button_cb (GtkToggleButton * button, gpointer data)
+route_style_changed_cb (GHidRouteStyleSelector *rss, RouteStyleType *rst,
+                        gpointer data)
 {
-  RouteStyleType *rst;
-  gchar buf[16];
-  gint index = GPOINTER_TO_INT (data);
-
-  if (ghidgui->toggle_holdoff || index == NUM_STYLES + 2)
-    return;
-
-  if (route_style_index == index)
-    return;
-  route_style_index = index;
-
-  if (index < NUM_STYLES)
-    {
-      snprintf (buf, sizeof (buf), "%d", index + 1);
-      if (gtk_toggle_button_get_active (button))
-	hid_actionl ("RouteStyle", buf, NULL);
-    }
-  else if (index < NUM_STYLES + 2)
-    {
-      rst = &route_style_button[index].route_style;
-      SetLineSize (rst->Thick);
-      SetViaSize (rst->Diameter, TRUE);
-      SetViaDrillingHole (rst->Hole, TRUE);
-      SetKeepawayWidth (rst->Keepaway);
-    }
-  gtk_widget_set_sensitive (route_style_edit_button, TRUE);
+  pcb_use_route_style (rst);
   ghid_set_status_line_label();
 }
 
-static void
-ghid_route_style_temp_buttons_hide (void)
-{
-  gtk_widget_hide (route_style_button[NUM_STYLES].button);
-  gtk_widget_hide (route_style_button[NUM_STYLES + 1].button);
-
-  /* This one never becomes visibile.
-   */
-  gtk_widget_hide (route_style_button[NUM_STYLES + 2].button);
-}
-
-
-static void
-make_route_style_buttons (GtkWidget * vbox, GHidPort * port)
-{
-  GtkWidget *button;
-  GSList *group = NULL;
-  RouteStyleButton *rbut;
-  gint i;
-
-  button = gtk_button_new_with_label (_("Route Style"));
-  gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 2);
-  g_signal_connect (button, "clicked",
-		    G_CALLBACK (route_style_edit_cb), port);
-  route_style_edit_button = button;
-
-  for (i = 0; i < N_ROUTE_STYLES; ++i)
-    {
-      RouteStyleType *rst;
-      gchar buf[32];
-
-      rbut = &route_style_button[i];
-      if (i < NUM_STYLES)
-	{
-	  rst = &PCB->RouteStyle[i];
-	  button = gtk_radio_button_new_with_label (group, _(rst->Name));
-	}
-      else
-	{
-	  snprintf (buf, sizeof (buf), _("Temp%d"), i - NUM_STYLES + 1);
-	  button = gtk_radio_button_new_with_label (group, buf);
-	  if (!route_style_button[i].route_style.Name)
-	    route_style_button[i].route_style.Name = g_strdup (buf);
-	}
-      group = gtk_radio_button_get_group (GTK_RADIO_BUTTON (button));
-      gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
-      rbut->button = button;
-      if (i < NUM_STYLES + 2)
-	g_signal_connect (G_OBJECT (button), "toggled",
-			  G_CALLBACK (route_style_select_button_cb),
-			  GINT_TO_POINTER (i));
-    }
-}
-
+/*! \brief Configure the route style selector */
 void
-ghid_route_style_button_set_active (gint n)
+make_route_style_buttons (GHidRouteStyleSelector *rss)
 {
-  if (n < 0 || n >= N_ROUTE_STYLES)
-    return;
-
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON
-				(route_style_button[n].button), TRUE);
+  int i;
+  for (i = 0; i < NUM_STYLES; ++i)
+    ghid_route_style_selector_add_route_style (rss, &PCB->RouteStyle[i]);
+  g_signal_connect (G_OBJECT (rss), "select_style",
+                    G_CALLBACK (route_style_changed_cb), NULL);
+  g_signal_connect (G_OBJECT (rss), "style_edited",
+                    G_CALLBACK (route_styles_edited_cb), NULL);
+  ghid_main_menu_install_route_style_selector
+      (GHID_MAIN_MENU (ghidgui->menu_bar),
+       GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector));
 }
-
-  /* Upate the route style button selected to match current route settings.
-     |  If user has changed an in use route setting so they don't match any
-     |  defined route style, select the invisible dummy route style button.
-   */
-void
-ghid_route_style_buttons_update (void)
-{
-  RouteStyleType *rst;
-  gint i;
-
-  for (i = 0; i < NUM_STYLES + 2; ++i)
-    {
-      if (i < NUM_STYLES)
-	rst = &PCB->RouteStyle[i];
-      else
-	{
-	  if (!route_style_button[i].shown)	/* Temp button shown? */
-	    continue;
-	  rst = &route_style_button[i].route_style;
-	}
-      if (Settings.LineThickness == rst->Thick
-	  && Settings.ViaThickness == rst->Diameter
-	  && Settings.ViaDrillingHole == rst->Hole
-	  && Settings.Keepaway == rst->Keepaway)
-	break;
-    }
-  /* If i == NUM_STYLES + 2 at this point, we activate the invisible button.
-   */
-  ghidgui->toggle_holdoff = TRUE;
-  ghid_route_style_button_set_active (i);
-  route_style_index = i;
-  ghidgui->toggle_holdoff = FALSE;
-
-  gtk_widget_set_sensitive (route_style_edit_button,
-			    (i == NUM_STYLES + 2) ? FALSE : TRUE);
-}
-
-void
-ghid_route_style_set_button_label (gchar * name, gint index)
-{
-  if (index < 0 || index >= NUM_STYLES || !route_style_button[index].button)
-    return;
-  gtk_button_set_label (GTK_BUTTON (route_style_button[index].button),
-			_(name));
-}
-
-void
-ghid_route_style_set_temp_style (RouteStyleType * rst, gint which)
-{
-  RouteStyleButton *rsb;
-  gchar *tmp;
-  gint index = which + NUM_STYLES;
-
-  if (which < 0 || which > 1)
-    return;
-  rsb = &route_style_button[index];
-  gtk_widget_show (rsb->button);
-  rsb->shown = TRUE;
-  tmp = rsb->route_style.Name;
-  rsb->route_style = *rst;
-  rsb->route_style.Name = tmp;
-  if (route_style_index != index)
-    {
-      route_style_index = index;	/* Sets already done */
-      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (rsb->button), TRUE);
-    }
-}
-
-
 
 /*
  *  ---------------------------------------------------------------
@@ -1973,7 +938,10 @@ ghid_route_style_set_temp_style (RouteStyleType * rst, gint which)
  */
 typedef struct
 {
-  GtkWidget *button, *box0, *box1;
+  GtkWidget *button;
+  GtkWidget *toolbar_button;
+  guint button_cb_id;
+  guint toolbar_button_cb_id;
   gchar *name;
   gint mode;
   gchar **xpm;
@@ -1982,36 +950,62 @@ ModeButton;
 
 
 static ModeButton mode_buttons[] = {
-  {NULL, NULL, NULL, "via", VIA_MODE, via},
-  {NULL, NULL, NULL, "line", LINE_MODE, line},
-  {NULL, NULL, NULL, "arc", ARC_MODE, arc},
-  {NULL, NULL, NULL, "text", TEXT_MODE, text},
-  {NULL, NULL, NULL, "rectangle", RECTANGLE_MODE, rect},
-  {NULL, NULL, NULL, "polygon", POLYGON_MODE, poly},
-  {NULL, NULL, NULL, "polygonhole", POLYGONHOLE_MODE, polyhole},
-  {NULL, NULL, NULL, "buffer", PASTEBUFFER_MODE, buf},
-  {NULL, NULL, NULL, "remove", REMOVE_MODE, del},
-  {NULL, NULL, NULL, "rotate", ROTATE_MODE, rot},
-  {NULL, NULL, NULL, "insertPoint", INSERTPOINT_MODE, ins},
-  {NULL, NULL, NULL, "thermal", THERMAL_MODE, thrm},
-  {NULL, NULL, NULL, "select", ARROW_MODE, sel},
-  {NULL, NULL, NULL, "lock", LOCK_MODE, lock}
+  {NULL, NULL, 0, 0, "via", VIA_MODE, via},
+  {NULL, NULL, 0, 0, "line", LINE_MODE, line},
+  {NULL, NULL, 0, 0, "arc", ARC_MODE, arc},
+  {NULL, NULL, 0, 0, "text", TEXT_MODE, text},
+  {NULL, NULL, 0, 0, "rectangle", RECTANGLE_MODE, rect},
+  {NULL, NULL, 0, 0, "polygon", POLYGON_MODE, poly},
+  {NULL, NULL, 0, 0, "polygonhole", POLYGONHOLE_MODE, polyhole},
+  {NULL, NULL, 0, 0, "buffer", PASTEBUFFER_MODE, buf},
+  {NULL, NULL, 0, 0, "remove", REMOVE_MODE, del},
+  {NULL, NULL, 0, 0, "rotate", ROTATE_MODE, rot},
+  {NULL, NULL, 0, 0, "insertPoint", INSERTPOINT_MODE, ins},
+  {NULL, NULL, 0, 0, "thermal", THERMAL_MODE, thrm},
+  {NULL, NULL, 0, 0, "select", ARROW_MODE, sel},
+  {NULL, NULL, 0, 0, "lock", LOCK_MODE, lock}
 };
 
 static gint n_mode_buttons = G_N_ELEMENTS (mode_buttons);
 
+static void
+do_set_mode (int mode)
+{
+  SetMode (mode);
+  ghid_mode_cursor (mode);
+  ghidgui->settings_mode = mode;
+}
+
+static void
+mode_toolbar_button_toggled_cb (GtkToggleButton *button, ModeButton * mb)
+{
+  gboolean active = gtk_toggle_button_get_active (button);
+
+  if (mb->button != NULL)
+    {
+      g_signal_handler_block (mb->button, mb->button_cb_id);
+      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (mb->button), active);
+      g_signal_handler_unblock (mb->button, mb->button_cb_id);
+    }
+
+  if (active)
+    do_set_mode (mb->mode);
+}
 
 static void
 mode_button_toggled_cb (GtkWidget * widget, ModeButton * mb)
 {
   gboolean active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (widget));
 
-  if (active)
+  if (mb->toolbar_button != NULL)
     {
-    SetMode (mb->mode);
-    ghid_mode_cursor (mb->mode);
-    ghidgui->settings_mode = mb->mode;
-	}
+      g_signal_handler_block (mb->toolbar_button, mb->toolbar_button_cb_id);
+      gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (mb->toolbar_button), active);
+      g_signal_handler_unblock (mb->toolbar_button, mb->toolbar_button_cb_id);
+    }
+
+  if (active)
+    do_set_mode (mb->mode);
 }
 
 void
@@ -2024,110 +1018,111 @@ ghid_mode_buttons_update (void)
     {
       mb = &mode_buttons[i];
       if (Settings.Mode == mb->mode)
-	{
-	  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (mb->button), TRUE);
-	  break;
-	}
+        {
+          g_signal_handler_block (mb->button, mb->button_cb_id);
+          gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (mb->button), TRUE);
+          g_signal_handler_unblock (mb->button, mb->button_cb_id);
+
+          g_signal_handler_block (mb->toolbar_button, mb->toolbar_button_cb_id);
+          gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (mb->toolbar_button), TRUE);
+          g_signal_handler_unblock (mb->toolbar_button, mb->toolbar_button_cb_id);
+          break;
+        }
     }
 }
 
 void
-ghid_pack_mode_buttons(void)
+ghid_pack_mode_buttons (void)
 {
-	ModeButton *mb;
-	gint	i;
-  static gint	last_pack_compact = -1;
-
-  if (last_pack_compact >= 0)
-		{
-		if (last_pack_compact)
-			gtk_container_remove(GTK_CONTAINER(ghidgui->mode_buttons1_vbox),
-						ghidgui->mode_buttons1_frame);
-		else
-			gtk_container_remove(GTK_CONTAINER(ghidgui->mode_buttons0_frame_vbox),
-						ghidgui->mode_buttons0_frame);
-
-		for (i = 0; i < n_mode_buttons; ++i)
-			{
-			mb = &mode_buttons[i];
-			if (last_pack_compact)
-				gtk_container_remove (GTK_CONTAINER (mb->box1), mb->button);
-			else
-				gtk_container_remove (GTK_CONTAINER (mb->box0), mb->button);
-			}
-		}
-	for (i = 0; i < n_mode_buttons; ++i)
-		{
-		mb = &mode_buttons[i];
-		if (ghidgui->compact_vertical)
-			gtk_box_pack_start (GTK_BOX (mb->box1), mb->button, FALSE, FALSE, 0);
-		else
-			gtk_box_pack_start (GTK_BOX (mb->box0), mb->button, FALSE, FALSE, 0);
-		}
-	if (ghidgui->compact_vertical)
-		{
-		gtk_box_pack_start(GTK_BOX(ghidgui->mode_buttons1_vbox),
-				ghidgui->mode_buttons1_frame, FALSE, FALSE, 0);
-		gtk_widget_show_all(ghidgui->mode_buttons1_frame);
-		}
-	else
-		{
-		gtk_box_pack_start(GTK_BOX(ghidgui->mode_buttons0_frame_vbox),
-				ghidgui->mode_buttons0_frame, FALSE, FALSE, 0);
-		gtk_widget_show_all(ghidgui->mode_buttons0_frame);
-		}
-	last_pack_compact = ghidgui->compact_vertical;
+  if (ghidgui->compact_vertical)
+    {
+      gtk_widget_hide (ghidgui->mode_buttons_frame);
+      gtk_widget_show_all (ghidgui->mode_toolbar);
+    }
+  else
+    {
+      gtk_widget_hide (ghidgui->mode_toolbar);
+      gtk_widget_show_all (ghidgui->mode_buttons_frame);
+    }
 }
 
 static void
-make_mode_buttons (GHidPort * port)
+make_mode_buttons_and_toolbar (GtkWidget **mode_frame,
+                               GtkWidget **mode_toolbar)
 {
-  ModeButton *mb;
-  GtkWidget *hbox0 = NULL, *button;
+  GtkToolItem *tool_item;
+  GtkWidget *vbox, *hbox = NULL;
   GtkWidget *image;
   GdkPixbuf *pixbuf;
   GSList *group = NULL;
-  gint i;
+  GSList *toolbar_group = NULL;
+  ModeButton *mb;
+  int i;
+
+  *mode_toolbar = gtk_toolbar_new ();
+
+  *mode_frame = gtk_frame_new (NULL);
+  vbox = gtk_vbox_new (FALSE, 0);
+  gtk_container_add (GTK_CONTAINER (*mode_frame), vbox);
 
   for (i = 0; i < n_mode_buttons; ++i)
     {
       mb = &mode_buttons[i];
-      button = gtk_radio_button_new (group);
-      mb->button = button;
-      g_object_ref(G_OBJECT(mb->button));
-      group = gtk_radio_button_get_group (GTK_RADIO_BUTTON (button));
-      gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (button), FALSE);
 
+      /* Create tool button for mode frame */
+      mb->button = gtk_radio_button_new (group);
+      group = gtk_radio_button_get_group (GTK_RADIO_BUTTON (mb->button));
+      gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (mb->button), FALSE);
+
+      /* Create tool button for toolbar */
+      mb->toolbar_button = gtk_radio_button_new (toolbar_group);
+      toolbar_group = gtk_radio_button_get_group (GTK_RADIO_BUTTON (mb->toolbar_button));
+      gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (mb->toolbar_button), FALSE);
+
+      /* Pack mode-frame button into the frame */
       if ((i % ghidgui->n_mode_button_columns) == 0)
         {
-        hbox0 = gtk_hbox_new (FALSE, 0);
-        gtk_box_pack_start (GTK_BOX (ghidgui->mode_buttons0_vbox),
-            hbox0, FALSE, FALSE, 0);
+          hbox = gtk_hbox_new (FALSE, 0);
+          gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
         }
-      mb->box0 = hbox0;
+      gtk_box_pack_start (GTK_BOX (hbox), mb->button, FALSE, FALSE, 0);
 
-      mb->box1 = ghidgui->mode_buttons1_hbox;
+      /* Create a container for the toolbar button and add that */
+      tool_item = gtk_tool_item_new ();
+      gtk_container_add (GTK_CONTAINER (tool_item), mb->toolbar_button);
+      gtk_toolbar_insert (GTK_TOOLBAR (*mode_toolbar), tool_item, -1);
 
+      /* Load the image for the button, create GtkImage widgets for both
+       * the grid button and the toolbar button, then pack into the buttons
+       */
       pixbuf = gdk_pixbuf_new_from_xpm_data ((const char **) mb->xpm);
       image = gtk_image_new_from_pixbuf (pixbuf);
-      g_object_unref (G_OBJECT (pixbuf));
+      gtk_container_add (GTK_CONTAINER (mb->button), image);
+      image = gtk_image_new_from_pixbuf (pixbuf);
+      gtk_container_add (GTK_CONTAINER (mb->toolbar_button), image);
+      g_object_unref (pixbuf);
 
-      gtk_container_add (GTK_CONTAINER (button), image);
-      if (!strcmp (mb->name, "select"))
-        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
-      g_signal_connect (button, "toggled",
-			G_CALLBACK (mode_button_toggled_cb), mb);
+      if (strcmp (mb->name, "select") == 0)
+        {
+          gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (mb->button), TRUE);
+          gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (mb->toolbar_button), TRUE);
+        }
+
+      mb->button_cb_id =
+        g_signal_connect (mb->button, "toggled",
+                          G_CALLBACK (mode_button_toggled_cb), mb);
+      mb->toolbar_button_cb_id =
+        g_signal_connect (mb->toolbar_button, "toggled",
+                          G_CALLBACK (mode_toolbar_button_toggled_cb), mb);
     }
-  ghid_pack_mode_buttons();
 }
+
 
 /*
  * ---------------------------------------------------------------
  * Top window
  * ---------------------------------------------------------------
  */
-
-static GtkWidget *ghid_left_sensitive_box;
 
 static gint
 delete_chart_cb (GtkWidget * widget, GdkEvent * event, GHidPort * port)
@@ -2145,7 +1140,94 @@ delete_chart_cb (GtkWidget * widget, GdkEvent * event, GHidPort * port)
 static void
 destroy_chart_cb (GtkWidget * widget, GHidPort * port)
 {
+  ghid_shutdown_renderer (port);
   gtk_main_quit ();
+}
+
+static void
+get_widget_styles (GtkStyle **menu_bar_style,
+                   GtkStyle **tool_button_style,
+                   GtkStyle **tool_button_label_style)
+{
+  GtkWidget *tool_button;
+  GtkWidget *tool_button_label;
+  GtkToolItem *tool_item;
+
+  /* Build a tool item to extract the theme's styling for a toolbar button with text */
+  tool_item = gtk_tool_item_new ();
+  gtk_toolbar_insert (GTK_TOOLBAR (ghidgui->mode_toolbar), tool_item, 0);
+  tool_button = gtk_button_new ();
+  gtk_container_add (GTK_CONTAINER (tool_item), tool_button);
+  tool_button_label = gtk_label_new ("");
+  gtk_container_add (GTK_CONTAINER (tool_button), tool_button_label);
+
+  /* Grab the various styles we need */
+  gtk_widget_ensure_style (ghidgui->menu_bar);
+  *menu_bar_style = gtk_widget_get_style (ghidgui->menu_bar);
+
+  gtk_widget_ensure_style (tool_button);
+  *tool_button_style = gtk_widget_get_style (tool_button);
+
+  gtk_widget_ensure_style (tool_button_label);
+  *tool_button_label_style = gtk_widget_get_style (tool_button_label);
+
+  gtk_widget_destroy (GTK_WIDGET (tool_item));
+}
+
+static void
+do_fix_topbar_theming (void)
+{
+  GtkWidget *rel_pos_frame;
+  GtkWidget *abs_pos_frame;
+  GtkStyle *menu_bar_style;
+  GtkStyle *tool_button_style;
+  GtkStyle *tool_button_label_style;
+
+  get_widget_styles (&menu_bar_style,
+                     &tool_button_style,
+                     &tool_button_label_style);
+
+  /* Style the top bar background as if it were all a menu bar */
+  gtk_widget_set_style (ghidgui->top_bar_background, menu_bar_style);
+
+  /* Style the cursor position labels using the menu bar style as well.
+   * If this turns out to cause problems with certain gtk themes, we may
+   * need to grab the GtkStyle associated with an actual menu item to
+   * get a text color to render with.
+   */
+  gtk_widget_set_style (ghidgui->cursor_position_relative_label, menu_bar_style);
+  gtk_widget_set_style (ghidgui->cursor_position_absolute_label, menu_bar_style);
+
+  /* Style the units button as if it were a toolbar button - hopefully
+   * this isn't too ugly sitting on a background themed as a menu bar.
+   * It is unlikely any theme defines colours for a GtkButton sitting on
+   * a menu bar.
+   */
+  rel_pos_frame = gtk_widget_get_parent (ghidgui->cursor_position_relative_label);
+  abs_pos_frame = gtk_widget_get_parent (ghidgui->cursor_position_absolute_label);
+  gtk_widget_set_style (rel_pos_frame, menu_bar_style);
+  gtk_widget_set_style (abs_pos_frame, menu_bar_style);
+  gtk_widget_set_style (ghidgui->grid_units_button, tool_button_style);
+  gtk_widget_set_style (ghidgui->grid_units_label, tool_button_label_style);
+}
+
+/* Attempt to produce a conststent style for our extra menu-bar items by
+ * copying aspects from the menu bar style set by the user's GTK theme.
+ * Setup signal handlers to update our efforts if the user changes their
+ * theme whilst we are running.
+ */
+static void
+fix_topbar_theming (void)
+{
+  GtkSettings *settings;
+
+  do_fix_topbar_theming ();
+
+  settings = gtk_widget_get_settings (ghidgui->top_bar_background);
+  g_signal_connect (settings, "notify::gtk-theme-name",
+                    G_CALLBACK (do_fix_topbar_theming), NULL);
+  g_signal_connect (settings, "notify::gtk-font-name",
+                    G_CALLBACK (do_fix_topbar_theming), NULL);
 }
 
 /* 
@@ -2156,11 +1238,10 @@ static void
 ghid_build_pcb_top_window (void)
 {
   GtkWidget *window;
-  GtkWidget *vbox_main, *vbox_left, *hbox_middle, *hbox = NULL;
-  GtkWidget *viewport, *ebox, *vbox, *frame;
+  GtkWidget *vbox_main, *hbox_middle, *hbox;
+  GtkWidget *vbox, *frame;
   GtkWidget *label;
   GHidPort *port = &ghid_port;
-  gchar *s;
   GtkWidget *scrolled;
 
   window = gport->top_window;
@@ -2169,9 +1250,13 @@ ghid_build_pcb_top_window (void)
   gtk_container_add (GTK_CONTAINER (window), vbox_main);
 
   /* -- Top control bar */
-  hbox = gtk_hbox_new (FALSE, 4);
-  gtk_box_pack_start (GTK_BOX (vbox_main), hbox, FALSE, FALSE, 0);
-  ghidgui->top_hbox = hbox;
+  ghidgui->top_bar_background = gtk_event_box_new ();
+  gtk_box_pack_start (GTK_BOX (vbox_main),
+                      ghidgui->top_bar_background, FALSE, FALSE, 0);
+
+  ghidgui->top_hbox = gtk_hbox_new (FALSE, 4);
+  gtk_container_add (GTK_CONTAINER (ghidgui->top_bar_background),
+                     ghidgui->top_hbox);
 
   /*
    * menu_hbox will be made insensitive when the gui needs
@@ -2180,124 +1265,86 @@ ghid_build_pcb_top_window (void)
   ghidgui->menu_hbox = gtk_hbox_new (FALSE, 0);
   gtk_box_pack_start (GTK_BOX (ghidgui->top_hbox), ghidgui->menu_hbox,
 		      FALSE, FALSE, 0);
-  vbox = gtk_vbox_new(FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(ghidgui->menu_hbox), vbox, FALSE, FALSE, 0);
-  hbox = gtk_hbox_new(FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
 
-  ghid_load_menus ();
-  make_top_menubar(hbox, port);
+  ghidgui->menubar_toolbar_vbox = gtk_vbox_new (FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (ghidgui->menu_hbox),
+                      ghidgui->menubar_toolbar_vbox, FALSE, FALSE, 0);
 
-  frame = gtk_frame_new(NULL);
-  gtk_widget_show(frame);
-  g_object_ref(G_OBJECT(frame));
-  ghidgui->mode_buttons1_vbox = vbox;
-  ghidgui->mode_buttons1_frame = frame;
-  ghidgui->mode_buttons1_hbox = gtk_hbox_new (FALSE, 0);
-  gtk_container_add(GTK_CONTAINER(frame), ghidgui->mode_buttons1_hbox);
+  /* Build layer menus */
+  ghidgui->layer_selector = ghid_layer_selector_new ();
+  make_layer_buttons (ghidgui->layer_selector);
+  make_virtual_layer_buttons (ghidgui->layer_selector);
+  g_signal_connect (G_OBJECT (ghidgui->layer_selector), "select-layer",
+                    G_CALLBACK (layer_selector_select_callback),
+                    NULL);
+  g_signal_connect (G_OBJECT (ghidgui->layer_selector), "toggle-layer",
+                    G_CALLBACK (layer_selector_toggle_callback),
+                    NULL);
+  g_signal_connect (G_OBJECT (ghidgui->layer_selector), "rename-layer",
+                    G_CALLBACK (layer_selector_rename_callback),
+                    NULL);
+  /* Build main menu */
+  ghidgui->menu_bar = ghid_load_menus ();
+  gtk_box_pack_start (GTK_BOX (ghidgui->menubar_toolbar_vbox),
+                      ghidgui->menu_bar, FALSE, FALSE, 0);
 
-  vbox = gtk_vbox_new(FALSE, 0);
-  gtk_box_pack_end(GTK_BOX(ghidgui->top_hbox), vbox,
-		      FALSE, FALSE, 0);
-  ghidgui->compact_vbox = gtk_vbox_new (FALSE, 0);
-  gtk_box_pack_end (GTK_BOX (ghidgui->top_hbox), ghidgui->compact_vbox,
-		      FALSE, FALSE, 0);
+  make_mode_buttons_and_toolbar (&ghidgui->mode_buttons_frame,
+                                 &ghidgui->mode_toolbar);
+  gtk_box_pack_start (GTK_BOX (ghidgui->menubar_toolbar_vbox),
+                      ghidgui->mode_toolbar, FALSE, FALSE, 0);
 
-  ghidgui->compact_hbox = gtk_hbox_new (FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(vbox), ghidgui->compact_hbox, TRUE, FALSE, 0);
 
-  /*
-   * The board name is optionally in compact_vbox and the position
-   * labels will be packed below or to the side.
-   */
-  hbox = gtk_hbox_new (FALSE, 0);
-  gtk_box_pack_start (GTK_BOX (ghidgui->compact_vbox), hbox, TRUE, FALSE, 2);
-  ghidgui->label_hbox = hbox;
-
-  label = gtk_label_new ("");
-  gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
-  if (ghidgui->name_label_string)
-    s =
-      g_strdup_printf (" <b><big>%s</big></b> ", ghidgui->name_label_string);
-  else
-    s = g_strdup ("<b><big>%s</big></b>");
-  gtk_label_set_markup (GTK_LABEL (label), s);
-  g_free (s);
-  gtk_box_pack_start (GTK_BOX (hbox), label, FALSE, TRUE, 4);
-  ghidgui->name_label = label;
-
-  /*
-   * The position_box pack location depends on user setting of
-   * compact horizontal mode.
-   */
   ghidgui->position_hbox = gtk_hbox_new (FALSE, 0);
-  g_object_ref(G_OBJECT(ghidgui->position_hbox));	/* so can remove it */
-  if (ghidgui->compact_horizontal)
-    {
-      gtk_box_pack_end (GTK_BOX (ghidgui->compact_vbox),
-		     ghidgui->position_hbox, TRUE, FALSE, 0);
-    }
-  else
-    {
-      gtk_box_pack_end(GTK_BOX(ghidgui->compact_hbox), ghidgui->position_hbox,
-		      FALSE, FALSE, 4);
-    }
+  gtk_box_pack_end (GTK_BOX(ghidgui->top_hbox),
+                    ghidgui->position_hbox, FALSE, FALSE, 4);
 
   make_cursor_position_labels (ghidgui->position_hbox, port);
 
   hbox_middle = gtk_hbox_new (FALSE, 0);
   gtk_box_pack_start (GTK_BOX (vbox_main), hbox_middle, TRUE, TRUE, 3);
 
+  fix_topbar_theming (); /* Must be called after toolbar is created */
 
   /* -- Left control bar */
-  ebox = gtk_event_box_new ();
-  gtk_widget_set_events (ebox, GDK_EXPOSURE_MASK);
-  gtk_box_pack_start (GTK_BOX (hbox_middle), ebox, FALSE, FALSE, 3);
-
-  /* 
-   * This box will also be made insensitive when the gui needs
+  /*
+   * This box will be made insensitive when the gui needs
    * a modal button GetLocation button press.
    */
-  ghid_left_sensitive_box = ebox;
+  ghidgui->left_toolbar = gtk_vbox_new (FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (hbox_middle),
+                      ghidgui->left_toolbar, FALSE, FALSE, 3);
 
-  vbox_left = gtk_vbox_new (FALSE, 0);
-  gtk_container_add (GTK_CONTAINER (ebox), vbox_left);
+  vbox = ghid_scrolled_vbox (ghidgui->left_toolbar, &scrolled,
+                             GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_box_pack_start (GTK_BOX(vbox), ghidgui->layer_selector,
+                      FALSE, FALSE, 0);
 
-  vbox = ghid_scrolled_vbox(vbox_left, &scrolled,
-      GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-  make_layer_buttons(vbox, port);
-
-  vbox = gtk_vbox_new(FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(vbox_left), vbox, FALSE, FALSE, 0);
-  ghidgui->mode_buttons0_frame_vbox = vbox;
-  frame = gtk_frame_new(NULL);
-  ghidgui->mode_buttons0_frame = frame;
-  gtk_widget_show(frame);
-  g_object_ref(G_OBJECT(frame));
-  ghidgui->mode_buttons0_vbox = gtk_vbox_new(FALSE, 0);
-  gtk_container_add(GTK_CONTAINER(frame), ghidgui->mode_buttons0_vbox);
-  make_mode_buttons (port);
+  /* ghidgui->mode_buttons_frame was created above in the call to
+   * make_mode_buttons_and_toolbar (...);
+   */
+  gtk_box_pack_start (GTK_BOX (ghidgui->left_toolbar),
+                      ghidgui->mode_buttons_frame, FALSE, FALSE, 0);
 
   frame = gtk_frame_new(NULL);
-  gtk_box_pack_end(GTK_BOX(vbox_left), frame, FALSE, FALSE, 0);
+  gtk_box_pack_end (GTK_BOX (ghidgui->left_toolbar), frame, FALSE, FALSE, 0);
   vbox = gtk_vbox_new(FALSE, 0);
   gtk_container_add(GTK_CONTAINER(frame), vbox);
   hbox = gtk_hbox_new(FALSE, 0);
   gtk_box_pack_start(GTK_BOX (vbox), hbox, FALSE, FALSE, 1);
-  vbox = gtk_vbox_new(FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(hbox), vbox, FALSE, FALSE, 4);
-  make_route_style_buttons(vbox, port);
+  ghidgui->route_style_selector = ghid_route_style_selector_new ();
+  make_route_style_buttons
+    (GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector));
+  gtk_box_pack_start(GTK_BOX(hbox), ghidgui->route_style_selector,
+                     FALSE, FALSE, 4);
 
-  vbox = gtk_vbox_new (FALSE, 0);
-  gtk_box_pack_start (GTK_BOX (hbox_middle), vbox, TRUE, TRUE, 0);
+  ghidgui->vbox_middle = gtk_vbox_new (FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (hbox_middle),
+                      ghidgui->vbox_middle, TRUE, TRUE, 0);
 
   hbox = gtk_hbox_new (FALSE, 0);
-  gtk_box_pack_start (GTK_BOX (vbox), hbox, TRUE, TRUE, 0);
+  gtk_box_pack_start (GTK_BOX (ghidgui->vbox_middle), hbox, TRUE, TRUE, 0);
 
   /* -- The PCB layout output drawing area */
-  viewport = gtk_viewport_new (NULL, NULL);
-  gtk_viewport_set_shadow_type (GTK_VIEWPORT (viewport), GTK_SHADOW_IN);
-  gtk_box_pack_start (GTK_BOX (hbox), viewport, TRUE, TRUE, 0);
 
   gport->drawing_area = gtk_drawing_area_new ();
   ghid_init_drawing_widget (gport->drawing_area, gport);
@@ -2314,17 +1361,15 @@ ghid_build_pcb_top_window (void)
    * enter and button press callbacks grab focus to be sure we have it
    * when in the drawing_area.
    */
-  GTK_WIDGET_SET_FLAGS (gport->drawing_area, GTK_CAN_FOCUS);
+  gtk_widget_set_can_focus (gport->drawing_area, TRUE);
 
-  gtk_container_add (GTK_CONTAINER (viewport), gport->drawing_area);
+  gtk_box_pack_start (GTK_BOX (hbox), gport->drawing_area, TRUE, TRUE, 0);
 
   ghidgui->v_adjustment = gtk_adjustment_new (0.0, 0.0, 100.0,
 					      10.0, 10.0, 10.0);
   ghidgui->v_range =
     gtk_vscrollbar_new (GTK_ADJUSTMENT (ghidgui->v_adjustment));
 
-  gtk_range_set_update_policy (GTK_RANGE (ghidgui->v_range),
-			       GTK_UPDATE_CONTINUOUS);
   gtk_box_pack_start (GTK_BOX (hbox), ghidgui->v_range, FALSE, FALSE, 0);
 
   g_signal_connect (G_OBJECT (ghidgui->v_adjustment), "value_changed",
@@ -2334,17 +1379,16 @@ ghid_build_pcb_top_window (void)
 					      10.0, 10.0, 10.0);
   ghidgui->h_range =
     gtk_hscrollbar_new (GTK_ADJUSTMENT (ghidgui->h_adjustment));
-  gtk_range_set_update_policy (GTK_RANGE (ghidgui->h_range),
-			       GTK_UPDATE_CONTINUOUS);
-  gtk_box_pack_start (GTK_BOX (vbox), ghidgui->h_range, FALSE, FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (ghidgui->vbox_middle),
+                      ghidgui->h_range, FALSE, FALSE, 0);
 
   g_signal_connect (G_OBJECT (ghidgui->h_adjustment), "value_changed",
 		    G_CALLBACK (h_adjustment_changed_cb), ghidgui);
 
   /* -- The bottom status line label */
   ghidgui->status_line_hbox = gtk_hbox_new (FALSE, 0);
-  gtk_box_pack_start (GTK_BOX (vbox), ghidgui->status_line_hbox,
-		      FALSE, FALSE, 2);
+  gtk_box_pack_start (GTK_BOX (ghidgui->vbox_middle),
+                      ghidgui->status_line_hbox, FALSE, FALSE, 2);
 
   label = gtk_label_new ("");
   gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
@@ -2365,6 +1409,8 @@ ghid_build_pcb_top_window (void)
 		    port);
   g_signal_connect (G_OBJECT (gport->top_window), "configure_event",
 		    G_CALLBACK (top_window_configure_event_cb), port);
+  g_signal_connect (gport->top_window, "enter-notify-event",
+                    G_CALLBACK (top_window_enter_cb), port);
   g_signal_connect (G_OBJECT (gport->drawing_area), "configure_event",
 		    G_CALLBACK (ghid_port_drawing_area_configure_event_cb),
 		    port);
@@ -2395,10 +1441,9 @@ ghid_build_pcb_top_window (void)
   ghidgui->creating = FALSE;
 
   gtk_widget_show_all (gport->top_window);
-  gdk_window_set_back_pixmap (gport->drawing_area->window, NULL, FALSE);
-
-  ghid_route_style_temp_buttons_hide ();
-  ghid_show_layer_buttons();
+  ghid_pack_mode_buttons ();
+  gdk_window_set_back_pixmap (gtk_widget_get_window (gport->drawing_area),
+                              NULL, FALSE);
 }
 
 
@@ -2418,23 +1463,19 @@ ghid_interface_input_signals_connect (void)
 {
   button_press_handler =
     g_signal_connect (G_OBJECT (gport->drawing_area), "button_press_event",
-		      G_CALLBACK (ghid_port_button_press_cb),
-		      ghidgui->ui_manager);
+		      G_CALLBACK (ghid_port_button_press_cb), NULL);
 
   button_release_handler =
     g_signal_connect (G_OBJECT (gport->drawing_area), "button_release_event",
-		      G_CALLBACK (ghid_port_button_release_cb),
-		      ghidgui->ui_manager);
+		      G_CALLBACK (ghid_port_button_release_cb), NULL);
 
   key_press_handler =
     g_signal_connect (G_OBJECT (gport->drawing_area), "key_press_event",
-		      G_CALLBACK (ghid_port_key_press_cb),
-		      ghidgui->ui_manager);
+		      G_CALLBACK (ghid_port_key_press_cb), NULL);
 
   key_release_handler =
     g_signal_connect (G_OBJECT (gport->drawing_area), "key_release_event",
-		      G_CALLBACK (ghid_port_key_release_cb),
-		      ghidgui->ui_manager);
+		      G_CALLBACK (ghid_port_key_release_cb), NULL);
 }
 
 void
@@ -2465,7 +1506,7 @@ ghid_interface_input_signals_disconnect (void)
 void
 ghid_interface_set_sensitive (gboolean sensitive)
 {
-  gtk_widget_set_sensitive (ghid_left_sensitive_box, sensitive);
+  gtk_widget_set_sensitive (ghidgui->left_toolbar, sensitive);
   gtk_widget_set_sensitive (ghidgui->menu_hbox, sensitive);
 }
 
@@ -2476,28 +1517,30 @@ ghid_interface_set_sensitive (gboolean sensitive)
 static void
 ghid_init_icons (GHidPort * port)
 {
-  XC_clock_source = gdk_bitmap_create_from_data (gport->top_window->window,
+  GdkWindow *window = gtk_widget_get_window (gport->top_window);
+
+  XC_clock_source = gdk_bitmap_create_from_data (window,
 						 (char *) rotateIcon_bits,
 						 rotateIcon_width,
 						 rotateIcon_height);
   XC_clock_mask =
-    gdk_bitmap_create_from_data (gport->top_window->window, (char *) rotateMask_bits,
+    gdk_bitmap_create_from_data (window, (char *) rotateMask_bits,
 				 rotateMask_width, rotateMask_height);
 
-  XC_hand_source = gdk_bitmap_create_from_data (gport->top_window->window,
+  XC_hand_source = gdk_bitmap_create_from_data (window,
 						(char *) handIcon_bits,
 						handIcon_width,
 						handIcon_height);
   XC_hand_mask =
-    gdk_bitmap_create_from_data (gport->top_window->window, (char *) handMask_bits,
+    gdk_bitmap_create_from_data (window, (char *) handMask_bits,
 				 handMask_width, handMask_height);
 
-  XC_lock_source = gdk_bitmap_create_from_data (gport->top_window->window,
+  XC_lock_source = gdk_bitmap_create_from_data (window,
 						(char *) lockIcon_bits,
 						lockIcon_width,
 						lockIcon_height);
   XC_lock_mask =
-    gdk_bitmap_create_from_data (gport->top_window->window, (char *) lockMask_bits,
+    gdk_bitmap_create_from_data (window, (char *) lockMask_bits,
 				 lockMask_width, lockMask_height);
 }
 
@@ -2507,8 +1550,6 @@ ghid_create_pcb_widgets (void)
   GHidPort *port = &ghid_port;
   GError	*err = NULL;
 
-  gdk_color_parse ("white", &WhitePixel);
-
   if (bg_image_file)
     ghidgui->bg_pixbuf = gdk_pixbuf_new_from_file(bg_image_file, &err);
   if (err)
@@ -2517,6 +1558,7 @@ ghid_create_pcb_widgets (void)
     g_error_free(err);
     }
   ghid_build_pcb_top_window ();
+  ghid_install_accel_groups (GTK_WINDOW (port->top_window), ghidgui);
   ghid_update_toggle_flags ();
 
   ghid_init_icons (port);
@@ -2584,12 +1626,11 @@ ghid_listener_cb (GIOChannel *source,
 static void
 ghid_create_listener (void)
 {
-  guint tag;
   GIOChannel *channel;
   int fd = fileno (stdin);
 
   channel = g_io_channel_unix_new (fd);
-  tag = g_io_add_watch (channel, G_IO_IN, ghid_listener_cb, NULL);
+  g_io_add_watch (channel, G_IO_IN, ghid_listener_cb, NULL);
 }
 
 
@@ -2599,14 +1640,38 @@ static int stdin_listen = 0;
 static char *pcbmenu_path = "gpcb-menu.res";
 
 HID_Attribute ghid_attribute_list[] = {
+
+/* %start-doc options "21 GTK+ GUI Options"
+@ftable @code
+@item --listen
+Listen for actions on stdin.
+@end ftable
+%end-doc
+*/
   {"listen", "Listen for actions on stdin",
    HID_Boolean, 0, 0, {0, 0, 0}, 0, &stdin_listen},
 #define HA_listen 0
 
+/* %start-doc options "21 GTK+ GUI Options"
+@ftable @code
+@item --bg-image <string>
+File name of an image to put into the background of the GUI canvas. The image must
+be a color PPM image, in binary (not ASCII) format. It can be any size, and will be
+automatically scaled to fit the canvas.
+@end ftable
+%end-doc
+*/
   {"bg-image", "Background Image",
    HID_String, 0, 0, {0, 0, 0}, 0, &bg_image_file},
 #define HA_bg_image 1
 
+/* %start-doc options "21 GTK+ GUI Options"
+@ftable @code
+@item --pcb-menu <string>
+Location of the @file{gpcb-menu.res} file which defines the menu for the GTK+ GUI.
+@end ftable
+%end-doc
+*/
 {"pcb-menu", "Location of gpcb-menu.res file",
    HID_String, 0, 0, {0, PCBLIBDIR "/gpcb-menu.res", 0}, 0, &pcbmenu_path}
 #define HA_pcbmenu 2
@@ -2664,20 +1729,20 @@ ghid_parse_arguments (int *argc, char ***argv)
   /* Do our own setlocale() stufff since we want to override LC_NUMERIC   
    */
   gtk_set_locale ();
-  setlocale (LC_NUMERIC, "POSIX");	/* use decimal point instead of comma */
+  setlocale (LC_NUMERIC, "C");	/* use decimal point instead of comma */
 #endif
 
   /*
    * Prevent gtk_init() and gtk_init_check() from automatically
    * calling setlocale (LC_ALL, "") which would undo LC_NUMERIC if ENABLE_NLS
-   * We also don't want locale set if no ENABLE_NLS to keep POSIX LC_NUMERIC.
+   * We also don't want locale set if no ENABLE_NLS to keep "C" LC_NUMERIC.
    */
   gtk_disable_setlocale ();
 
   gtk_init (argc, argv);
 
   gport = &ghid_port;
-  gport->zoom = 300.0;
+  gport->view.coord_per_px = 300.0;
   pixel_slop = 300;
 
   ghid_init_renderer (argc, argv, gport);
@@ -2708,7 +1773,7 @@ ghid_parse_arguments (int *argc, char ***argv)
 			       ghidgui->top_window_width, ghidgui->top_window_height);
 
   if (Settings.AutoPlace)
-    gtk_widget_set_uposition (GTK_WIDGET (window), 10, 10);
+    gtk_window_move (GTK_WINDOW (window), 10, 10);
 
   gtk_widget_show_all (gport->top_window);
   ghidgui->creating = TRUE;
@@ -2723,7 +1788,9 @@ ghid_do_export (HID_Attr_Val * options)
    * are properly initialized and synchronized with the current PCB.
    */
   ghid_layer_buttons_update ();
-  ghid_show_layer_buttons();
+  ghid_main_menu_install_route_style_selector
+      (GHID_MAIN_MENU (ghidgui->menu_bar),
+       GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector));
 
   if (stdin_listen)
     ghid_create_listener ();
@@ -2735,15 +1802,25 @@ ghid_do_export (HID_Attr_Val * options)
 
 }
 
-gint
-LayersChanged (int argc, char **argv, int px, int py)
+/*! \brief callback for */
+static gboolean
+get_layer_visible_cb (int id)
 {
-  if (!ghidgui || !ghidgui->ui_manager)
+  int visible;
+  layer_process (NULL, NULL, &visible, id);
+  return visible;
+}
+
+gint
+LayersChanged (int argc, char **argv, Coord x, Coord y)
+{
+  if (!ghidgui || !ghidgui->menu_bar)
     return 0;
 
   ghid_config_groups_changed();
   ghid_layer_buttons_update ();
-  ghid_show_layer_buttons();
+  ghid_layer_selector_show_layers
+    (GHID_LAYER_SELECTOR (ghidgui->layer_selector), get_layer_visible_cb);
 
   /* FIXME - if a layer is moved it should retain its color.  But layers
   |  currently can't do that because color info is not saved in the
@@ -2776,27 +1853,16 @@ the same as a special layer, the layer is chosen over the special layer.
 %end-doc */
 
 static int
-ToggleView (int argc, char **argv, int x, int y)
+ToggleView (int argc, char **argv, Coord x, Coord y)
 {
   int i, l;
-  static gboolean in_toggle_view = 0;
-  gboolean active;
 
 #ifdef DEBUG_MENUS
-  printf ("Starting ToggleView().  in_toggle_view = %d\n", in_toggle_view);
+  puts ("Starting ToggleView().");
 #endif
-  if (in_toggle_view)
-    {
-      fprintf (stderr, "ToggleView() called on top of another ToggleView()\n"
-	       "Please report this and how it happened\n");
-      return 0;
-    }
-
-  in_toggle_view = 1;
 
   if (argc == 0)
     {
-      in_toggle_view = 0;
       AFAIL (toggleview);
     }
   if (isdigit ((int) argv[0][0]))
@@ -2826,22 +1892,16 @@ ToggleView (int argc, char **argv, int x, int y)
 	  }
       if (l == -1)
 	{
-	  in_toggle_view = 0;
 	  AFAIL (toggleview);
 	}
 
     }
 
-  printf ("ToggleView():  l = %d\n", l);
-
   /* Now that we've figured out which toggle button ought to control
    * this layer, simply hit the button and let the pre-existing code deal
    */
-  active = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (layer_buttons[l].layer_enable_button));
-  
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (layer_buttons[l].layer_enable_button),
-				active == TRUE ? FALSE : TRUE);
-  in_toggle_view = 0;
+  ghid_layer_selector_toggle_layer
+    (GHID_LAYER_SELECTOR (ghidgui->layer_selector), l);
   return 0;
 }
 
@@ -2859,17 +1919,22 @@ visible if it is not already visible
 %end-doc */
 
 static int
-SelectLayer (int argc, char **argv, int x, int y)
+SelectLayer (int argc, char **argv, Coord x, Coord y)
 {
-  int newl;
+  int i;
+  int newl = -1;
   if (argc == 0)
     AFAIL (selectlayer);
+
+  for (i = 0; i < max_copper_layer; ++i)
+    if (strcasecmp (argv[0], PCB->Data->Layer[i].Name) == 0)
+      newl = i;
 
   if (strcasecmp (argv[0], "silk") == 0)
     newl = LAYER_BUTTON_SILK;
   else if (strcasecmp (argv[0], "rats") == 0)
     newl = LAYER_BUTTON_RATS;
-  else
+  else if (newl == -1)
     newl = atoi (argv[0]) - 1;
 
 #ifdef DEBUG_MENUS
@@ -2879,8 +1944,8 @@ SelectLayer (int argc, char **argv, int x, int y)
   /* Now that we've figured out which radio button ought to select
    * this layer, simply hit the button and let the pre-existing code deal
    */
-  gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (layer_buttons[newl].radio_select_button),
-				TRUE);
+  ghid_layer_selector_select_layer
+    (GHID_LAYER_SELECTOR (ghidgui->layer_selector), newl);
 
   return 0;
 }
@@ -2905,16 +1970,16 @@ REGISTER_ACTIONS (gtk_topwindow_action_list)
  * into the menu callbacks.  This function is called as new
  * accelerators are added when the menus are being built
  */
-static void ghid_check_special_key (const char *accel, const char *name)
+static void
+ghid_check_special_key (const char *accel, GtkAction *action,
+                        const Resource *node)
 {
   size_t len;
   unsigned int mods;
   unsigned int ind;
 
-  if ( accel == NULL || *accel == '\0' )
-    {
-      return ;
-    }
+  if (action == NULL || accel == NULL || *accel == '\0')
+    return ;
 
 #ifdef DEBUG_MENUS
   printf ("%s(\"%s\", \"%s\")\n", __FUNCTION__, accel, name);
@@ -2925,7 +1990,7 @@ static void ghid_check_special_key (const char *accel, const char *name)
     {
       mods |= GHID_KEY_ALT;
     }
-  if (strstr (accel, "<control>") )
+  if (strstr (accel, "<ctrl>") )
     {
       mods |= GHID_KEY_CONTROL;
     }
@@ -2963,14 +2028,15 @@ static void ghid_check_special_key (const char *accel, const char *name)
 
   if (ind > 0) 
     {
-      if (ind >= (sizeof (ghid_hotkey_actions) / sizeof (char *)) )
+      if (ind >= N_HOTKEY_ACTIONS)
 	{
 	  fprintf (stderr, "ERROR:  overflow of the ghid_hotkey_actions array.  Index = %d\n"
 		   "Please report this.\n", ind);
 	  exit (1);
 	}
 
-      ghid_hotkey_actions[ind] = g_strdup (name);
+      ghid_hotkey_actions[ind].action = action;
+      ghid_hotkey_actions[ind].node = node;
 #ifdef DEBUG_MENUS
       printf ("Adding \"special\" hotkey to ghid_hotkey_actions[%u] :"
 	      " %s (%s)\n", ind, accel, name);
@@ -2978,783 +2044,48 @@ static void ghid_check_special_key (const char *accel, const char *name)
     }
 }
 
-
-#define INDENT_INC 5
-
-static void
-ghid_append_action (const char * name, const char *stock_id, 
-		    const char *label, const char *accelerator,
-		    const char *tooltip)
+/*! \brief Finds the gpcb-menu.res file */
+char *
+get_menu_filename (void)
 {
+  char *rv = NULL;
+  char *home_pcbmenu = NULL;
 
-#ifdef DEBUG_MENUS
-  printf ("ghid_append_action(\"%s\", \"%s\", \"%s\",  \"%s\", \"%s\")\n",
-	  UNKNOWN (name), 
-	  UNKNOWN (stock_id), 
-	  UNKNOWN (label), 
-	  UNKNOWN (accelerator), 
-	  UNKNOWN (tooltip));
-#endif
-
-  accelerator = ghid_check_unique_accel (accelerator);
-
-  if ( (new_entries = (GtkActionEntry *)realloc (new_entries, 
-			       (menuitem_cnt + 1) * sizeof (GtkActionEntry))) == NULL)
-    {
-      fprintf (stderr, "ghid_append_action():  realloc of new_entries failed\n");
-      exit (1);
-    }
-  
-
-  if ( (action_resources = (Resource **)realloc (action_resources,
-				    (menuitem_cnt + 1) * sizeof (Resource *))) == NULL)
-    {
-      fprintf (stderr, "ghid_append_action():  realloc of action_resources failed\n");
-      exit (1);
-    }
-  action_resources[menuitem_cnt] = NULL;
-
-  /* name, stock_id, label, accelerator, tooltip, callback */
-  new_entries[menuitem_cnt].name = strdup (name);
-  new_entries[menuitem_cnt].stock_id = (stock_id == NULL ? NULL : strdup (stock_id));
-  new_entries[menuitem_cnt].label = strdup (label);
-  new_entries[menuitem_cnt].accelerator = ( (accelerator == NULL || *accelerator == '\0')
-					    ? NULL : strdup (accelerator));
-  new_entries[menuitem_cnt].tooltip = (tooltip == NULL ? NULL : strdup (tooltip));
-  new_entries[menuitem_cnt].callback = G_CALLBACK (ghid_menu_cb);
-
-  ghid_check_special_key (accelerator, name);
-  menuitem_cnt++;
-}
-
-static void
-ghid_append_toggle_action (const char * name, const char *stock_id, 
-			   const char *label, const char *accelerator,
-			   const char *tooltip, int active)
-{
-
-  accelerator = ghid_check_unique_accel (accelerator);
-
-  if ( (new_toggle_entries = (GtkToggleActionEntry *)realloc (new_toggle_entries, 
-				      (tmenuitem_cnt + 1) * sizeof (GtkToggleActionEntry))) == NULL)
-    {
-      fprintf (stderr, "ghid_append_toggle_action():  realloc of new_toggle_entries failed\n");
-      exit (1);
-    }
-  
-
-  if ( (toggle_action_resources = (Resource **)realloc (toggle_action_resources,
-				    (tmenuitem_cnt + 1) * sizeof (Resource *))) == NULL)
-    {
-      fprintf (stderr, "ghid_append_toggle_action():  realloc of toggle_action_resources failed\n");
-      exit (1);
-    }
-  toggle_action_resources[tmenuitem_cnt] = NULL;
-
-  /* name, stock_id, label, accelerator, tooltip, callback */
-  new_toggle_entries[tmenuitem_cnt].name = strdup (name);
-  new_toggle_entries[tmenuitem_cnt].stock_id = (stock_id == NULL ? NULL : strdup (stock_id));
-  new_toggle_entries[tmenuitem_cnt].label = strdup (label);
-  new_toggle_entries[tmenuitem_cnt].accelerator = (accelerator == NULL ? NULL : strdup (accelerator));
-  new_toggle_entries[tmenuitem_cnt].tooltip = (tooltip == NULL ? NULL : strdup (tooltip));
-  new_toggle_entries[tmenuitem_cnt].callback = G_CALLBACK (ghid_menu_cb);
-  new_toggle_entries[tmenuitem_cnt].is_active = active ? TRUE : FALSE;
-
-  ghid_check_special_key (accelerator, name);
-  tmenuitem_cnt++;
-}
-
-/*
- * Some keys need to be replaced by a name for the gtk accelerators to
- * work.  This table contains the translations.  The "in" character is
- * what would appear in gpcb-menu.res and the "out" string is what we
- * have to feed to gtk.  I was able to find these by using xev to find
- * the keycode and then looked at gtk+-2.10.9/gdk/keynames.txt (from the
- * gtk source distribution) to figure out the names that go with the 
- * codes.
- */
-typedef struct
-{
-  const char in;
-  const char *out;
-} KeyTable;
-static KeyTable key_table[] = 
-  {
-    {':', "colon"},
-    {'=', "equal"},
-    {'/', "slash"},
-    {'[', "bracketleft"},
-    {']', "bracketright"},
-    {'.', "period"},
-    {'|', "bar"}
-  };
-static int n_key_table = sizeof (key_table) / sizeof (key_table[0]);
-
-static void
-add_resource_to_menu (char * menu, Resource * node, void * callback, int indent)
-{
-  int i, j;
-  char *v;
-  Resource *r;
-  char tmps[32];
-  char accel[64];
-  int accel_n;
-  char *menulabel = NULL;
-  char ch[2];
-  char m = '\0';
-  char *cname = NULL;
-
-  ch[1] = '\0';
-
-  for (i = 0; i < node->c; i++)
-    switch (resource_type (node->v[i]))
-      {
-      case 101:		/* named subnode */
-	add_resource_to_menu (node->v[i].name, node->v[i].subres, 
-			      callback, indent + INDENT_INC);
-	break;
-
-      case 1:			/* unnamed subres */
-	accel[0] = '\0';
-	/* remaining number of chars available in accel (- 1 for '\0')*/
-	accel_n = sizeof (accel) - 1;
-	/* This is a menu choice.  The first value in the unnamed
-	 * subres is what the menu choice gets called.
-	 *
-	 * This may be a top level menu on the menubar,
-	 * a menu choice under, say the File menu, or
-	 * a menu choice under a submenu of a menu choice.
-	 *
-	 * We need to pick off an "m" named resource which is
-	 * the menu accelerator key and an "a" named subresource
-	 * which contains the information for the hotkey.
-	 */
-	if ((v = resource_value (node->v[i].subres, "m")))
-	  {
-#ifdef DEBUG_MENUS
-	    printf ("    found resource value m=\"%s\"\n", v);
-#endif
-	    m = *v;
-	  }
-	if ((r = resource_subres (node->v[i].subres, "a")))
-	  {
-	    /* for the accelerator, it has 2 values  like
-	     *
-	     * a={"Ctrl-Q" "Ctrl<Key>q"}
-	     * The first one is what's displayed in the menu and the
-	     * second actually defines the hotkey.  Actually, the
-	     * first value is only used by the lesstif HID and is
-	     * ignored by the gtk HID.  The second value is used by both.
-	     *
-	     * We have to translate some strings.  See
-	     * gtk+-2.10.9/gdk/keynames.txt from the gtk distribution
-	     * as well as the output from xev(1).
-	     *
-	     * Modifiers:
-	     *
-	     * "Ctrl" -> "<control>"
-	     * "Shift" -> "<shift>"
-	     * "Alt" -> "<alt>"
-	     * "<Key>" -> ""
-	     *
-	     * keys:
-	     *
-	     * " " -> ""
-	     * "Enter" -> "Return"
-	     *
-	     */
-	    char *p;
-	    int j;
-	    enum {KEY, MOD} state;
-
-	    state = MOD;
-#ifdef DEBUG_MENUS
-	    printf ("    accelerator a=%p.  r->v[0].value = \"%s\", r->v[1].value = \"%s\" ", 
-		    r, r->v[0].value, r->v[1].value);
-#endif
-	    p = r->v[1].value;
-	    while (*p != '\0')
-	      {
-		switch (state)
-		  {
-		  case MOD:
-		    if (*p == ' ')
-		      {
-			p++;
-		      }
-		    else if (strncmp (p, "<Key>", 5) == 0)
-		      {
-			state = KEY;
-			p += 5;
-		      }
-		    else if (strncmp (p, "Ctrl", 4) == 0)
-		      {
-			strncat (accel, "<control>", accel_n);
-			accel_n -= strlen ("<control>");
-			p += 4;
-		      }
-		    else if (strncmp (p, "Shift", 5) == 0)
-		      {
-			strncat (accel, "<shift>", accel_n);
-			accel_n -= strlen ("<shift>");
-			p += 5;
-		      }
-		    else if (strncmp (p, "Alt", 3) == 0)
-		      {
-			strncat (accel, "<alt>", accel_n);
-			accel_n -= strlen ("<alt>");
-			p += 3;
-		      }
-		    else
-		      {
-			static int gave_msg = 0;
-			Message (_("Don't know how to parse \"%s\" as an accelerator in the menu resource file.\n"),
-				 p);
-			
-			if (! gave_msg) 
-			  {
-			    gave_msg = 1;
-			    Message (_("Format is:\n"
-				     "modifiers<Key>k\n"
-				     "where \"modifiers\" is a space separated list of key modifiers\n"
-				     "and \"k\" is the name of the key.\n"
-				     "Allowed modifiers are:\n"
-				     "   Ctrl\n"
-				     "   Shift\n"
-				     "   Alt\n"
-				     "Please note that case is important.\n"));
-			  }
-			/* skip processing the rest */
-			accel[0] = '\0';
-			accel_n = sizeof (accel) - 1;
-			p += strlen (p);
-		      }
-		    break;
-
-		  case KEY:
-		    if (strncmp (p, "Enter", 5) == 0)
-		      {
-			strncat (accel, "Return", accel_n);
-			accel_n -= strlen ("Return");
-			p += 5;
-		      }
-		    else
-		      {
-			ch[0] = *p;
-			for (j = 0; j < n_key_table; j++)
-			  {
-			    if ( *p == key_table[j].in)
-			      {
-				strncat (accel, key_table[j].out, accel_n);
-				accel_n -= strlen (key_table[j].out);
-				j = n_key_table;
-			      }
-			  }
-			
-			if (j == n_key_table)
-			  {
-			    strncat (accel, ch, accel_n);
-			    accel_n -= strlen (ch);
-			  }
-		    
-			p++;
-		      }
-		    break;
-
-		  }
-
-		if (G_UNLIKELY (accel_n < 0))
-		  {
-		    accel_n = 0;
-		    Message ("Accelerator \"%s\" is too long to be parsed.\n", r->v[1].value);
-		    accel[0] = '\0';
-		    accel_n = 0;
-		    /* skip processing the rest */
-		    p += strlen (p);
-		  }
-	      }
-#ifdef DEBUG_MENUS
-	    printf ("\n    translated = \"%s\"\n", accel);
-#endif
-	  }
-	v = "button";
-
-	/* Now look for the first unnamed value (not a subresource) to
-	 * figure out the name of the menu or the menuitem.
-	 *
-	 * After this loop, v will be the name of the menu or menuitem.
-	 *
-	 */
-	for (j = 0; j < node->v[i].subres->c; j++)
-	  if (resource_type (node->v[i].subres->v[j]) == 10)
-	    {
-	      v = node->v[i].subres->v[j].value;
-	      break;
-	    }
-	
-	if (m == '\0')
-	  menulabel = strdup (v);
-	else
-	  {
-	    /* we've been given a mneumonic so we need to insert an
-	     * "_" into the label.  For example if the string is
-	     * "Quit Program" and we have m=Q, we'd need to produce
-	     * "_Quit Program".
-	     */
-	    char *s1, *s2;
-	    size_t l;
-
-	    l = strlen (_(v)) + 2;
-#ifdef DEBUG_MENUS
-	    printf ("allocate %ld bytes\n", l);
-#endif
-	    if ( (menulabel = (char *) malloc ( l * sizeof (char)))
-		 == NULL)
-	      {
-		fprintf (stderr, "add_resource_to_menu():  malloc failed\n");
-		exit (1);
-	      }
-	    
-	    s1 = menulabel;
-	    s2 = _(v);
-	    while (*s2 != '\0')
-	      {
-		if (*s2 == m)
-		  {
-		    /* add the underscore and quit looking for more 
-		     * matches since we only want to add 1 underscore
-		     */
-		    *s1 = '_';
-		    s1++;
-		    m = '\0';
-		  }
-		*s1 = *s2;
-		s1++;
-		s2++;
-	      }
-	    *s1 = '\0';
-	  }
-#ifdef DEBUG_MENUS
-	printf ("v = \"%s\", label = \"%s\"\n", v, menulabel);
-#endif
-	/* if the subresource we're processing also has unnamed
-	 * subresources then this is either a menu (that goes on the
-	 * menu bar) or it is a submenu.  It isn't a menuitem.
-	 */
-	if (node->v[i].subres->flags & FLAG_S)
-	  {
-	    /* This is a menu */
-
-	    /* add menus to the same entries list as the "normal"
-	     * menuitems.  We'll just use NULL for what happens so the
-	     * callback doesn't have anything to do.
-	     */
-
-	    sprintf (tmps, "%s%d", MENUITEM, menuitem_cnt);
-	    cname = strdup (tmps);
-
-	    /* add to the action entries */
-	    /* name, stock_id, label, accelerator, tooltip */
-	    ghid_append_action (tmps, NULL, menulabel, accel, NULL);
-
-	    /* and add to the user interfact XML description */
-	    ghid_ui_info_indent (indent);
-	    ghid_ui_info_append ("<menu action='");
-	    ghid_ui_info_append (tmps);
-	    ghid_ui_info_append ("'>\n");
-
-
-	    /* recursively add more submenus or menuitems to this
-	     * menu/submenu
-	     */
-	    add_resource_to_menu ("sub menu", node->v[i].subres, 
-				  callback, indent + INDENT_INC);
-	    ghid_ui_info_indent (indent);
-
-	    /* and close this menu */
-	    ghid_ui_info_append ("</menu>\n");
-	  }
-	else
-	  {
-	    /* We are in a specific menu choice and need to figure out
-	     * if it is a "normal" one 
-	     * or if there is some condtion under which it is checked
-	     * or if it has sensitive=false which is simply a label 
-	     */
-	    
-	    char *checked = resource_value (node->v[i].subres, "checked");
-	    char *label = resource_value (node->v[i].subres, "sensitive");
-	    char *tip = resource_value (node->v[i].subres, "tip");
-	    if (checked)
-	      {
-		/* We have the "checked=" named value for this
-		 * menuitem.  Now see if it is
-		 *   checked=foo
-		 * or
-		 *   checked=foo,bar
-		 *
-		 * where the former is just a binary flag and the
-		 * latter is checking a flag against a value
-		 */
-#ifdef DEBUG_MENUS
-		printf ("Found a \"checked\" menu choice \"%s\", \"%s\"\n", v, checked);
-#endif
-		if (strchr (checked, ','))
-		  {
-		    /* we're comparing a flag against a value */
-#ifdef DEBUG_MENUS
-		    printf ("Found checked comparing a flag to a value\n");
-#endif
-		  }
-		else
-		  {
-		    /* we're looking at a binary flag */
-		    /* name, stock_id, label, accelerator, tooltip, callback, is_active
-		    printf ("Found checked using a flag as a binary\n");
-
-		     */
-		  }
-
-		sprintf (tmps, "%s%d", TMENUITEM, tmenuitem_cnt);
-		cname = strdup (tmps);
-
-		/* add to the action entries */
-		/* name, stock_id, label, accelerator, tooltip, is_active */
-		ghid_append_toggle_action (tmps, NULL, menulabel, accel, tip, 1);
-
-		ghid_ui_info_indent (indent);
-		ghid_ui_info_append ("<menuitem action='");
-		ghid_ui_info_append (tmps);
-		ghid_ui_info_append ("'/>\n");
-
-		toggle_action_resources[tmenuitem_cnt-1] = node->v[i].subres;
-		
-	      }
-	    else if (label && strcmp (label, "false") == 0)
-	      {
-		/* we have sensitive=false so just put a label in the
-		 * GUI  -- FIXME -- actually do something here....
-		 */
-	      }
-	    else
-	      {
-		/*
-		 * Here we are finally at the rest of an actual
-		 * menuitem.  So, we need to get the subresource
-		 * that has all the actions in it (actually, it will
-		 * be the entire subresource that defines the
-		 * menuitem, the callbacks later will pick out the
-		 * actions part.
-		 *
-		 * We add this resource to an array of action
-		 * resources that is used by the main menu callback to
-		 * figure out what really needs to be done.
-		 */
-
-		sprintf (tmps, "%s%d", MENUITEM, menuitem_cnt);
-		cname = strdup (tmps);
-
-		/* add to the action entries */
-		/* name, stock_id, label, accelerator, tooltip */
-		ghid_append_action (tmps, NULL, menulabel, accel, tip);
-
-		ghid_ui_info_indent (indent);
-		ghid_ui_info_append ("<menuitem action='");
-		ghid_ui_info_append (tmps);
-		ghid_ui_info_append ("'/>\n");
-
-
-		action_resources[menuitem_cnt-1] = node->v[i].subres;
-
-#ifdef DEBUG_MENUS
-		/* Print out the actions to help with debugging */
-		{
-		  int vi;
-		  Resource *mynode  = node->v[i].subres;
-		 
-		  /* Start at the 2nd sub resource because the first
-		   * is the text that shows up in the menu.
-		   * 
-		   * We're looking for the unnamed values since those
-		   * are the ones which are actions.
-		   */
-		  for (vi = 1; vi < mynode->c; vi++)
-		    if (resource_type (mynode->v[vi]) == 10)
-		      printf("   action value=\"%s\"\n", mynode->v[vi].value);
-		}
-#endif
-
-		
-	      }
-	    
-
-	    /* now keep looking over our menuitem to see if there is
-	     * any more work.
-	     */
-	    for (j = 0; j < node->v[i].subres->c; j++)
-	      switch (resource_type (node->v[i].subres->v[j]))
-		{
-		case 110:	/* named value = X resource */
-		  {
-		    char *n = node->v[i].subres->v[j].name;
-		    /* allow fg and bg to be abbreviations for
-		     * foreground and background
-		     */
-		    if (strcmp (n, "fg") == 0)
-		      n = "foreground";
-		    if (strcmp (n, "bg") == 0)
-		      n = "background";
-
-		    /* ignore special named values (m, a, sensitive) */
-		    if (strcmp (n, "m") == 0
-			|| strcmp (n, "a") == 0
-			|| strcmp (n, "sensitive") == 0
-			|| strcmp (n, "tip") == 0
-			)
-		      break;
-
-		    /* log checked and active special values */
-		    if (strcmp (n, "checked") == 0)
-		      {
-#ifdef DEBUG_MENUS
-			printf ("%s is checked\n", node->v[i].subres->v[j].value);
-#endif
-			note_toggle_flag (new_toggle_entries[tmenuitem_cnt-1].name,
-					  GHID_FLAG_CHECKED,
-					  node->v[i].subres->v[j].value);
-			break;
-		      }
-		    if (strcmp (n, "active") == 0)
-		      {
-			if (cname != NULL) 
-			  {
-			    note_toggle_flag (cname,
-					      GHID_FLAG_ACTIVE,
-					      node->v[i].subres->v[j].value);
-			  }
-			else
-			  {
-			    printf ("WARNING: %s cname == NULL\n", __FUNCTION__);
-			  }
-			break;
-		      }
-
-		    /* if we got this far it is supposed to be an X
-		     * resource.  For now ignore it and warn the user
-		     */
-		    Message (_("The gtk gui currently ignores \"%s\""
-				"as part of a menuitem resource.\n"
-				"Feel free to provide patches\n"),
-			     node->v[i].subres->v[j].value);
-		  }
-		  break;
-		}
-
-	  }
-	break;
-
-      case 10:			/* unnamed value */
-	/* in the resource file we may have something like:
-	 *
-	 * {File
-	 *   {Open OpenAction()}
-	 *   {Close CloseAction()}
-	 *   -
-	 *   {"Some Choice" MyAction()}
-	 *   {"Some Other Choice" MyOtherAction()}
-	 *   @foo
-	 *   {Quit QuitAction()}
-	 *  }
-	 *
-	 * If we get here in the code it is becuase we found the "-"
-	 * or the "@foo".  
-	 * 
-	 */
-#ifdef DEBUG_MENUS
-	printf ("resource_type for node #%d is 10 (unnamed value).  value=\"%s\"\n", 
-		i, node->v[i].value);
-#endif
-
-	if (node->v[i].value[0] == '@')
-	  {
-	    if (strcmp (node->v[i].value, "@layerview") == 0)
-	      {
-		int i;
-		char tmpid[40];
-		for (i = 0 ; i <  N_LAYER_BUTTONS; i++)
-		  {
-		    sprintf (tmpid, "<menuitem action='%s%d' />\n", 
-			     LAYERVIEW, i);
-		    ghid_ui_info_indent (indent);
-		    ghid_ui_info_append (tmpid);
-		  }
-	      }
-	    else if (strcmp (node->v[i].value, "@layerpick") == 0)
-	      {
-		int i;
-		char tmpid[40];
-		for (i = 0 ; i <  N_SELECTABLE_LAYER_BUTTONS; i++)
-		  {
-		    sprintf (tmpid, "<menuitem action='%s%d' />\n", 
-			     LAYERPICK, i);
-		    ghid_ui_info_indent (indent);
-		    ghid_ui_info_append (tmpid);
-		  }
-	      }
-	    else if (strcmp (node->v[i].value, "@routestyles") == 0)
-	      {
-		int i;
-		char tmpid[40];
-		for (i = 0 ; i <  N_ROUTE_STYLES; i++)
-		  {
-		    sprintf (tmpid, "<menuitem action='%s%d' />\n", 
-			     ROUTESTYLE, i);
-		    ghid_ui_info_indent (indent);
-		    ghid_ui_info_append (tmpid);
-		  }
-	      }
-	    else
-	      {
-		Message (_("GTK GUI currently ignores \"%s\" in the menu\n"
-			"resource file.\n"), node->v[i].value);
-	      }
-	    
-	  }
-	
-	else if (strcmp (node->v[i].value, "-") == 0)
-	  {
-	    ghid_ui_info_indent (indent);
-	    ghid_ui_info_append ("<separator/>\n");
-	  }
-	else if (i > 0)
-	  {
-	    /* This is where you get with an action-less menuitem.
-	     * It is really just useful when you're starting to build
-	     * a new menu and you're looking to get the layout
-	     * right.
-	     */
-	    sprintf (tmps, "%s%d", MENUITEM, menuitem_cnt);
-	    cname = strdup (tmps);
-	    
-	    /* add to the action entries 
-	     * name, stock_id, label, accelerator, tooltip 
-	     * Note that we didn't get the mneumonic added in here,
-	     * but since this is really for a dummy menu (no
-	     * associated actions), I'm not concerned.
-	     */
-	    
-	    ghid_append_action (tmps, NULL, node->v[i].value, accel, NULL);
-
-	    ghid_ui_info_indent (indent);
-	    ghid_ui_info_append ("<menuitem action='");
-	    ghid_ui_info_append (tmps);
-	    ghid_ui_info_append ("'/>\n");
-	    
-	    action_resources[menuitem_cnt-1] = NULL;
-
-	  }
-	break;
-      }
-  
-  if (cname != NULL)
-    free (cname);
-
-  if (menulabel != NULL)
-    free (menulabel);
-}
-
-
-static void
-ghid_ui_info_indent (int indent)
-{
-  int i;
-
-  for (i = 0; i < indent ; i++)
-    {
-      ghid_ui_info_append (" ");
-    }
-}
-
-/* 
- *appends a string to the ui_info string 
- * This function is used 
- */
-
-static void
-ghid_ui_info_append (const gchar * newone)
-{
-  gchar *p;
-
-  if (new_ui_info_sz == 0) 
-    {
-      new_ui_info_sz = 1024;
-      new_ui_info = (gchar *)leaky_calloc (new_ui_info_sz, sizeof (gchar));
-    }
-
-  while (strlen (new_ui_info) + strlen (newone) + 1 > new_ui_info_sz)
-    {
-      size_t n;
-      gchar * np;
-
-      n = new_ui_info_sz + 1024;
-      if ((np = (gchar *)leaky_realloc (new_ui_info, n)) == NULL)
-	{
-	  fprintf (stderr, "ghid_ui_info_append():  realloc of size %ld failed\n",
-		   (long int) n);
-	  exit (1);
-	}
-      new_ui_info = np;
-      new_ui_info_sz = n;
-    }
-
-  p = new_ui_info + strlen (new_ui_info) ;
-  while (*newone != '\0')
-    {
-      *p = *newone;
-      p++;
-      newone++;
-    }
-  
-  *p = '\0';
-}
-
-
-static void
-ghid_load_menus (void)
-{
-  char *filename;
-  Resource *r = 0, *bir;
-  char *home_pcbmenu;
-  Resource *mr;
-  int i;
-
-  for (i = 0; i < sizeof (ghid_hotkey_actions) / sizeof (char *) ; i++)
-    {
-      ghid_hotkey_actions[i] = NULL;
-    }
- 
   /* homedir is set by the core */
-  home_pcbmenu = NULL;
-  if (homedir == NULL)
-    {
-      Message (_("Warning:  could not determine home directory\n"));
-    }
-  else
+  if (homedir)
     {
       Message (_("Note:  home directory is \"%s\"\n"), homedir);
       home_pcbmenu = Concat (homedir, PCB_DIR_SEPARATOR_S, ".pcb",
-                  PCB_DIR_SEPARATOR_S, "gpcb-menu.res", NULL);
+                             PCB_DIR_SEPARATOR_S, "gpcb-menu.res", NULL);
     }
+  else
+    Message (_("Warning:  could not determine home directory\n"));
 
   if (access ("gpcb-menu.res", R_OK) == 0)
-    filename = "gpcb-menu.res";
+    rv = strdup ("gpcb-menu.res");
   else if (home_pcbmenu != NULL && (access (home_pcbmenu, R_OK) == 0) )
-    filename = home_pcbmenu;
+    rv = home_pcbmenu;
   else if (access (pcbmenu_path, R_OK) == 0)
-    filename = pcbmenu_path;
-  else
-    filename = 0;
+    rv = strdup (pcbmenu_path);
 
+  return rv;
+}
+
+static GtkWidget *
+ghid_load_menus (void)
+{
+  char *filename;
+  const Resource *r = 0, *bir;
+  const Resource *mr;
+  GtkWidget *menu_bar = NULL;
+  int i;
+
+  for (i = 0; i < N_HOTKEY_ACTIONS; i++)
+    {
+      ghid_hotkey_actions[i].action = NULL;
+      ghid_hotkey_actions[i].node = NULL;
+    }
+ 
   bir = resource_parse (0, gpcb_menu_default);
   if (!bir)
     {
@@ -3762,15 +2093,11 @@ ghid_load_menus (void)
       exit(1);
     }
 
+  filename = get_menu_filename ();
   if (filename)
     {
       Message ("Loading menus from %s\n", filename);
       r = resource_parse (filename, 0);
-    }
-
-  if (home_pcbmenu != NULL) 
-    {
-       free (home_pcbmenu);
     }
 
   if (!r)
@@ -3778,6 +2105,7 @@ ghid_load_menus (void)
       Message ("Using default menus\n");
       r = bir;
     }
+  free (filename);
 
   mr = resource_subres (r, "MainMenu");
   if (!mr)
@@ -3785,55 +2113,36 @@ ghid_load_menus (void)
     
   if (mr)
     {
-      ghid_ui_info_append ("<ui>\n");
-      ghid_ui_info_indent (INDENT_INC);
-      ghid_ui_info_append ("<menubar name='MenuBar'>\n");
-      add_resource_to_menu ("Initial Call", mr, 0, 2*INDENT_INC);
-      ghid_ui_info_indent (INDENT_INC);
-      ghid_ui_info_append ("</menubar>\n");
+      menu_bar = ghid_main_menu_new (G_CALLBACK (ghid_menu_cb),
+                                     ghid_check_special_key);
+      ghid_main_menu_add_resource (GHID_MAIN_MENU (menu_bar), mr);
     }
 
   mr = resource_subres (r, "PopupMenus");
   if (!mr)
     mr = resource_subres (bir, "PopupMenus");
-   
+
   if (mr)
     {
       int i;
-
       for (i = 0; i < mr->c; i++)
-	{
-	  if (resource_type (mr->v[i]) == 101)
-	    {
-	      /* This is a named resource which defines a popup menu */
-	      ghid_ui_info_indent (INDENT_INC);
-	      ghid_ui_info_append ("<popup name='");
-	      ghid_ui_info_append (mr->v[i].name);
-	      ghid_ui_info_append ("'>\n");
-	      add_resource_to_menu ("Initial Call", mr->v[i].subres, 
-				    0, 2*INDENT_INC);
-	      ghid_ui_info_indent (INDENT_INC);
-	      ghid_ui_info_append ("</popup>\n");
-	    }
-	  else
-	    {
-	    }
-	}
+        if (resource_type (mr->v[i]) == 101)
+          /* This is a named resource which defines a popup menu */
+          ghid_main_menu_add_popup_resource (GHID_MAIN_MENU (menu_bar),
+                                             mr->v[i].name, mr->v[i].subres);
     }
 
-    ghid_ui_info_append ("</ui>\n");
-
 #ifdef DEBUG_MENUS
-      printf ("Finished loading menus.  ui_info = \n");
-      printf ("%s\n", new_ui_info);
+   puts ("Finished loading menus.");
 #endif
 
-  mr = resource_subres (r, "Mouse");
-  if (!mr)
-    mr = resource_subres (bir, "Mouse");
-  if (mr)
-    load_mouse_resource (mr);
+    mr = resource_subres (r, "Mouse");
+    if (!mr)
+      mr = resource_subres (bir, "Mouse");
+    if (mr)
+      load_mouse_resource (mr);
 
+  return menu_bar;
 }
 
 /* ------------------------------------------------------------ */
@@ -3851,17 +2160,13 @@ Opens the window which allows editing of the route styles.
 %end-doc */
 
 static int
-AdjustStyle(int argc, char **argv, int x, int y)
+AdjustStyle(int argc, char **argv, Coord x, Coord y)
 {
-  RouteStyleType *rst = NULL;
-  
   if (argc > 1)
     AFAIL (adjuststyle);
 
-  if (route_style_index >= NUM_STYLES)
-    rst = &route_style_button[route_style_index].route_style;
-  ghid_route_style_dialog (route_style_index, rst);
-
+  ghid_route_style_selector_edit_dialog
+    (GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector));
   return 0;
 }
 
@@ -3882,7 +2187,7 @@ resource compatibility with the lesstif HID.
 %end-doc */
 
 static int
-EditLayerGroups(int argc, char **argv, int x, int y)
+EditLayerGroups(int argc, char **argv, Coord x, Coord y)
 {
   
   if (argc != 0)

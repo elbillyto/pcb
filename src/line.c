@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -48,9 +46,7 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
-static float drc_lines (PointTypePtr end, bool way);
+static double drc_lines (PointType *end, bool way);
 
 /* ---------------------------------------------------------------------------
  * Adjust the attached line to 45 degrees if necessary
@@ -58,7 +54,7 @@ static float drc_lines (PointTypePtr end, bool way);
 void
 AdjustAttachedLine (void)
 {
-  AttachedLineTypePtr line = &Crosshair.AttachedLine;
+  AttachedLineType *line = &Crosshair.AttachedLine;
 
   /* I need at least one point */
   if (line->State == STATE_FIRST)
@@ -86,39 +82,37 @@ AdjustAttachedLine (void)
  *
  * directions:
  *
- *           0
- *          7 1
- *         6   2
- *          5 3
  *           4
+ *          5 3
+ *         6   2
+ *          7 1
+ *           0
  */
 void
-FortyFiveLine (AttachedLineTypePtr Line)
+FortyFiveLine (AttachedLineType *Line)
 {
-  LocationType dx, dy, min;
-  BYTE direction = 0;
-  float m;
+  Coord dx, dy, min, max;
+  unsigned direction = 0;
+  double m;
 
   /* first calculate direction of line */
   dx = Crosshair.X - Line->Point1.X;
   dy = Crosshair.Y - Line->Point1.Y;
 
-  if (!dx)
-    {
-      if (!dy)
-	/* zero length line, don't draw anything */
-	return;
-      else
-	direction = dy > 0 ? 0 : 4;
-    }
+  /* zero length line, don't draw anything */
+  if (dx == 0 && dy == 0)
+    return;
+
+  if (dx == 0)
+    direction = dy > 0 ? 0 : 4;
   else
     {
-      m = (float) dy / (float) dx;
+      m = (double)dy / (double)dx;
       direction = 2;
       if (m > TAN_30_DEGREE)
-	direction = m > TAN_60_DEGREE ? 0 : 1;
+        direction = m > TAN_60_DEGREE ? 0 : 1;
       else if (m < -TAN_30_DEGREE)
-	direction = m < -TAN_60_DEGREE ? 0 : 3;
+        direction = m < -TAN_60_DEGREE ? 4 : 3;
     }
   if (dx < 0)
     direction += 4;
@@ -126,19 +120,28 @@ FortyFiveLine (AttachedLineTypePtr Line)
   dx = abs (dx);
   dy = abs (dy);
   min = MIN (dx, dy);
+  max = MAX (dx, dy);
 
   /* now set up the second pair of coordinates */
   switch (direction)
     {
     case 0:
+      Line->Point2.X = Line->Point1.X;
+      Line->Point2.Y = Line->Point1.Y + max;
+      break;
+
     case 4:
       Line->Point2.X = Line->Point1.X;
-      Line->Point2.Y = Crosshair.Y;
+      Line->Point2.Y = Line->Point1.Y - max;
       break;
 
     case 2:
+      Line->Point2.X = Line->Point1.X + max;
+      Line->Point2.Y = Line->Point1.Y;
+      break;
+
     case 6:
-      Line->Point2.X = Crosshair.X;
+      Line->Point2.X = Line->Point1.X - max;
       Line->Point2.Y = Line->Point1.Y;
       break;
 
@@ -168,10 +171,10 @@ FortyFiveLine (AttachedLineTypePtr Line)
  *  adjusts the insert lines to make them 45 degrees as necessary
  */
 void
-AdjustTwoLine (int way)
+AdjustTwoLine (bool way)
 {
-  LocationType dx, dy;
-  AttachedLineTypePtr line = &Crosshair.AttachedLine;
+  Coord dx, dy;
+  AttachedLineType *line = &Crosshair.AttachedLine;
 
   if (Crosshair.AttachedLine.State == STATE_FIRST)
     return;
@@ -224,7 +227,7 @@ AdjustTwoLine (int way)
 
 struct drc_info
 {
-  LineTypePtr line;
+  LineType *line;
   bool solder;
   jmp_buf env;
 };
@@ -232,7 +235,7 @@ struct drc_info
 static int
 drcVia_callback (const BoxType * b, void *cl)
 {
-  PinTypePtr via = (PinTypePtr) b;
+  PinType *via = (PinType *) b;
   struct drc_info *i = (struct drc_info *) cl;
 
   if (!TEST_FLAG (FOUNDFLAG, via) && PinLineIntersect (via, i->line))
@@ -243,7 +246,7 @@ drcVia_callback (const BoxType * b, void *cl)
 static int
 drcPad_callback (const BoxType * b, void *cl)
 {
-  PadTypePtr pad = (PadTypePtr) b;
+  PadType *pad = (PadType *) b;
   struct drc_info *i = (struct drc_info *) cl;
 
   if (TEST_FLAG (ONSOLDERFLAG, pad) == i->solder &&
@@ -255,7 +258,7 @@ drcPad_callback (const BoxType * b, void *cl)
 static int
 drcLine_callback (const BoxType * b, void *cl)
 {
-  LineTypePtr line = (LineTypePtr) b;
+  LineType *line = (LineType *) b;
   struct drc_info *i = (struct drc_info *) cl;
 
   if (!TEST_FLAG (FOUNDFLAG, line) && LineLineIntersect (line, i->line))
@@ -266,7 +269,7 @@ drcLine_callback (const BoxType * b, void *cl)
 static int
 drcArc_callback (const BoxType * b, void *cl)
 {
-  ArcTypePtr arc = (ArcTypePtr) b;
+  ArcType *arc = (ArcType *) b;
   struct drc_info *i = (struct drc_info *) cl;
 
   if (!TEST_FLAG (FOUNDFLAG, arc) && LineArcIntersect (i->line, arc))
@@ -284,12 +287,12 @@ drcArc_callback (const BoxType * b, void *cl)
  * changes the position of the input point to the best answer.
  */
 
-static float
-drc_lines (PointTypePtr end, bool way)
+static double
+drc_lines (PointType *end, bool way)
 {
-  float f, s, f2, s2, len, best;
-  LocationType dx, dy, temp, last, length;
-  LocationType temp2, last2, length2;
+  double f, s, f2, s2, len, best;
+  Coord dx, dy, temp, last, length;
+  Coord temp2, last2, length2;
   LineType line1, line2;
   Cardinal group, comp;
   struct drc_info info;
@@ -444,7 +447,7 @@ drc_lines (PointTypePtr end, bool way)
 	      f2 += s2;
 	      len = (line2.Point2.X - line1.Point1.X);
 	      len *= len;
-	      len += (float) (line2.Point2.Y - line1.Point1.Y) *
+	      len += (double) (line2.Point2.Y - line1.Point1.Y) *
 		(line2.Point2.Y - line1.Point1.Y);
 	      if (len > best)
 		{
@@ -485,11 +488,15 @@ EnforceLineDRC (void)
 {
   PointType r45, rs;
   bool shift;
-  float r1, r2;
+  double r1, r2;
+
+  /* Silence a bogus compiler warning by storing this in a variable */
+  int layer_idx = INDEXOFCURRENT;
 
   if ( gui->mod1_is_pressed() || gui->control_is_pressed () || PCB->RatDraw
-      || INDEXOFCURRENT >= max_copper_layer)
+      || layer_idx >= max_copper_layer)
     return;
+
   rs.X = r45.X = Crosshair.X;
   rs.Y = r45.Y = Crosshair.Y;
   /* first try starting straight */
@@ -500,24 +507,14 @@ EnforceLineDRC (void)
   if (XOR (r1 > r2, shift))
     {
       if (PCB->Clipping)
-	{
-	  if (shift)
-	    PCB->Clipping = 2;
-	  else
-	    PCB->Clipping = 1;
-	}
+	PCB->Clipping = shift ? 2 : 1;
       Crosshair.X = rs.X;
       Crosshair.Y = rs.Y;
     }
   else
     {
       if (PCB->Clipping)
-	{
-	  if (shift)
-	    PCB->Clipping = 1;
-	  else
-	    PCB->Clipping = 2;
-	}
+	PCB->Clipping = shift ? 1 : 2;
       Crosshair.X = r45.X;
       Crosshair.Y = r45.Y;
     }

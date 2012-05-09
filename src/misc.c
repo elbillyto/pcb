@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -65,6 +63,7 @@
 #include "mymem.h"
 #include "misc.h"
 #include "move.h"
+#include "pcb-printf.h"
 #include "polygon.h"
 #include "remove.h"
 #include "rtree.h"
@@ -79,14 +78,10 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
-
 /*	forward declarations	*/
 static char *BumpName (char *);
-static void RightAngles (int, float *, float *);
 static void GetGridLockCoordinates (int, void *, void *, void *,
-                                    LocationType *, LocationType *);
+                                    Coord *, Coord *);
 
 
 /* Local variables */
@@ -104,6 +99,28 @@ static struct
   int cnt;
 } SavedStack;
 
+/* Distance() should be used so that there is only one
+ *  place to deal with overflow/precision errors
+ */
+double
+Distance (double x1, double y1, double x2, double y2)
+{
+  double delta_x = (x2 - x1);
+  double delta_y = (y2 - y1);
+  return sqrt(delta_x * delta_x + delta_y * delta_y);
+}
+
+/* Bring an angle into [0, 360) range */
+Angle
+NormalizeAngle (Angle a)
+{
+  while (a < 0)
+    a += 360.0;
+  while (a >= 360.0)
+    a -= 360.0;
+  return a;
+}
+
 /* Get Value returns a numeric value passed from the string and sets the
  * bool variable absolute to false if it leads with a +/- character
  */
@@ -116,15 +133,6 @@ GetValue (const char *val, const char *units, bool * absolute)
 double
 GetValueEx (const char *val, const char *units, bool * absolute, UnitList extra_units, const char *default_unit)
 {
-  static UnitList default_units = {
-    { "mm",   MM_TO_COORD(1), 0 },
-    { "um",   MM_TO_COORD(0.001), 0 },
-    { "nm",   MM_TO_COORD(0.000001), 0 },
-    { "mil",  MIL_TO_COORD(1), 0 },
-    { "cmil", MIL_TO_COORD(0.01), 0 },
-    { "in",   MIL_TO_COORD(1000), 0 },
-    { "", 1, 0 }
-  };
   double value;
   int n = -1;
   bool scaled = 0;
@@ -140,7 +148,8 @@ GetValueEx (const char *val, const char *units, bool * absolute, UnitList extra_
   if (*val == '=')
     {
       *absolute = true;
-      sscanf (val+1, "%lf%n", &value, &n);
+      if (sscanf (val+1, "%lf%n", &value, &n) < 1)
+        return 0;
       n++;
     }
   else
@@ -149,7 +158,8 @@ GetValueEx (const char *val, const char *units, bool * absolute, UnitList extra_
         *absolute = true;
       else
         *absolute = false;
-      sscanf (val, "%lf%n", &value, &n);
+      if (sscanf (val, "%lf%n", &value, &n) < 1)
+        return 0;
     }
   if (!units && n > 0)
     units = val + n;
@@ -160,15 +170,11 @@ GetValueEx (const char *val, const char *units, bool * absolute, UnitList extra_
   if (units && *units)
     {
       int i;
-      for (i = 0; *default_units[i].suffix; ++i)
+      const Unit *unit = get_unit_struct (units);
+      if (unit != NULL)
         {
-          if (strncmp (units, default_units[i].suffix, strlen(default_units[i].suffix)) == 0)
-            {
-              value *= default_units[i].scale;
-              if (default_units[i].flags & UNIT_PERCENT)
-                value /= 100.0;
-              scaled = 1;
-            }
+          value  = unit_to_coord (unit, value);
+          scaled = 1;
         }
       if (extra_units)
         {
@@ -188,13 +194,7 @@ GetValueEx (const char *val, const char *units, bool * absolute, UnitList extra_
   if (!scaled && default_unit && *default_unit)
     {
       int i;
-      for (i = 0; *default_units[i].suffix; ++i)
-        if (strcmp (default_units[i].suffix, default_unit) == 0)
-          {
-            value *= default_units[i].scale;
-            if (default_units[i].flags & UNIT_PERCENT)
-              value /= 100.0;
-          }
+      const Unit *unit = get_unit_struct (default_unit);
       if (extra_units)
         for (i = 0; *extra_units[i].suffix; ++i)
           if (strcmp (extra_units[i].suffix, default_unit) == 0)
@@ -202,7 +202,10 @@ GetValueEx (const char *val, const char *units, bool * absolute, UnitList extra_
               value *= extra_units[i].scale;
               if (extra_units[i].flags & UNIT_PERCENT)
                 value /= 100.0;
+              scaled = 1;
             }
+      if (!scaled && unit != NULL)
+        value = unit_to_coord (unit, value);
     }
 
   return value;
@@ -212,7 +215,7 @@ GetValueEx (const char *val, const char *units, bool * absolute, UnitList extra_
  * sets the bounding box of a point (which is silly)
  */
 void
-SetPointBoundingBox (PointTypePtr Pnt)
+SetPointBoundingBox (PointType *Pnt)
 {
   Pnt->X2 = Pnt->X + 1;
   Pnt->Y2 = Pnt->Y + 1;
@@ -222,18 +225,17 @@ SetPointBoundingBox (PointTypePtr Pnt)
  * sets the bounding box of a pin or via
  */
 void
-SetPinBoundingBox (PinTypePtr Pin)
+SetPinBoundingBox (PinType *Pin)
 {
-  BDimension width;
+  Coord width;
 
   /* the bounding box covers the extent of influence
    * so it must include the clearance values too
    */
-  width = (Pin->Clearance + Pin->Thickness + 1) / 2;
-  width = MAX (width, (Pin->Mask + 1) / 2);
+  width = MAX (Pin->Clearance + PIN_SIZE (Pin), Pin->Mask) / 2;
 
   /* Adjust for our discrete polygon approximation */
-  width = (int)((float)width * POLY_CIRC_RADIUS_ADJ + 0.5);
+  width = (double)width * POLY_CIRC_RADIUS_ADJ + 0.5;
 
   Pin->BoundingBox.X1 = Pin->X - width;
   Pin->BoundingBox.Y1 = Pin->Y - width;
@@ -246,11 +248,11 @@ SetPinBoundingBox (PinTypePtr Pin)
  * sets the bounding box of a pad
  */
 void
-SetPadBoundingBox (PadTypePtr Pad)
+SetPadBoundingBox (PadType *Pad)
 {
-  BDimension width;
-  BDimension deltax;
-  BDimension deltay;
+  Coord width;
+  Coord deltax;
+  Coord deltay;
 
   /* the bounding box covers the extent of influence
    * so it must include the clearance values too
@@ -263,19 +265,15 @@ SetPadBoundingBox (PadTypePtr Pad)
   if (TEST_FLAG (SQUAREFLAG, Pad) && deltax != 0 && deltay != 0)
     {
       /* slanted square pad */
-      float tx, ty, theta;
-      BDimension btx, bty;
-
-      theta = atan2 (deltay, deltax);
+      double theta;
+      Coord btx, bty;
 
       /* T is a vector half a thickness long, in the direction of
           one of the corners.  */
-      tx = width * cos (theta + M_PI/4) * sqrt(2.0);
-      ty = width * sin (theta + M_PI/4) * sqrt(2.0);
+      theta = atan2 (deltay, deltax);
+      btx = width * cos (theta + M_PI/4) * sqrt(2.0);
+      bty = width * sin (theta + M_PI/4) * sqrt(2.0);
 
-      /* cast back to this integer type */
-      btx = tx;
-      bty = ty;
 
       Pad->BoundingBox.X1 = MIN (MIN (Pad->Point1.X - btx, Pad->Point1.X - bty),
                                  MIN (Pad->Point2.X + btx, Pad->Point2.X + bty));
@@ -289,7 +287,7 @@ SetPadBoundingBox (PadTypePtr Pad)
   else
     {
       /* Adjust for our discrete polygon approximation */
-      width = (int)((float)width * POLY_CIRC_RADIUS_ADJ + 0.5);
+      width = (double)width * POLY_CIRC_RADIUS_ADJ + 0.5;
 
       Pad->BoundingBox.X1 = MIN (Pad->Point1.X, Pad->Point2.X) - width;
       Pad->BoundingBox.X2 = MAX (Pad->Point1.X, Pad->Point2.X) + width;
@@ -303,14 +301,12 @@ SetPadBoundingBox (PadTypePtr Pad)
  * sets the bounding box of a line
  */
 void
-SetLineBoundingBox (LineTypePtr Line)
+SetLineBoundingBox (LineType *Line)
 {
-  BDimension width;
-
-  width = (Line->Thickness + Line->Clearance + 1) / 2;
+  Coord width = (Line->Thickness + Line->Clearance + 1) / 2;
 
   /* Adjust for our discrete polygon approximation */
-  width = (int)((float)width * POLY_CIRC_RADIUS_ADJ + 0.5);
+  width = (double)width * POLY_CIRC_RADIUS_ADJ + 0.5;
 
   Line->BoundingBox.X1 = MIN (Line->Point1.X, Line->Point2.X) - width;
   Line->BoundingBox.X2 = MAX (Line->Point1.X, Line->Point2.X) + width;
@@ -325,7 +321,7 @@ SetLineBoundingBox (LineTypePtr Line)
  * sets the bounding box of a polygons
  */
 void
-SetPolygonBoundingBox (PolygonTypePtr Polygon)
+SetPolygonBoundingBox (PolygonType *Polygon)
 {
   Polygon->BoundingBox.X1 = Polygon->BoundingBox.Y1 = MAX_COORD;
   Polygon->BoundingBox.X2 = Polygon->BoundingBox.Y2 = 0;
@@ -345,10 +341,10 @@ SetPolygonBoundingBox (PolygonTypePtr Polygon)
  * sets the bounding box of an elements
  */
 void
-SetElementBoundingBox (DataTypePtr Data, ElementTypePtr Element,
-                       FontTypePtr Font)
+SetElementBoundingBox (DataType *Data, ElementType *Element,
+                       FontType *Font)
 {
-  BoxTypePtr box, vbox;
+  BoxType *box, *vbox;
 
   if (Data && Data->element_tree)
     r_delete_entry (Data->element_tree, (BoxType *) Element);
@@ -494,81 +490,89 @@ SetElementBoundingBox (DataTypePtr Data, ElementTypePtr Element,
  * creates the bounding box of a text object
  */
 void
-SetTextBoundingBox (FontTypePtr FontPtr, TextTypePtr Text)
+SetTextBoundingBox (FontType *FontPtr, TextType *Text)
 {
-  SymbolTypePtr symbol = FontPtr->Symbol;
+  SymbolType *symbol = FontPtr->Symbol;
   unsigned char *s = (unsigned char *) Text->TextString;
-  BDimension minThick = 0;
   int i;
-  int space = 0;
+  int space;
 
-  LocationType minx=0, miny=0, maxx=0, maxy=0;
-  LocationType tx;
-  int first_time = 1;
+  Coord minx, miny, maxx, maxy, tx;
+  Coord min_final_radius;
+  Coord min_unscaled_radius;
+  bool first_time = true;
 
-  if (PCB->minSlk < PCB->minWid)
-    minThick = PCB->minWid;
-  else
-    minThick = PCB->minSlk;
+  minx = miny = maxx = maxy = tx = 0;
 
-  minThick /= Text->Scale / 50.0;
+  /* Calculate the bounding box based on the larger of the thicknesses
+   * the text might clamped at on silk or copper layers.
+   */
+  min_final_radius = MAX (PCB->minWid, PCB->minSlk) / 2;
 
-  tx = 0;
+  /* Pre-adjust the line radius for the fact we are initially computing the
+   * bounds of the un-scaled text, and the thickness clamping applies to
+   * scaled text.
+   */
+  min_unscaled_radius = UNSCALE_TEXT (min_final_radius, Text->Scale);
 
   /* calculate size of the bounding box */
   for (; s && *s; s++)
     {
       if (*s <= MAX_FONTPOSITION && symbol[*s].Valid)
-	{
-	  LineTypePtr line = symbol[*s].Line;
-	  for (i = 0; i < symbol[*s].LineN; line++, i++)
-	    {
-	      int t = line->Thickness / 4;
-	      if (t < minThick)
-		t = minThick;
+        {
+          LineType *line = symbol[*s].Line;
+          for (i = 0; i < symbol[*s].LineN; line++, i++)
+            {
+              /* Clamp the width of text lines at the minimum thickness.
+               * NB: Divide 4 in thickness calculation is comprised of a factor
+               *     of 1/2 to get a radius from the center-line, and a factor
+               *     of 1/2 because some stupid reason we render our glyphs
+               *     at half their defined stroke-width.
+               */
+               Coord unscaled_radius = MAX (min_unscaled_radius, line->Thickness / 4);
 
-	      if (first_time)
-		{
-		  minx = maxx = line->Point1.X;
-		  miny = maxy = line->Point1.Y;
-		  first_time = 0;
-		}
+              if (first_time)
+                {
+                  minx = maxx = line->Point1.X;
+                  miny = maxy = line->Point1.Y;
+                  first_time = false;
+                }
 
-	      minx = MIN (minx, line->Point1.X - t + tx);
-	      miny = MIN (miny, line->Point1.Y - t);
-	      minx = MIN (minx, line->Point2.X - t + tx);
-	      miny = MIN (miny, line->Point2.Y - t);
-	      maxx = MAX (maxx, line->Point1.X + t + tx);
-	      maxy = MAX (maxy, line->Point1.Y + t);
-	      maxx = MAX (maxx, line->Point2.X + t + tx);
-	      maxy = MAX (maxy, line->Point2.Y + t);
-	    }
-	  space = symbol[*s].Delta;
-	}
+              minx = MIN (minx, line->Point1.X - unscaled_radius + tx);
+              miny = MIN (miny, line->Point1.Y - unscaled_radius);
+              minx = MIN (minx, line->Point2.X - unscaled_radius + tx);
+              miny = MIN (miny, line->Point2.Y - unscaled_radius);
+              maxx = MAX (maxx, line->Point1.X + unscaled_radius + tx);
+              maxy = MAX (maxy, line->Point1.Y + unscaled_radius);
+              maxx = MAX (maxx, line->Point2.X + unscaled_radius + tx);
+              maxy = MAX (maxy, line->Point2.Y + unscaled_radius);
+            }
+          space = symbol[*s].Delta;
+        }
       else
-	{
-	  BoxType *ds = &FontPtr->DefaultSymbol;
-	  int w = ds->X2 - ds->X1;
+        {
+          BoxType *ds = &FontPtr->DefaultSymbol;
+          Coord w = ds->X2 - ds->X1;
 
-	  minx = MIN (minx, ds->X1 + tx);
-	  miny = MIN (miny, ds->Y1);
-	  minx = MIN (minx, ds->X2 + tx);
-	  miny = MIN (miny, ds->Y2);
-	  maxx = MAX (maxx, ds->X1 + tx);
-	  maxy = MAX (maxy, ds->Y1);
-	  maxx = MAX (maxx, ds->X2 + tx);
-	  maxy = MAX (maxy, ds->Y2);
+          minx = MIN (minx, ds->X1 + tx);
+          miny = MIN (miny, ds->Y1);
+          minx = MIN (minx, ds->X2 + tx);
+          miny = MIN (miny, ds->Y2);
+          maxx = MAX (maxx, ds->X1 + tx);
+          maxy = MAX (maxy, ds->Y1);
+          maxx = MAX (maxx, ds->X2 + tx);
+          maxy = MAX (maxy, ds->Y2);
 
-	  space = w / 5;
-	}
+          space = w / 5;
+        }
       tx += symbol[*s].Width + space;
     }
 
   /* scale values */
-  minx *= Text->Scale / 100.;
-  miny *= Text->Scale / 100.;
-  maxx *= Text->Scale / 100.;
-  maxy *= Text->Scale / 100.;
+  minx = SCALE_TEXT (minx, Text->Scale);
+  miny = SCALE_TEXT (miny, Text->Scale);
+  maxx = SCALE_TEXT (maxx, Text->Scale);
+  maxy = SCALE_TEXT (maxy, Text->Scale);
 
   /* set upper-left and lower-right corner;
    * swap coordinates if necessary (origin is already in 'swapped')
@@ -608,7 +612,7 @@ SetTextBoundingBox (FontTypePtr FontPtr, TextTypePtr Text)
  * returns true if data area is empty
  */
 bool
-IsDataEmpty (DataTypePtr Data)
+IsDataEmpty (DataType *Data)
 {
   bool hasNoObjects;
   Cardinal i;
@@ -634,7 +638,7 @@ FlagIsDataEmpty (int parm)
 /* FLAG(DataNonEmpty,FlagIsDataEmpty,1) */
 
 bool
-IsLayerEmpty (LayerTypePtr layer)
+IsLayerEmpty (LayerType *layer)
 {
   return (layer->LineN == 0
 	  && layer->TextN == 0
@@ -674,12 +678,49 @@ IsPasteEmpty (int side)
   return paste_empty;
 }
 
+
+typedef struct
+{
+  int nplated;
+  int nunplated;
+} HoleCountStruct;
+
+static int
+hole_counting_callback (const BoxType * b, void *cl)
+{
+  PinType *pin = (PinType *) b;
+  HoleCountStruct *hcs = (HoleCountStruct *) cl;
+  if (TEST_FLAG (HOLEFLAG, pin))
+    hcs->nunplated++;
+  else
+    hcs->nplated++;
+  return 1;
+}
+
+/* ---------------------------------------------------------------------------
+ * counts the number of plated and unplated holes in the design within
+ * a given area of the board. To count for the whole board, pass NULL
+ * within_area.
+ */
+void
+CountHoles (int *plated, int *unplated, const BoxType *within_area)
+{
+  HoleCountStruct hcs = {0, 0};
+
+  r_search (PCB->Data->pin_tree, within_area, NULL, hole_counting_callback, &hcs);
+  r_search (PCB->Data->via_tree, within_area, NULL, hole_counting_callback, &hcs);
+
+  if (plated != NULL)   *plated   = hcs.nplated;
+  if (unplated != NULL) *unplated = hcs.nunplated;
+}
+
+
 /* ---------------------------------------------------------------------------
  * gets minimum and maximum coordinates
  * returns NULL if layout is empty
  */
-BoxTypePtr
-GetDataBoundingBox (DataTypePtr Data)
+BoxType *
+GetDataBoundingBox (DataType *Data)
 {
   static BoxType box;
   /* FIX ME: use r_search to do this much faster */
@@ -704,7 +745,7 @@ GetDataBoundingBox (DataTypePtr Data)
     box.X2 = MAX (box.X2, element->BoundingBox.X2);
     box.Y2 = MAX (box.Y2, element->BoundingBox.Y2);
     {
-      TextTypePtr text = &NAMEONPCB_TEXT (element);
+      TextType *text = &NAMEONPCB_TEXT (element);
       box.X1 = MIN (box.X1, text->BoundingBox.X1);
       box.Y1 = MIN (box.Y1, text->BoundingBox.Y1);
       box.X2 = MAX (box.X2, text->BoundingBox.X2);
@@ -753,22 +794,14 @@ GetDataBoundingBox (DataTypePtr Data)
 
 /* ---------------------------------------------------------------------------
  * centers the displayed PCB around the specified point (X,Y)
- * if Delta is false, X,Y are in absolute PCB coordinates
- * if Delta is true, simply move the center by an amount X, Y in screen
- * coordinates
  */
 void
-CenterDisplay (LocationType X, LocationType Y, bool Delta)
+CenterDisplay (Coord X, Coord Y)
 {
-  double save_grid = PCB->Grid;
+  Coord save_grid = PCB->Grid;
   PCB->Grid = 1;
-  if (Delta)
-    MoveCrosshairRelative (X, Y);
-  else
-    {
-      if (MoveCrosshairAbsolute (X, Y))
-        notify_crosshair_change (true);
-    }
+  if (MoveCrosshairAbsolute (X, Y))
+    notify_crosshair_change (true);
   gui->set_crosshair (Crosshair.X, Crosshair.Y, HID_SC_WARP_POINTER);
   PCB->Grid = save_grid;
 }
@@ -779,12 +812,12 @@ CenterDisplay (LocationType X, LocationType Y, bool Delta)
  * 
  */
 void
-SetFontInfo (FontTypePtr Ptr)
+SetFontInfo (FontType *Ptr)
 {
   Cardinal i, j;
-  SymbolTypePtr symbol;
-  LineTypePtr line;
-  LocationType totalminy = MAX_COORD;
+  SymbolType *symbol;
+  LineType *line;
+  Coord totalminy = MAX_COORD;
 
   /* calculate cell with and height (is at least DEFAULT_CELLSIZE)
    * maximum cell width and height
@@ -794,7 +827,7 @@ SetFontInfo (FontTypePtr Ptr)
   Ptr->MaxHeight = DEFAULT_CELLSIZE;
   for (i = 0, symbol = Ptr->Symbol; i <= MAX_FONTPOSITION; i++, symbol++)
     {
-      LocationType minx, miny, maxx, maxy;
+      Coord minx, miny, maxx, maxy;
 
       /* next one if the index isn't used or symbol is empty (SPACE) */
       if (!symbol->Valid || !symbol->LineN)
@@ -843,18 +876,40 @@ SetFontInfo (FontTypePtr Ptr)
   Ptr->DefaultSymbol.Y2 = Ptr->DefaultSymbol.Y1 + Ptr->MaxHeight;
 }
 
-static BDimension
+static Coord
 GetNum (char **s, const char *default_unit)
 {
-  BDimension ret_val;
   /* Read value */
-  ret_val = GetValueEx(*s, NULL, NULL, NULL, default_unit);
+  Coord ret_val = GetValueEx (*s, NULL, NULL, NULL, default_unit);
   /* Advance pointer */
   while(isalnum(**s) || **s == '.')
      (*s)++;
   return ret_val;
 }
 
+/*! \brief Serializes the route style list 
+ *  \par Function Description
+ *  Right now n_styles should always be set to NUM_STYLES,
+ *  since that is the number of route styles ParseRouteString()
+ *  expects to parse.
+ */
+char *
+make_route_string (RouteStyleType rs[], int n_styles)
+{
+  GString *str = g_string_new ("");
+  gint i;
+
+  for (i = 0; i < n_styles; ++i)
+    {
+      char *r_string = pcb_g_strdup_printf ("%s,%mc,%mc,%mc,%mc", rs[i].Name,
+                                            rs[i].Thick, rs[i].Diameter,
+                                            rs[i].Hole, rs[i].Keepaway);
+      if (i > 0)
+        g_string_append_c (str, ':');
+      g_string_append (str, r_string);
+    }
+  return g_string_free (str, FALSE);
+}
 
 /* ----------------------------------------------------------------------
  * parses the routes definition string which is a colon separated list of
@@ -862,7 +917,7 @@ GetNum (char **s, const char *default_unit)
  * e.g. Signal,20,40,20,10:Power,40,60,28,10:...
  */
 int
-ParseRouteString (char *s, RouteStyleTypePtr routeStyle, const char *default_unit)
+ParseRouteString (char *s, RouteStyleType *routeStyle, const char *default_unit)
 {
   int i, style;
   char Name[256];
@@ -932,7 +987,7 @@ error:
  * comma separated layer numbers (1,2,b:4,6,8,t)
  */
 int
-ParseGroupString (char *s, LayerGroupTypePtr LayerGroup, int LayerN)
+ParseGroupString (char *s, LayerGroupType *LayerGroup, int LayerN)
 {
   int group, member, layer;
   bool c_set = false,        /* flags for the two special layers to */
@@ -1151,7 +1206,7 @@ ExpandFilename (char *Dirname, char *Filename)
  * returns the layer number for the passed pointer
  */
 int
-GetLayerNumber (DataTypePtr Data, LayerTypePtr Layer)
+GetLayerNumber (DataType *Data, LayerType *Layer)
 {
   int i;
 
@@ -1354,7 +1409,7 @@ GetGroupOfLayer (int Layer)
  * returns the layergroup number for the passed pointer
  */
 int
-GetLayerGroupNumberByPointer (LayerTypePtr Layer)
+GetLayerGroupNumberByPointer (LayerType *Layer)
 {
   return (GetLayerGroupNumberByNumber (GetLayerNumber (PCB->Data, Layer)));
 }
@@ -1382,7 +1437,7 @@ GetLayerGroupNumberByNumber (Cardinal Layer)
  * returns a pointer to an objects bounding box;
  * data is valid until the routine is called again
  */
-BoxTypePtr
+BoxType *
 GetObjectBoundingBox (int Type, void *Ptr1, void *Ptr2, void *Ptr3)
 {
   switch (Type)
@@ -1411,88 +1466,72 @@ GetObjectBoundingBox (int Type, void *Ptr1, void *Ptr2, void *Ptr3)
  * computes the bounding box of an arc
  */
 void
-SetArcBoundingBox (ArcTypePtr Arc)
+SetArcBoundingBox (ArcType *Arc)
 {
   double ca1, ca2, sa1, sa2;
   double minx, maxx, miny, maxy;
-  LocationType ang1, ang2, delta, a;
-  LocationType width;
+  Angle ang1, ang2;
+  Coord width;
 
-  /* first put angles into standard form */
-  if (Arc->Delta > 360)
-    Arc->Delta = 360;
-  if (Arc->Delta < -360)
-    Arc->Delta = -360;
+  /* first put angles into standard form:
+   *  ang1 < ang2, both angles between 0 and 720 */
+  Arc->Delta = CLAMP (Arc->Delta, -360, 360);
 
   if (Arc->Delta > 0)
     {
-      ang1 = Arc->StartAngle;
-      delta = Arc->Delta;
+      ang1 = NormalizeAngle (Arc->StartAngle);
+      ang2 = NormalizeAngle (Arc->StartAngle + Arc->Delta);
     }
   else
     {
-      ang1 = Arc->StartAngle + Arc->Delta;
-      delta = -Arc->Delta;
+      ang1 = NormalizeAngle (Arc->StartAngle + Arc->Delta);
+      ang2 = NormalizeAngle (Arc->StartAngle);
     }
-  if (ang1 < 0)
-    ang1 = 360 - ((-ang1) % 360);
-  else
-    ang1 = ang1 % 360;
-
-  ang2 = ang1 + delta;
+  if (ang1 > ang2)
+    ang2 += 360;
+  /* Make sure full circles aren't treated as zero-length arcs */
+  if (Arc->Delta == 360 || Arc->Delta == -360)
+    ang2 = ang1 + 360;
 
   /* calculate sines, cosines */
-  ca1 = M180 * (double) ang1;
-  sa1 = sin (ca1);
-  ca1 = cos (ca1);
+  sa1 = sin (M180 * ang1);
+  ca1 = cos (M180 * ang1);
+  sa2 = sin (M180 * ang2);
+  ca2 = cos (M180 * ang2);
 
-  minx = maxx = ca1;
-  miny = maxy = sa1;
+  minx = MIN (ca1, ca2);
+  maxx = MAX (ca1, ca2);
+  miny = MIN (sa1, sa2);
+  maxy = MAX (sa1, sa2);
 
-  ca2 = M180 * (double) ang2;
-  sa2 = sin (ca2);
-  ca2 = cos (ca2);
+  /* Check for extreme angles */
+  if ((ang1 <= 0   && ang2 >= 0)   || (ang1 <= 360 && ang2 >= 360)) maxx = 1;
+  if ((ang1 <= 90  && ang2 >= 90)  || (ang1 <= 450 && ang2 >= 450)) maxy = 1;
+  if ((ang1 <= 180 && ang2 >= 180) || (ang1 <= 540 && ang2 >= 540)) minx = -1;
+  if ((ang1 <= 270 && ang2 >= 270) || (ang1 <= 630 && ang2 >= 630)) miny = -1;
 
-  minx = MIN (minx, ca2);
-  maxx = MAX (maxx, ca2);
-  miny = MIN (miny, sa2);
-  maxy = MAX (maxy, sa2);
-
-  for (a = ang1 - ang1 % 90 + 90; a < ang2; a += 90)
-    {
-      switch (a % 360)
-	{
-	case 0:
-	  maxx = 1;
-	  break;
-	case 90:
-	  maxy = 1;
-	  break;
-	case 180:
-	  minx = -1;
-	  break;
-	case 270:
-	  miny = -1;
-	  break;
-	}
-    }
-
-  Arc->BoundingBox.X2 = Arc->X - Arc->Width * minx;
+  /* Finally, calcate bounds, converting sane geometry into pcb geometry */
   Arc->BoundingBox.X1 = Arc->X - Arc->Width * maxx;
-  Arc->BoundingBox.Y2 = Arc->Y + Arc->Height * maxy;
+  Arc->BoundingBox.X2 = Arc->X - Arc->Width * minx;
   Arc->BoundingBox.Y1 = Arc->Y + Arc->Height * miny;
+  Arc->BoundingBox.Y2 = Arc->Y + Arc->Height * maxy;
 
   width = (Arc->Thickness + Arc->Clearance) / 2;
 
   /* Adjust for our discrete polygon approximation */
-  width = (int)((float)width * MAX (POLY_CIRC_RADIUS_ADJ,
-                                     (1.0 + POLY_ARC_MAX_DEVIATION)) + 0.5);
+  width = (double)width * MAX (POLY_CIRC_RADIUS_ADJ, (1.0 + POLY_ARC_MAX_DEVIATION)) + 0.5;
 
   Arc->BoundingBox.X1 -= width;
   Arc->BoundingBox.X2 += width;
   Arc->BoundingBox.Y1 -= width;
   Arc->BoundingBox.Y2 += width;
   close_box(&Arc->BoundingBox);
+
+  /* Update the arc end-points */
+  Arc->Point1.X = Arc->X - (double)Arc->Width  * ca1;
+  Arc->Point1.Y = Arc->Y + (double)Arc->Height * sa1;
+  Arc->Point2.X = Arc->X - (double)Arc->Width  * ca2;
+  Arc->Point2.Y = Arc->Y + (double)Arc->Height * sa2;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1614,7 +1653,7 @@ GetWorkingDirectory (char *path)
  * some special characters are quoted
  */
 void
-CreateQuotedString (DynamicStringTypePtr DS, char *S)
+CreateQuotedString (DynamicStringType *DS, char *S)
 {
   DSClearString (DS);
   DSAddCharacter (DS, '"');
@@ -1627,34 +1666,22 @@ CreateQuotedString (DynamicStringTypePtr DS, char *S)
   DSAddCharacter (DS, '"');
 }
 
-
-static void
-RightAngles (int Angle, float *cosa, float *sina)
-{
-  *cosa = (float) cos ((double) Angle * M180);
-  *sina = (float) sin ((double) Angle * M180);
-}
-
-BoxTypePtr
-GetArcEnds (ArcTypePtr Arc)
+BoxType *
+GetArcEnds (ArcType *Arc)
 {
   static BoxType box;
-  float ca, sa;
-
-  RightAngles (Arc->StartAngle, &ca, &sa);
-  box.X1 = Arc->X - Arc->Width * ca;
-  box.Y1 = Arc->Y + Arc->Height * sa;
-  RightAngles (Arc->StartAngle + Arc->Delta, &ca, &sa);
-  box.X2 = Arc->X - Arc->Width * ca;
-  box.Y2 = Arc->Y + Arc->Height * sa;
-  return (&box);
+  box.X1 = Arc->X - Arc->Width * cos (Arc->StartAngle * M180);
+  box.Y1 = Arc->Y + Arc->Height * sin (Arc->StartAngle * M180);
+  box.X2 = Arc->X - Arc->Width * cos ((Arc->StartAngle + Arc->Delta) * M180);
+  box.Y2 = Arc->Y + Arc->Height * sin ((Arc->StartAngle + Arc->Delta) * M180);
+  return &box;
 }
 
 
 /* doesn't this belong in change.c ?? */
 void
-ChangeArcAngles (LayerTypePtr Layer, ArcTypePtr a,
-                 long int new_sa, long int new_da)
+ChangeArcAngles (LayerType *Layer, ArcType *a,
+                 Angle new_sa, Angle new_da)
 {
   if (new_da >= 360)
     {
@@ -1662,12 +1689,12 @@ ChangeArcAngles (LayerTypePtr Layer, ArcTypePtr a,
       new_sa = 0;
     }
   RestoreToPolygon (PCB->Data, ARC_TYPE, Layer, a);
-  r_delete_entry (Layer->arc_tree, (BoxTypePtr) a);
+  r_delete_entry (Layer->arc_tree, (BoxType *) a);
   AddObjectToChangeAnglesUndoList (ARC_TYPE, a, a, a);
   a->StartAngle = new_sa;
   a->Delta = new_da;
   SetArcBoundingBox (a);
-  r_insert_entry (Layer->arc_tree, (BoxTypePtr) a, 0);
+  r_insert_entry (Layer->arc_tree, (BoxType *) a, 0);
   ClearFromPolygon (PCB->Data, ARC_TYPE, Layer, a);
 }
 
@@ -1703,7 +1730,7 @@ BumpName (char *Name)
  * this can alter the contents of the input string
  */
 char *
-UniqueElementName (DataTypePtr Data, char *Name)
+UniqueElementName (DataType *Data, char *Name)
 {
   bool unique = true;
   /* null strings are ok */
@@ -1731,43 +1758,43 @@ UniqueElementName (DataTypePtr Data, char *Name)
 
 static void
 GetGridLockCoordinates (int type, void *ptr1,
-                        void *ptr2, void *ptr3, LocationType * x,
-                        LocationType * y)
+                        void *ptr2, void *ptr3, Coord * x,
+                        Coord * y)
 {
   switch (type)
     {
     case VIA_TYPE:
-      *x = ((PinTypePtr) ptr2)->X;
-      *y = ((PinTypePtr) ptr2)->Y;
+      *x = ((PinType *) ptr2)->X;
+      *y = ((PinType *) ptr2)->Y;
       break;
     case LINE_TYPE:
-      *x = ((LineTypePtr) ptr2)->Point1.X;
-      *y = ((LineTypePtr) ptr2)->Point1.Y;
+      *x = ((LineType *) ptr2)->Point1.X;
+      *y = ((LineType *) ptr2)->Point1.Y;
       break;
     case TEXT_TYPE:
     case ELEMENTNAME_TYPE:
-      *x = ((TextTypePtr) ptr2)->X;
-      *y = ((TextTypePtr) ptr2)->Y;
+      *x = ((TextType *) ptr2)->X;
+      *y = ((TextType *) ptr2)->Y;
       break;
     case ELEMENT_TYPE:
-      *x = ((ElementTypePtr) ptr2)->MarkX;
-      *y = ((ElementTypePtr) ptr2)->MarkY;
+      *x = ((ElementType *) ptr2)->MarkX;
+      *y = ((ElementType *) ptr2)->MarkY;
       break;
     case POLYGON_TYPE:
-      *x = ((PolygonTypePtr) ptr2)->Points[0].X;
-      *y = ((PolygonTypePtr) ptr2)->Points[0].Y;
+      *x = ((PolygonType *) ptr2)->Points[0].X;
+      *y = ((PolygonType *) ptr2)->Points[0].Y;
       break;
 
     case LINEPOINT_TYPE:
     case POLYGONPOINT_TYPE:
-      *x = ((PointTypePtr) ptr3)->X;
-      *y = ((PointTypePtr) ptr3)->Y;
+      *x = ((PointType *) ptr3)->X;
+      *y = ((PointType *) ptr3)->Y;
       break;
     case ARC_TYPE:
       {
-        BoxTypePtr box;
+        BoxType *box;
 
-        box = GetArcEnds ((ArcTypePtr) ptr2);
+        box = GetArcEnds ((ArcType *) ptr2);
         *x = box->X1;
         *y = box->Y1;
         break;
@@ -1776,10 +1803,10 @@ GetGridLockCoordinates (int type, void *ptr1,
 }
 
 void
-AttachForCopy (LocationType PlaceX, LocationType PlaceY)
+AttachForCopy (Coord PlaceX, Coord PlaceY)
 {
-  BoxTypePtr box;
-  LocationType mx = 0, my = 0;
+  BoxType *box;
+  Coord mx = 0, my = 0;
 
   Crosshair.AttachedObject.RubberbandN = 0;
   if (! TEST_FLAG (SNAPPINFLAG, PCB))
@@ -1791,8 +1818,8 @@ AttachForCopy (LocationType PlaceX, LocationType PlaceY)
                               Crosshair.AttachedObject.Ptr1,
                               Crosshair.AttachedObject.Ptr2,
                               Crosshair.AttachedObject.Ptr3, &mx, &my);
-      mx = GRIDFIT_X (mx, PCB->Grid) - mx;
-      my = GRIDFIT_Y (my, PCB->Grid) - my;
+      mx = GridFit (mx, PCB->Grid, PCB->GridOffsetX) - mx;
+      my = GridFit (my, PCB->Grid, PCB->GridOffsetY) - my;
     }
   Crosshair.AttachedObject.X = PlaceX - mx;
   Crosshair.AttachedObject.Y = PlaceY - my;
@@ -1954,7 +1981,7 @@ MoveLayerToGroup (int layer, int group)
 }
 
 char *
-LayerGroupsToString (LayerGroupTypePtr lg)
+LayerGroupsToString (LayerGroupType *lg)
 {
 #if MAX_LAYER < 9998
   /* Allows for layer numbers 0..9999 */
@@ -2095,8 +2122,8 @@ AttributeRemoveFromList(AttributeListType *list, char *name)
       }
 }
 
-
-
+/* In future all use of this should be supplanted by
+ * pcb-printf and %mr/%m# spec */
 const char *
 c_dtostr (double d)
 {
@@ -2119,71 +2146,6 @@ c_dtostr (double d)
   f = floor (d * 1000000.0);
   sprintf (bufp, "%06d", f);
   return buf;
-}
-
-double
-c_strtod (const char *s)
-{
-  double rv = 0;
-  double sign = 1.0;
-  double scale;
-
-  /* leading whitespace */
-  while (*s && (*s == ' ' || *s == '\t'))
-    s++;
-
-  /* optional sign */
-  if (*s == '-')
-    {
-      sign = -1.0;
-      s++;
-    }
-  else if (*s == '+')
-    s++;
-
-  /* integer portion */
-  while (*s >= '0' && *s <= '9')
-    {
-      rv *= 10.0;
-      rv += *s - '0';
-      s++;
-    }
-
-  /* fractional portion */
-  if (*s == '.')
-    {
-      s++;
-      scale = 0.1;
-      while (*s >= '0' && *s <= '9')
-        {
-          rv += (*s - '0') * scale;
-          scale *= 0.1;
-          s++;
-        }
-    }
-
-  /* exponent */
-  if (*s == 'E' || *s == 'e')
-    {
-      int e;
-      if (sscanf (s + 1, "%d", &e) == 1)
-        {
-          scale = 1.0;
-          while (e > 0)
-            {
-              scale *= 10.0;
-              e--;
-            }
-          while (e < 0)
-            {
-              scale *= 0.1;
-              e++;
-            }
-          rv *= scale;
-        }
-    }
-
-  return rv * sign;
 }
 
 void
@@ -2321,9 +2283,9 @@ pcb_mkdir (const char *path, int mode)
 int 
 ElementOrientation (ElementType *e)
 {
-  int pin1x, pin1y, pin2x, pin2y, dx, dy;
-  int found_pin1 = 0;
-  int found_pin2 = 0;
+  Coord pin1x, pin1y, pin2x, pin2y, dx, dy;
+  bool found_pin1 = 0;
+  bool found_pin2 = 0;
 
   /* in case we don't find pin 1 or 2, make sure we have initialized these variables */
   pin1x = 0;
@@ -2389,7 +2351,7 @@ ElementOrientation (ElementType *e)
 }
 
 int
-ActionListRotations(int argc, char **argv, int x, int y)
+ActionListRotations(int argc, char **argv, Coord x, Coord y)
 {
   ELEMENT_LOOP (PCB->Data);
   {

@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for copy routines
  */
 
-#ifndef	__COPY_INCLUDED__
-#define	__COPY_INCLUDED__
+#ifndef	PCB_COPY_H
+#define	PCB_COPY_H
 
 #include "global.h"
 
@@ -41,10 +40,10 @@
 	ELEMENT_TYPE | ELEMENTNAME_TYPE | POLYGON_TYPE | ARC_TYPE)
 
 
-PolygonTypePtr CopyPolygonLowLevel (PolygonTypePtr, PolygonTypePtr);
-ElementTypePtr CopyElementLowLevel (DataTypePtr, ElementTypePtr,
-				    ElementTypePtr, bool, LocationType, LocationType);
-bool CopyPastebufferToLayout (LocationType, LocationType);
-void *CopyObject (int, void *, void *, void *, LocationType, LocationType);
+PolygonType * CopyPolygonLowLevel (PolygonType *, PolygonType *);
+ElementType * CopyElementLowLevel (DataType *, ElementType *,
+				    ElementType *, bool, Coord, Coord);
+bool CopyPastebufferToLayout (Coord, Coord);
+void *CopyObject (int, void *, void *, void *, Coord, Coord);
 
 #endif

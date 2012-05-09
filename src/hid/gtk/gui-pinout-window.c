@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -49,9 +47,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
-
 static void
 pinout_close_cb (GtkWidget * widget, GtkWidget *top_window)
 {
@@ -62,7 +57,7 @@ pinout_close_cb (GtkWidget * widget, GtkWidget *top_window)
 void
 ghid_pinout_window_show (GHidPort * out, ElementType * element)
 {
-  GtkWidget *button, *viewport, *vbox, *hbox, *preview, *top_window;
+  GtkWidget *button, *vbox, *hbox, *preview, *top_window;
   gchar *title;
   int width, height;
 
@@ -82,12 +77,9 @@ ghid_pinout_window_show (GHidPort * out, ElementType * element)
   vbox = gtk_vbox_new (FALSE, 0);
   gtk_container_add (GTK_CONTAINER (top_window), vbox);
 
-  viewport = gtk_viewport_new (NULL, NULL);
-  gtk_viewport_set_shadow_type (GTK_VIEWPORT (viewport), GTK_SHADOW_IN);
-  gtk_box_pack_start (GTK_BOX (vbox), viewport, TRUE, TRUE, 0);
 
   preview = ghid_pinout_preview_new (element);
-  gtk_container_add (GTK_CONTAINER (viewport), preview);
+  gtk_box_pack_start (GTK_BOX (vbox), preview, TRUE, TRUE, 0);
 
   ghid_pinout_preview_get_natural_size (GHID_PINOUT_PREVIEW (preview),
                                         &width, &height);
@@ -105,6 +97,6 @@ ghid_pinout_window_show (GHidPort * out, ElementType * element)
 
   gtk_widget_realize (top_window);
   if (Settings.AutoPlace)
-    gtk_widget_set_uposition (top_window, 10, 10);
+    gtk_window_move (GTK_WINDOW (top_window), 10, 10);
   gtk_widget_show_all (top_window);
 }

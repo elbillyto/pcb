@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -15,7 +13,9 @@
 #include "global.h"
 #include "data.h"
 #include "set.h"
+#include "misc.h"
 #include "mymem.h"
+#include "pcb-printf.h"
 
 #include "hid.h"
 #include "../hidint.h"
@@ -24,8 +24,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 /* There are three places where styles are kept:
 
@@ -64,9 +62,8 @@ static Widget value_form, value_labels, value_texts, units_form;
 static int local_update = 0;
 XmString xms_mm, xms_mil;
 
-static int use_mm = 0;
-
-#define USTR (use_mm ? xms_mm : xms_mil)
+static const Unit *unit = 0;
+static XmString ustr;
 
 static int
 hash (char *cp)
@@ -93,22 +90,17 @@ static char *value_names[] = {
   "Thickness", "Diameter", "Hole", "Keepaway"
 };
 
-static int RouteStylesChanged (int argc, char **argv, int x, int y);
+static int RouteStylesChanged (int argc, char **argv, Coord x, Coord y);
 
 static void
-update_one_value (int i, int v)
+update_one_value (int i, Coord v)
 {
   char buf[100];
-  double d;
-  if (use_mm)
-    d = COORD_TO_MM (v);
-  else
-    d = COORD_TO_MIL (v);
 
-  sprintf (buf, "%.2f", d);
+  pcb_sprintf (buf, "%m+%.2mS", unit->allow, v);
   XmTextSetString (style_values[i], buf);
   n = 0;
-  stdarg (XmNlabelString, USTR);
+  stdarg (XmNlabelString, ustr);
   XtSetValues (units_pb[i], args, n);
 }
 
@@ -132,7 +124,8 @@ lesstif_styles_update_values ()
       lesstif_update_status_line ();
       return;
     }
-  use_mm = Settings.grid_units_mm;
+  unit = Settings.grid_unit;
+  ustr = XmStringCreateLocalized ((char *)Settings.grid_unit->suffix);
   update_values ();
 }
 
@@ -163,18 +156,13 @@ update_style_buttons ()
 static void
 style_value_cb (Widget w, int i, void *cbs)
 {
-  double d;
-  int n;
+  Coord n;
   char *s;
 
   if (local_update)
     return;
   s = XmTextGetString (w);
-  sscanf (s, "%lf", &d);
-  if (use_mm)
-    n = MM_TO_COORD (d);
-  else
-    n = MIL_TO_COORD (d);
+  n = GetValueEx (s, NULL, NULL, NULL, unit->suffix);
   switch (i)
     {
     case SSthick:
@@ -196,7 +184,11 @@ style_value_cb (Widget w, int i, void *cbs)
 static void
 units_cb ()
 {
-  use_mm = !use_mm;
+  if (unit == get_unit_struct ("mm"))
+    unit = get_unit_struct ("mil");
+  else
+    unit = get_unit_struct ("mm");
+  ustr = XmStringCreateLocalized ((char *)unit->suffix);
   update_values ();
 }
 
@@ -235,7 +227,7 @@ style_value (int i)
   stdarg (XmNbottomPosition, i + 1);
   stdarg (XmNleftAttachment, XmATTACH_FORM);
   stdarg (XmNrightAttachment, XmATTACH_FORM);
-  stdarg (XmNlabelString, USTR);
+  stdarg (XmNlabelString, ustr);
   units_pb[i] = XmCreatePushButton (units_form, value_names[i], args, n);
   XtAddCallback (units_pb[i], XmNactivateCallback,
 		 (XtCallbackProc) units_cb, (XtPointer) (size_t) i);
@@ -308,7 +300,7 @@ style_button (int i)
   stdarg (XmNtopAttachment, XmATTACH_WIDGET);
   stdarg (XmNtopWidget, i ? style_pb[i - 1] : value_form);
   stdarg (XmNleftAttachment, XmATTACH_FORM);
-  stdarg (XmNlabelString, XmStringCreateLocalized ("Name"));
+  stdarg (XmNlabelString, XmStringCreatePCB ("Name"));
   set = XmCreatePushButton (style_dialog, "style", args, n);
   XtManageChild (set);
   XtAddCallback (set, XmNactivateCallback,
@@ -319,7 +311,7 @@ style_button (int i)
   stdarg (XmNtopWidget, i ? style_pb[i - 1] : value_form);
   stdarg (XmNleftAttachment, XmATTACH_WIDGET);
   stdarg (XmNleftWidget, set);
-  stdarg (XmNlabelString, XmStringCreateLocalized ("Set"));
+  stdarg (XmNlabelString, XmStringCreatePCB ("Set"));
   set = XmCreatePushButton (style_dialog, "style", args, n);
   XtManageChild (set);
   XtAddCallback (set, XmNactivateCallback,
@@ -331,7 +323,7 @@ style_button (int i)
   stdarg (XmNrightAttachment, XmATTACH_FORM);
   stdarg (XmNleftAttachment, XmATTACH_WIDGET);
   stdarg (XmNleftWidget, set);
-  stdarg (XmNlabelString, XmStringCreateLocalized (PCB->RouteStyle[i].Name));
+  stdarg (XmNlabelString, XmStringCreatePCB (PCB->RouteStyle[i].Name));
   stdarg (XmNindicatorType, XmONE_OF_MANY);
   stdarg (XmNalignment, XmALIGNMENT_BEGINNING);
   pb = XmCreateToggleButton (style_dialog, "style", args, n);
@@ -352,7 +344,7 @@ static const char adjuststyle_help[] =
 %end-doc */
 
 static int
-AdjustStyle (int argc, char **argv, int x, int y)
+AdjustStyle (int argc, char **argv, Coord x, Coord y)
 {
   if (!mainwind)
     return 1;
@@ -360,8 +352,8 @@ AdjustStyle (int argc, char **argv, int x, int y)
     {
       int i;
 
-      xms_mm = XmStringCreateLocalized ("mm");
-      xms_mil = XmStringCreateLocalized ("mil");
+      unit = Settings.grid_unit;
+      ustr = XmStringCreateLocalized ((char *)unit->suffix);
 
       n = 0;
       stdarg (XmNautoUnmanage, False);
@@ -418,7 +410,7 @@ AdjustStyle (int argc, char **argv, int x, int y)
 }
 
 static int
-RouteStylesChanged (int argc, char **argv, int x, int y)
+RouteStylesChanged (int argc, char **argv, Coord x, Coord y)
 {
   int i, j, h;
   if (!PCB || !PCB->RouteStyle[0].Name)
@@ -434,7 +426,7 @@ RouteStylesChanged (int argc, char **argv, int x, int y)
       name_hashes[j] = h;
       n = 0;
       stdarg (XmNlabelString,
-	      XmStringCreateLocalized (PCB->RouteStyle[j].Name));
+	      XmStringCreatePCB (PCB->RouteStyle[j].Name));
       if (style_dialog)
 	XtSetValues (style_pb[j], args, n);
       for (i = 0; i < num_style_buttons; i++)
@@ -461,7 +453,7 @@ lesstif_insert_style_buttons (Widget menu)
       n = 0;
       stdarg (XmNindicatorType, XmONE_OF_MANY);
       stdarg (XmNlabelString,
-	      XmStringCreateLocalized (PCB->RouteStyle[i].Name));
+	      XmStringCreatePCB (PCB->RouteStyle[i].Name));
       btn = XmCreateToggleButton (menu, "style", args, n);
       XtManageChild (btn);
       XtAddCallback (btn, XmNvalueChangedCallback,

@@ -1,6 +1,4 @@
 ## -*- makefile -*-
-## $Id$
-##
 
 SUBDIRS=	icons
 
@@ -18,7 +16,7 @@ EXTRA_LIBRARIES = \
 	liblpr.a libgerber.a libbom.a libpng.a libps.a libnelma.a \
 	libgcode.a
 
-pcblib_DATA=	\
+pcblib_DATA= \
 	default_font \
 	gpcb-menu.res \
 	pcb-menu.res
@@ -106,6 +104,8 @@ PCB_SRCS = \
 	parse_l.l \
 	parse_y.h \
 	parse_y.y \
+	pcb-printf.c \
+	pcb-printf.h \
 	polygon.c \
 	polygon.h \
 	polygon1.c \
@@ -228,8 +228,8 @@ EXTRA_DIST= \
 	$(srcdir)/hid/png/hid.conf \
 	$(srcdir)/hid/nelma/hid.conf \
 	$(srcdir)/hid/ps/hid.conf \
-	gpcb-menu.res \
-	pcb-menu.res \
+	gpcb-menu.res.in \
+	pcb-menu.res.in \
 	pcbtest.sh.in \
 	dbus.xml
 
@@ -237,16 +237,24 @@ AM_YFLAGS=	-d
 
 all-local: pcbtest.sh
 
+pcb-menu.res : pcb-menu.res.in
+	echo '/* AUTOMATICALLY GENERATED FROM pcb-menu.res.in DO NOT EDIT */' > $@
+	cat ${srcdir}/pcb-menu.res.in >> $@
+
 pcb-menu.h : pcb-menu.res
 	echo '/* AUTOMATICALLY GENERATED FROM pcb-menu.res DO NOT EDIT */' > $@
 	echo 'const char *pcb_menu_default[] = {' >> $@
-	sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/",/' < ${srcdir}/pcb-menu.res >> $@
+	sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/",/' < pcb-menu.res >> $@
 	echo '0};' >> $@
+
+gpcb-menu.res : gpcb-menu.res.in
+	echo '/* AUTOMATICALLY GENERATED FROM gpcb-menu.res.in DO NOT EDIT */' > $@
+	cat ${srcdir}/gpcb-menu.res.in >> $@
 
 gpcb-menu.h : gpcb-menu.res
 	echo '/* AUTOMATICALLY GENERATED FROM gpcb-menu.res DO NOT EDIT */' > $@
 	echo 'const char *gpcb_menu_default[] = {' >> $@
-	sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/",/' < ${srcdir}/gpcb-menu.res >> $@
+	sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/",/' < gpcb-menu.res >> $@
 	echo '0};' >> $@
 
 hid/common/hidlist.h : Makefile
@@ -260,13 +268,22 @@ libgtk_a_CPPFLAGS = -I./hid/gtk
 LIBGTK_SRCS = \
 	dolists.h \
 	hid/hidint.h \
+	hid/gtk/ghid-cell-renderer-visibility.c \
+	hid/gtk/ghid-cell-renderer-visibility.h \
+	hid/gtk/ghid-coord-entry.c \
+	hid/gtk/ghid-coord-entry.h \
+	hid/gtk/ghid-layer-selector.c \
+	hid/gtk/ghid-layer-selector.h \
+	hid/gtk/ghid-main-menu.c \
+	hid/gtk/ghid-main-menu.h \
+	hid/gtk/ghid-route-style-selector.c \
+	hid/gtk/ghid-route-style-selector.h \
 	hid/gtk/gtkhid-main.c \
 	hid/gtk/gtkhid.h \
 	hid/gtk/gui.h \
 	hid/gtk/gui-command-window.c \
 	hid/gtk/gui-config.c \
 	hid/gtk/gui-dialog-print.c \
-	hid/gtk/gui-dialog-size.c \
 	hid/gtk/gui-dialog.c \
 	hid/gtk/gui-drc-window.c \
 	hid/gtk/gui-drc-window.h \
@@ -447,7 +464,9 @@ DISTCLEANFILES= pcbtest.sh gpcb-menu.h pcb-menu.h \
 	hid/nelma/nelma_lists.h \
 	hid/ps/ps_lists.h \
 	core_lists.h \
-	dbus-introspect.h
+	dbus-introspect.h \
+	gpcb-menu.res \
+	pcb-menu.res
 
 # create wrapper script that lets you test pcb prior to installation
 pcbtest.sh:	$(srcdir)/pcbtest.sh.in Makefile

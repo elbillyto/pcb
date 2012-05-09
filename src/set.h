@@ -22,31 +22,30 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for update routines
  */
 
-#ifndef	__UPDATE_INCLUDED__
-#define	__UPDATE_INCLUDED__
+#ifndef	PCB_SET_H
+#define	PCB_SET_H
 
 #include "global.h"
 
-void SetTextScale (Dimension);
-void SetGrid (double, bool);
-void SetZoom (float);
-void SetLineSize (BDimension);
-void SetViaSize (BDimension, bool);
-void SetViaDrillingHole (BDimension, bool);
-void SetKeepawayWidth (BDimension);
+void SetTextScale (int);
+void SetGrid (Coord, bool);
+void SetZoom (double);
+void SetLineSize (Coord);
+void SetViaSize (Coord, bool);
+void SetViaDrillingHole (Coord, bool);
+void SetKeepawayWidth (Coord);
 void SetChangedFlag (bool);
 void SetBufferNumber (int);
 void SetMode (int);
 void SetCrosshairRangeToBuffer (void);
 void SetRouteStyle (char *);
-void SetLocalRef (LocationType, LocationType, bool);
-void RedrawZoom (Position, Position);
+void SetLocalRef (Coord, Coord, bool);
+void RedrawZoom (Coord, Coord);
 void SaveMode (void);
 void RestoreMode (void);
 void pcb_use_route_style (RouteStyleType *);

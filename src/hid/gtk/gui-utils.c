@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -39,12 +37,10 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 /* Not a gui function, but no better place to put it...
  */
 gboolean
-dup_string (gchar ** dst, gchar * src)
+dup_string (gchar ** dst, const gchar * src)
 {
   if ((dst == NULL) || ((*dst == NULL) && (src == NULL)))
     return FALSE;
@@ -92,7 +88,8 @@ ghid_modifier_keys_state (GdkModifierType * state)
   GHidPort *out = &ghid_port;
 
   if (!state)
-    gdk_window_get_pointer (out->drawing_area->window, NULL, NULL, &mask);
+    gdk_window_get_pointer (gtk_widget_get_window (out->drawing_area),
+                            NULL, NULL, &mask);
   else
     mask = *state;
 
@@ -129,7 +126,8 @@ ghid_button_state (GdkModifierType * state)
   GHidPort *out = &ghid_port;
 
   if (!state)
-    gdk_window_get_pointer (out->drawing_area->window, NULL, NULL, &mask);
+    gdk_window_get_pointer (gtk_widget_get_window (out->drawing_area),
+                            NULL, NULL, &mask);
   else
     mask = *state;
 
@@ -152,7 +150,8 @@ ghid_button_state (GdkModifierType * state)
 void
 ghid_draw_area_update (GHidPort * port, GdkRectangle * rect)
 {
-  gdk_window_invalidate_rect (port->drawing_area->window, rect, FALSE);
+  gdk_window_invalidate_rect (gtk_widget_get_window (port->drawing_area),
+                              rect, FALSE);
 }
 
 
@@ -187,21 +186,6 @@ ghid_map_color_string (char *color_string, GdkColor * color)
   gdk_color_alloc (colormap, color);
 }
 
-
-void
-ghid_button_set_text (GtkWidget * button, gchar * text)
-{
-  GtkWidget *label = gtk_bin_get_child (GTK_BIN (button));
-
-  gtk_label_set_text (GTK_LABEL (label), text);
-}
-
-
-gboolean
-ghid_button_active (GtkWidget * widget)
-{
-  return GTK_TOGGLE_BUTTON (widget)->active;
-}
 
 gchar *
 ghid_entry_get_text (GtkWidget * entry)
@@ -240,8 +224,7 @@ ghid_check_button_connected (GtkWidget * box,
     gtk_box_pack_end (GTK_BOX (box), b, expand, fill, pad);
 
   if (cb_func)
-    gtk_signal_connect (GTK_OBJECT (b), "clicked",
-			GTK_SIGNAL_FUNC (cb_func), data);
+    g_signal_connect (b, "clicked", G_CALLBACK (cb_func), data);
   if (button)
     *button = b;
 }
@@ -263,10 +246,54 @@ ghid_button_connected (GtkWidget * box, GtkWidget ** button,
     gtk_box_pack_end (GTK_BOX (box), b, expand, fill, pad);
 
   if (cb_func)
-    gtk_signal_connect (GTK_OBJECT (b), "clicked",
-			GTK_SIGNAL_FUNC (cb_func), data);
+    g_signal_connect (b, "clicked", G_CALLBACK (cb_func), data);
   if (button)
     *button = b;
+}
+
+void
+ghid_coord_entry (GtkWidget * box, GtkWidget ** coord_entry, Coord value,
+		  Coord low, Coord high,  enum ce_step_size step_size,
+		  gint width, void (*cb_func) (GHidCoordEntry *, gpointer),
+		  gpointer data, gboolean right_align, gchar * string)
+{
+  GtkWidget *hbox = NULL, *label, *entry_widget;
+  GHidCoordEntry *entry;
+
+  if (string && box)
+    {
+      hbox = gtk_hbox_new (FALSE, 0);
+      gtk_box_pack_start (GTK_BOX (box), hbox, FALSE, FALSE, 2);
+      box = hbox;
+    }
+
+  entry_widget = ghid_coord_entry_new (low, high, value, Settings.grid_unit, step_size);
+  if (coord_entry)
+    *coord_entry = entry_widget;
+  if (width > 0)
+    gtk_widget_set_size_request (entry_widget, width, -1);
+  entry = GHID_COORD_ENTRY (entry_widget);
+  if (data == NULL)
+    data = (gpointer) entry;
+  if (cb_func)
+    g_signal_connect (G_OBJECT (entry_widget), "value_changed",
+		      G_CALLBACK (cb_func), data);
+  if (box)
+    {
+      if (right_align && string)
+	{
+	  label = gtk_label_new (string);
+	  gtk_misc_set_alignment (GTK_MISC (label), 1.0, 0.5);
+	  gtk_box_pack_start (GTK_BOX (box), label, TRUE, TRUE, 2);
+	}
+      gtk_box_pack_start (GTK_BOX (box), entry_widget, FALSE, FALSE, 2);
+      if (!right_align && string)
+	{
+	  label = gtk_label_new (string);
+	  gtk_misc_set_alignment (GTK_MISC (label), 0, 0.5);
+	  gtk_box_pack_start (GTK_BOX (box), label, TRUE, TRUE, 2);
+	}
+    }
 }
 
 void
@@ -319,6 +346,58 @@ ghid_spin_button (GtkWidget * box, GtkWidget ** spin_button, gfloat value,
 }
 
 void
+ghid_table_coord_entry (GtkWidget * table, gint row, gint column,
+			GtkWidget ** coord_entry, Coord value,
+			Coord low, Coord high, enum ce_step_size step_size,
+			gint width, void (*cb_func) (GHidCoordEntry *, gpointer),
+			gpointer data, gboolean right_align, gchar * string)
+{
+  GtkWidget *label, *entry_widget;
+  GHidCoordEntry *entry;
+
+  if (!table)
+    return;
+
+  entry_widget = ghid_coord_entry_new (low, high, value, Settings.grid_unit, step_size);
+  if (coord_entry)
+    *coord_entry = entry_widget;
+  if (width > 0)
+    gtk_widget_set_size_request (entry_widget, width, -1);
+  entry = GHID_COORD_ENTRY (entry_widget);
+  if (data == NULL)
+    data = (gpointer) entry;
+  if (cb_func)
+    g_signal_connect (G_OBJECT (entry), "value_changed",
+		      G_CALLBACK (cb_func), data);
+
+  if (right_align)
+    {
+      gtk_table_attach_defaults (GTK_TABLE (table), entry_widget,
+				 column + 1, column + 2, row, row + 1);
+      if (string)
+	{
+	  label = gtk_label_new (string);
+	  gtk_misc_set_alignment (GTK_MISC (label), 1.0, 0.5);
+	  gtk_table_attach_defaults (GTK_TABLE (table), label,
+				     column, column + 1, row, row + 1);
+	}
+    }
+  else
+    {
+      gtk_table_attach_defaults (GTK_TABLE (table), entry_widget,
+				 column, column + 1, row, row + 1);
+      if (string)
+	{
+	  label = gtk_label_new (string);
+	  gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
+	  gtk_table_attach_defaults (GTK_TABLE (table), label,
+				     column + 1, column + 2, row, row + 1);
+	}
+    }
+}
+
+
+void
 ghid_table_spin_button (GtkWidget * table, gint row, gint column,
 			GtkWidget ** spin_button, gfloat value,
 			gfloat low, gfloat high, gfloat step0, gfloat step1,
@@ -334,8 +413,9 @@ ghid_table_spin_button (GtkWidget * table, gint row, gint column,
     return;
 
   adj = (GtkAdjustment *) gtk_adjustment_new (value,
-					      low, high, step0, step1, 0.0);
+                                             low, high, step0, step1, 0.0);
   spin_but = gtk_spin_button_new (adj, 0.5, digits);
+
   if (spin_button)
     *spin_button = spin_but;
   if (width > 0)
@@ -395,7 +475,6 @@ ghid_range_control (GtkWidget * box, GtkWidget ** scale_res,
   gtk_scale_set_value_pos (GTK_SCALE (scale), pos);
   gtk_scale_set_draw_value (GTK_SCALE (scale), set_draw_value);
   gtk_scale_set_digits (GTK_SCALE (scale), digits);
-  gtk_range_set_update_policy (GTK_RANGE (scale), GTK_UPDATE_CONTINUOUS);
 
   /* Increments don't make sense, use -1,1 because that does closest to
      |  what I want: scroll down decrements slider value.
@@ -450,7 +529,7 @@ ghid_framed_vbox (GtkWidget * box, gchar * label, gint frame_border_width,
   gtk_container_set_border_width (GTK_CONTAINER (frame), frame_border_width);
   gtk_box_pack_start (GTK_BOX (box), frame, frame_expand, frame_expand, 0);
   vbox = gtk_vbox_new (FALSE, vbox_pad);
-  gtk_container_border_width (GTK_CONTAINER (vbox), vbox_border_width);
+  gtk_container_set_border_width (GTK_CONTAINER (vbox), vbox_border_width);
   gtk_container_add (GTK_CONTAINER (frame), vbox);
   return vbox;
 }
@@ -467,7 +546,7 @@ ghid_framed_vbox_end (GtkWidget * box, gchar * label, gint frame_border_width,
   gtk_container_set_border_width (GTK_CONTAINER (frame), frame_border_width);
   gtk_box_pack_end (GTK_BOX (box), frame, frame_expand, frame_expand, 0);
   vbox = gtk_vbox_new (FALSE, vbox_pad);
-  gtk_container_border_width (GTK_CONTAINER (vbox), vbox_border_width);
+  gtk_container_set_border_width (GTK_CONTAINER (vbox), vbox_border_width);
   gtk_container_add (GTK_CONTAINER (frame), vbox);
   return vbox;
 }
@@ -569,6 +648,7 @@ ghid_dialog_report (gchar * title, gchar * message)
 {
   GtkWidget *top_win;
   GtkWidget *dialog;
+  GtkWidget *content_area;
   GtkWidget *scrolled;
   GtkWidget *vbox, *vbox1;
   GtkWidget *label;
@@ -589,10 +669,11 @@ ghid_dialog_report (gchar * title, gchar * message)
 			    GTK_OBJECT (dialog));
   gtk_window_set_wmclass (GTK_WINDOW (dialog), "PCB_Dialog", "PCB");
 
+  content_area = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+
   vbox = gtk_vbox_new (FALSE, 0);
   gtk_container_set_border_width (GTK_CONTAINER (vbox), 8);
-  gtk_box_pack_start (GTK_BOX (GTK_DIALOG (dialog)->vbox), vbox,
-		      FALSE, FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (content_area), vbox, FALSE, FALSE, 0);
 
   label = gtk_label_new (message);
   gtk_label_set_justify (GTK_LABEL (label), GTK_JUSTIFY_LEFT);
@@ -752,35 +833,4 @@ ghid_scrolled_text_view (GtkWidget * box,
   if (scr)
     *scr = scrolled;
   return view;
-}
-
-
-/* If src is not utf8, *dst is converted to utf8.
- */
-gboolean
-utf8_dup_string (gchar ** dst_utf8, gchar * src)
-{
-  if (!dst_utf8 || (!*dst_utf8 && !src))
-    return FALSE;
-  if (*dst_utf8)
-    {
-      if (src && !strcmp (*dst_utf8, src))
-	return FALSE;
-      g_free (*dst_utf8);
-    }
-  if (src)
-    {
-      if (g_utf8_validate (src, -1, NULL))
-	*dst_utf8 = g_strdup (src);
-      else
-	{
-	  *dst_utf8 = g_locale_to_utf8 (src, -1, NULL, NULL, NULL);
-	  if (!*dst_utf8)
-	    *dst_utf8 = g_strdup (src);
-	}
-    }
-  else
-    *dst_utf8 = NULL;
-
-  return TRUE;
 }

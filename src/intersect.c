@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -50,9 +48,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
-
 /* ---------------------------------------------------------------------------
  * some local prototypes
  */
@@ -66,9 +61,9 @@ static int nextpwrof2 (int i);
  */
 typedef struct
 {
-  LocationType left, right;
+  Coord left, right;
   int covered;
-  int area;
+  Coord area;
 }
 SegmentTreeNode;
 
@@ -81,7 +76,7 @@ SegmentTree;
 
 typedef struct
 {
-  LocationType *p;
+  Coord *p;
   int size;
 }
 LocationList;
@@ -90,14 +85,14 @@ LocationList;
  * Create a sorted list of unique y coords from a BoxList.
  */
 static LocationList
-createSortedYList (BoxListTypePtr boxlist)
+createSortedYList (BoxListType *boxlist)
 {
   LocationList yCoords;
-  LocationType last;
+  Coord last;
   int i, n;
   /* create sorted list of Y coordinates */
   yCoords.size = 2 * boxlist->BoxN;
-  yCoords.p = (LocationType *)calloc (yCoords.size, sizeof (*yCoords.p));
+  yCoords.p = (Coord *)calloc (yCoords.size, sizeof (*yCoords.p));
   for (i = 0; i < boxlist->BoxN; i++)
     {
       yCoords.p[2 * i] = boxlist->Box[i].Y1;
@@ -117,7 +112,7 @@ createSortedYList (BoxListTypePtr boxlist)
  * Create an empty segment tree from the given sorted list of uniq y coords.
  */
 static SegmentTree
-createSegmentTree (LocationType * yCoords, int N)
+createSegmentTree (Coord * yCoords, int N)
 {
   SegmentTree st;
   int i;
@@ -144,9 +139,9 @@ createSegmentTree (LocationType * yCoords, int N)
 }
 
 void
-insertSegment (SegmentTree * st, int n, LocationType Y1, LocationType Y2)
+insertSegment (SegmentTree * st, int n, Coord Y1, Coord Y2)
 {
-  LocationType discriminant;
+  Coord discriminant;
   if (st->nodes[n].left >= Y1 && st->nodes[n].right <= Y2)
     {
       st->nodes[n].covered++;
@@ -168,9 +163,9 @@ insertSegment (SegmentTree * st, int n, LocationType Y1, LocationType Y2)
 }
 
 void
-deleteSegment (SegmentTree * st, int n, LocationType Y1, LocationType Y2)
+deleteSegment (SegmentTree * st, int n, Coord Y1, Coord Y2)
 {
-  LocationType discriminant;
+  Coord discriminant;
   if (st->nodes[n].left >= Y1 && st->nodes[n].right <= Y2)
     {
       assert (st->nodes[n].covered);
@@ -200,7 +195,7 @@ deleteSegment (SegmentTree * st, int n, LocationType Y1, LocationType Y2)
  * Runs in O(N ln N) time.
  */
 double
-ComputeIntersectionArea (BoxListTypePtr boxlist)
+ComputeIntersectionArea (BoxListType *boxlist)
 {
   Cardinal i;
   double area = 0.0;
@@ -217,13 +212,13 @@ ComputeIntersectionArea (BoxListTypePtr boxlist)
  * O(N ln N) time.
  */
 double
-ComputeUnionArea (BoxListTypePtr boxlist)
+ComputeUnionArea (BoxListType *boxlist)
 {
-  BoxTypePtr *rectLeft, *rectRight;
+  BoxType **rectLeft, **rectRight;
   Cardinal i, j;
   LocationList yCoords;
   SegmentTree segtree;
-  LocationType lastX;
+  Coord lastX;
   double area = 0.0;
 
   if (boxlist->BoxN == 0)
@@ -234,8 +229,8 @@ ComputeUnionArea (BoxListTypePtr boxlist)
   segtree = createSegmentTree (yCoords.p, yCoords.size);
   free (yCoords.p);
   /* create sorted list of left and right X coordinates of rectangles */
-  rectLeft = (BoxTypePtr *)calloc (boxlist->BoxN, sizeof (*rectLeft));
-  rectRight = (BoxTypePtr *)calloc (boxlist->BoxN, sizeof (*rectRight));
+  rectLeft = (BoxType **)calloc (boxlist->BoxN, sizeof (*rectLeft));
+  rectRight = (BoxType **)calloc (boxlist->BoxN, sizeof (*rectRight));
   for (i = 0; i < boxlist->BoxN; i++)
     {
       assert (boxlist->Box[i].X1 <= boxlist->Box[i].X2);
@@ -254,7 +249,7 @@ ComputeUnionArea (BoxListTypePtr boxlist)
       if (i == boxlist->BoxN || rectRight[j]->X2 < rectLeft[i]->X1)
         {
           /* right edge of rectangle */
-          BoxTypePtr b = rectRight[j++];
+          BoxType *b = rectRight[j++];
           /* check lastX */
           if (b->X2 != lastX)
             {
@@ -268,7 +263,7 @@ ComputeUnionArea (BoxListTypePtr boxlist)
       else
         {
           /* left edge of rectangle */
-          BoxTypePtr b = rectLeft[i++];
+          BoxType *b = rectLeft[i++];
           /* check lastX */
           if (b->X1 != lastX)
             {
@@ -288,19 +283,21 @@ ComputeUnionArea (BoxListTypePtr boxlist)
 static int
 compareleft (const void *ptr1, const void *ptr2)
 {
-  BoxTypePtr *b1 = (BoxTypePtr *) ptr1, *b2 = (BoxTypePtr *) ptr2;
+  BoxType **b1 = (BoxType **) ptr1;
+  BoxType **b2 = (BoxType **) ptr2;
   return (*b1)->X1 - (*b2)->X1;
 }
 static int
 compareright (const void *ptr1, const void *ptr2)
 {
-  BoxTypePtr *b1 = (BoxTypePtr *) ptr1, *b2 = (BoxTypePtr *) ptr2;
+  BoxType **b1 = (BoxType **) ptr1;
+  BoxType **b2 = (BoxType **) ptr2;
   return (*b1)->X2 - (*b2)->X2;
 }
 static int
 comparepos (const void *ptr1, const void *ptr2)
 {
-  return *((LocationType *) ptr1) - *((LocationType *) ptr2);
+  return *((Coord *) ptr1) - *((Coord *) ptr2);
 }
 static int
 nextpwrof2 (int n)

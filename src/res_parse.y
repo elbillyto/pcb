@@ -1,5 +1,3 @@
-/* $Id$ */
-
 %{
 
 #ifdef HAVE_CONFIG_H
@@ -26,13 +24,10 @@
 #include <dmalloc.h>
 #endif
 
-
-RCSID("$Id$");
-
 static Resource *parsed_res;
 static Resource *current_res;
 
-int reserror(char *);
+int reserror(const char *);
 int reslex();
 
 #define f(x) current_res->flags |= x
@@ -76,7 +71,7 @@ res_item
 
 %%
 
-static char *res_filename = 0;
+static const char *res_filename = 0;
 static FILE *res_file = 0;
 static const char **res_strings = 0;
 static int res_string_idx = 0;
@@ -110,7 +105,7 @@ res_parse_getchars(char *buf, int max_size)
 }
 
 Resource *
-resource_parse(char *filename, const char **strings)
+resource_parse(const char *filename, const char **strings)
 {
   res_lineno = 1;
   if (filename)
@@ -165,7 +160,7 @@ resource_add_val(Resource *n, char *name, char *value, Resource *subres)
 }
 
 char *
-resource_value(Resource *res, char *name)
+resource_value(const Resource *res, char *name)
 {
   int i;
   if (res == 0 || name == 0)
@@ -178,7 +173,7 @@ resource_value(Resource *res, char *name)
 }
 
 Resource *
-resource_subres(Resource *res, char *name)
+resource_subres(const Resource *res, const char *name)
 {
   int i;
   if (res == 0 || name == 0)
@@ -191,7 +186,7 @@ resource_subres(Resource *res, char *name)
 }
 
 int
-reserror(char *str)
+reserror(const char *str)
 {
   fprintf(stderr, "Error: %s around line %d: %s\n",
 	  res_file ? res_filename : "internal strings",

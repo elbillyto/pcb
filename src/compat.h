@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -22,8 +20,8 @@
  *
  */
 
-#ifndef __COMPAT_H__
-#define __COMPAT_H__
+#ifndef PCB_COMPAT_H
+#define PCH_COMPAT_H
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -57,5 +55,5 @@ void * dlsym(void *, const char *);
 #endif
 
 
-#endif /* __COMPAT_H__ */
+#endif /* PCB_COMPAT_H */
 

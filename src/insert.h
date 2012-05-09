@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for inserting points into objects
  */
 
-#ifndef	__INSERT_INCLUDED__
-#define	__INSERT_INCLUDED__
+#ifndef	PCB_INSERT_H
+#define	PCB_INSERT_H
 
 #include "global.h"
 
@@ -38,8 +37,8 @@
 /* ---------------------------------------------------------------------------
  * prototypes
  */
-void *InsertPointIntoObject (int, void *, void *, Cardinal *, LocationType,
-			     LocationType, bool, bool);
-PointTypePtr AdjustInsertPoint (void);
+void *InsertPointIntoObject (int, void *, void *, Cardinal *, Coord,
+			     Coord, bool, bool);
+PointType * AdjustInsertPoint (void);
 
 #endif

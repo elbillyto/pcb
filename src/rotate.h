@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for transform routines
  */
 
-#ifndef	__ROTATE_INCLUDED__
-#define	__ROTATE_INCLUDED__
+#ifndef	PCB_ROTATE_H
+#define	PCB_ROTATE_H
 
 #include "global.h"
 
@@ -38,7 +37,7 @@
  */
 #define	ROTATE(x,y,x0,y0,n)							\
 	{												\
-		LocationType	dx = (x)-(x0),					\
+		Coord	dx = (x)-(x0),					\
 					dy = (y)-(y0);					\
 													\
 		switch(n & 0x03)									\
@@ -55,20 +54,19 @@
 #define	ROTATE_VIA_LOWLEVEL(v,x0,y0,n)	ROTATE((v)->X,(v)->Y,(x0),(y0),(n))
 #define	ROTATE_PIN_LOWLEVEL(p,x0,y0,n)	ROTATE((p)->X,(p)->Y,(x0),(y0),(n))
 #define	ROTATE_PAD_LOWLEVEL(p,x0,y0,n)	\
-	RotateLineLowLevel(((LineTypePtr) (p)),(x0),(y0),(n))
+	RotateLineLowLevel(((LineType *) (p)),(x0),(y0),(n))
 
 #define	ROTATE_TYPES	(ELEMENT_TYPE | TEXT_TYPE | ELEMENTNAME_TYPE | ARC_TYPE)
 
 
-void RotateLineLowLevel (LineTypePtr, LocationType, LocationType, BYTE);
-void RotateArcLowLevel (ArcTypePtr, LocationType, LocationType, BYTE);
-void RotateBoxLowLevel (BoxTypePtr, LocationType, LocationType, BYTE);
-void RotateTextLowLevel (TextTypePtr, LocationType, LocationType, BYTE);
-void RotatePolygonLowLevel (PolygonTypePtr, LocationType, LocationType, BYTE);
-void RotateElementLowLevel (DataTypePtr, ElementTypePtr, LocationType,
-			    LocationType, BYTE);
-void *RotateObject (int, void *, void *, void *, LocationType, LocationType,
-		    BYTE);
-void RotateScreenObject (LocationType, LocationType, BYTE);
+void RotateLineLowLevel (LineType *, Coord, Coord, unsigned);
+void RotateArcLowLevel (ArcType *, Coord, Coord, unsigned);
+void RotateBoxLowLevel (BoxType *, Coord, Coord, unsigned);
+void RotateTextLowLevel (TextType *, Coord, Coord, unsigned);
+void RotatePolygonLowLevel (PolygonType *, Coord, Coord, unsigned);
+void RotateElementLowLevel (DataType *, ElementType *, Coord, Coord, unsigned);
+void *RotateObject (int, void *, void *, void *, Coord, Coord,
+		    unsigned);
+void RotateScreenObject (Coord, Coord, unsigned);
 
 #endif

@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #define app_context lesstif_app_context
 #define appwidget lesstif_appwidget
 #define display lesstif_display
@@ -37,7 +35,7 @@ extern int lesstif_pcbxy_to_winxy (int pcbx, int pcby, int *winx, int *winy);
 extern void lesstif_need_idle_proc (void);
 extern void lesstif_show_crosshair (int);
 extern void lesstif_invalidate_all (void);
-extern void lesstif_coords_to_pcb (int, int, int *, int *);
+extern void lesstif_coords_to_pcb (int, int, Coord *, Coord *);
 extern void lesstif_get_xy (const char *msg);
 extern void lesstif_update_widget_flags (void);
 extern int lesstif_call_action (const char *, int, char **);
@@ -57,6 +55,17 @@ extern char *lesstif_fileselect (const char *, const char *,
 extern void lesstif_log (const char *fmt, ...);
 extern void lesstif_attributes_dialog (char *, AttributeListType *);
 
+#ifndef XtRPCBCoord
+#define XtRPCBCoord	"PCBCoord"
+#endif
+
 #define need_idle_proc lesstif_need_idle_proc
 #define show_crosshair lesstif_show_crosshair
 
+static XmString
+XmStringCreatePCB (char *x)
+{
+  if (x && x[0])
+    x = gettext (x);
+  return XmStringCreateLtoR (x, XmFONTLIST_DEFAULT_TAG);
+}

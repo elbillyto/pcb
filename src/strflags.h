@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  *                            COPYRIGHT
  *
@@ -25,8 +24,8 @@
  *
  */
 
-#ifndef _FLAGS_H_
-#define _FLAGS_H_
+#ifndef PCB_STRFLAGS_H
+#define PCB_STRFLAGS_H
 
 /* The purpose of this interface is to make the file format able to
    handle more than 32 flags, and to hide the internal details of

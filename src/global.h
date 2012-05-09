@@ -22,9 +22,7 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
-/* 15 Oct 2008 Ineiev: add different crosshair shapes */
 
 /* definition of types
  */
@@ -35,12 +33,19 @@
  * silkscreen layer. Perhaps the design is not the best.
  */
 
-#ifndef	__GLOBAL_INCLUDED__
-#define	__GLOBAL_INCLUDED__
+#ifndef	PCB_GLOBAL_H
+#define	PCB_GLOBAL_H
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #include "const.h"
 #include "macro.h"
 
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,13 +58,19 @@
 #include <glib.h>
 
 /* Forward declarations for structures the HIDs need.  */
-typedef struct BoxType BoxType, *BoxTypePtr;
-typedef struct polygon_st PolygonType, *PolygonTypePtr;
-typedef struct pad_st PadType, *PadTypePtr;
-typedef struct pin_st PinType, *PinTypePtr, **PinTypeHandle;
-typedef struct drc_violation_st DrcViolationType, *DrcViolationTypePtr;
+typedef struct BoxType BoxType;
+typedef struct polygon_st PolygonType;
+typedef struct pad_st PadType;
+typedef struct pin_st PinType;
+typedef struct drc_violation_st DrcViolationType;
 typedef struct rtree rtree_t;
-typedef struct AttributeListType AttributeListType, *AttributeListTypePtr;
+typedef struct AttributeListType AttributeListType;
+
+typedef struct unit Unit;
+typedef struct increments Increments;
+
+typedef COORD_TYPE Coord;	/* pcb base unit */
+typedef double Angle;		/* degrees */
 
 #include "hid.h"
 #include "polyarea.h"
@@ -83,9 +94,13 @@ typedef struct AttributeListType AttributeListType, *AttributeListTypePtr;
 # define bindtextdomain(D, Dir) (D)
 #endif /* ENABLE_NLS */
 
-typedef int LocationType;
-typedef int BDimension;		/* big dimension */
-
+/* This is used by the lexer/parser */
+typedef struct {
+  int ival;
+  Coord bval;
+  double dval;
+  char has_units;
+} PLMeasure;
 
 #ifndef XtSpecificationRelease
 typedef unsigned int Cardinal;
@@ -103,7 +118,7 @@ typedef struct
 {
   unsigned long f;		/* generic flags */
   unsigned char t[(MAX_LAYER + 1) / 2];	/* thermals */
-} FlagType, *FlagTypePtr;
+} FlagType;
 
 #ifndef __GNUC__
 #define __FUNCTION1(a,b) a ":" #b
@@ -122,11 +137,11 @@ typedef struct
  * the compiler about the expected result of an expression. Some compilers
  * can use this information for optimizations.
  *
- * The _BOOLEAN_EXPR macro is intended to trigger a gcc warning when
+ * The PCB_BOOLEAN_EXPR macro is intended to trigger a gcc warning when
  * putting assignments inside the test.
  */
 #if defined(__GNUC__) && (__GNUC__ > 2) && defined(__OPTIMIZE__)
-#define _BOOLEAN_EXPR(expr)                   \
+#define PCB_BOOLEAN_EXPR(expr)                   \
  __extension__ ({                             \
    int _boolean_var_;                         \
    if (expr)                                  \
@@ -135,8 +150,8 @@ typedef struct
       _boolean_var_ = 0;                      \
    _boolean_var_;                             \
 })
-#define LIKELY(expr) (__builtin_expect (_BOOLEAN_EXPR(expr), 1))
-#define UNLIKELY(expr) (__builtin_expect (_BOOLEAN_EXPR(expr), 0))
+#define LIKELY(expr) (__builtin_expect (PCB_BOOLEAN_EXPR(expr), 1))
+#define UNLIKELY(expr) (__builtin_expect (PCB_BOOLEAN_EXPR(expr), 0))
 #else
 #define LIKELY(expr) (expr)
 #define UNLIKELY(expr) (expr)
@@ -161,7 +176,7 @@ typedef struct
 /* Lines, pads, and rats all use this so they can be cross-cast.  */
 #define	ANYLINEFIELDS			\
 	ANYOBJECTFIELDS;		\
-	BDimension	Thickness,      \
+	Coord		Thickness,      \
                         Clearance;      \
 	PointType	Point1,		\
 			Point2
@@ -175,7 +190,7 @@ typedef struct			/* holds information about output window */
     fgGC,			/* changed from some routines */
     pmGC;			/* depth 1 pixmap GC to store clip */
 }
-OutputType, *OutputTypePtr;
+OutputType;
 
 /* ----------------------------------------------------------------------
  * layer group. A layer group identifies layers which are always switched
@@ -185,25 +200,25 @@ typedef struct
 {
   Cardinal Number[MAX_LAYER],	/* number of entries per groups */
     Entries[MAX_LAYER][MAX_LAYER + 2];
-} LayerGroupType, *LayerGroupTypePtr;
+} LayerGroupType;
 
 struct BoxType		/* a bounding box */
 {
-  LocationType X1, Y1;		/* upper left */
-  LocationType X2, Y2;		/* and lower right corner */
+  Coord X1, Y1;		/* upper left */
+  Coord X2, Y2;		/* and lower right corner */
 };
 
 typedef struct
 {
-  LocationType x, y;
-  int width, height;
-} RectangleType, *RectangleTypePtr;
+  Coord x, y;
+  Coord width, height;
+} RectangleType;
 
 typedef struct
 {
   char *name;
   char *value;
-} AttributeType, *AttributeTypePtr;
+} AttributeType;
 
 struct AttributeListType
 {
@@ -219,34 +234,34 @@ struct AttributeListType
    based on this. */
 typedef struct {
   ANYOBJECTFIELDS;
-} AnyObjectType, *AnyObjectTypePtr;
+} AnyObjectType;
 
 typedef struct			/* a line/polygon point */
 {
-  LocationType X, Y, X2, Y2;	/* so Point type can be cast as BoxType */
+  Coord X, Y, X2, Y2;	/* so Point type can be cast as BoxType */
   long int ID;
-} PointType, *PointTypePtr;
+} PointType;
 
 /* Lines, rats, pads, etc.  */
 typedef struct {
   ANYLINEFIELDS;
-} AnyLineObjectType, *AnyLineObjectTypePtr;
+} AnyLineObjectType;
 
 typedef struct			/* holds information about one line */
 {
   ANYLINEFIELDS;
   char *Number;
-} LineType, *LineTypePtr;
+} LineType;
 
 typedef struct
 {
   ANYOBJECTFIELDS;
-  BDimension Scale;		/* text scaling in percent */
-  LocationType X, Y;    	/* origin */
+  int Scale;		/* text scaling in percent */
+  Coord X, Y;    	/* origin */
   BYTE Direction;
   char *TextString;		/* string */
   void *Element;
-} TextType, *TextTypePtr;
+} TextType;
 
 struct polygon_st			/* holds information about a polygon */
 {
@@ -256,7 +271,7 @@ struct polygon_st			/* holds information about a polygon */
   POLYAREA *Clipped;		/* the clipped region of this polygon */
   PLINE *NoHoles;		/* the polygon broken into hole-less regions */
   int NoHolesValid;		/* Is the NoHoles polygon up to date? */
-  PointTypePtr Points;		/* data */
+  PointType *Points;		/* data */
   Cardinal *HoleIndex;		/* Index of hole data within the Points array */
   Cardinal HoleIndexN;		/* number of holes in polygon */
   Cardinal HoleIndexMax;	/* max number from malloc() */
@@ -266,13 +281,13 @@ struct polygon_st			/* holds information about a polygon */
 typedef struct			/* holds information about arcs */
 {
   ANYOBJECTFIELDS;
-  BDimension Thickness, Clearance;
-  LocationType Width,		/* length of axis */
-    Height, X,			/* center coordinates */
-    Y;
-  long int StartAngle,		/* the two limiting angles in degrees */
-    Delta;
-} ArcType, *ArcTypePtr;
+  Coord Thickness, Clearance;
+  PointType Point1;
+  PointType Point2;
+  Coord Width, Height,		/* length of axis */
+    X, Y;			/* center coordinates */
+  Angle StartAngle, Delta;	/* the two limiting angles in degrees */
+} ArcType;
 
 struct rtree
 {
@@ -296,19 +311,20 @@ typedef struct			/* holds information about one layer */
   char *Color,			/* color */
    *SelectedColor;
   AttributeListType Attributes;
+  int no_drc; /* whether to ignore the layer when checking the design rules */
 }
-LayerType, *LayerTypePtr;
+LayerType;
 
 typedef struct			/* a rat-line */
 {
   ANYLINEFIELDS;
   Cardinal group1, group2;	/* the layer group each point is on */
-} RatType, *RatTypePtr;
+} RatType;
 
 struct pad_st			/* a SMD pad */
 {
   ANYLINEFIELDS;
-  BDimension Mask;
+  Coord Mask;
   char *Name, *Number;		/* 'Line' */
   void *Element;
   void *Spare;
@@ -317,13 +333,18 @@ struct pad_st			/* a SMD pad */
 struct pin_st
 {
   ANYOBJECTFIELDS;
-  BDimension Thickness, Clearance, Mask, DrillingHole;
-  LocationType X,		/* center and diameter */
-    Y;
+  Coord Thickness, Clearance, Mask, DrillingHole;
+  Coord X, Y;		/* center and diameter */
   char *Name, *Number;
   void *Element;
   void *Spare;
 };
+
+/* This is the extents of a Pin or Via, depending on whether it's a
+   hole or not.  */
+#define PIN_SIZE(pinptr) (TEST_FLAG(HOLEFLAG, (pinptr)) \
+			  ? (pinptr)->DrillingHole \
+			  : (pinptr)->Thickness)
 
 typedef struct
 {
@@ -333,8 +354,7 @@ typedef struct
   /* name on PCB second, */
   /* value third */
   /* see macro.h */
-  LocationType MarkX,		/* position mark */
-    MarkY;
+  Coord MarkX, MarkY;		/* position mark */
   Cardinal PinN;		/* number of pins */
   Cardinal PadN;		/* number of pads */
   Cardinal LineN;		/* number of lines */
@@ -345,29 +365,29 @@ typedef struct
   GList *Arc;
   BoxType VBox;
   AttributeListType Attributes;
-} ElementType, *ElementTypePtr, **ElementTypeHandle;
+} ElementType;
 
 /* ---------------------------------------------------------------------------
  * symbol and font related stuff
  */
 typedef struct			/* a single symbol */
 {
-  LineTypePtr Line;
+  LineType *Line;
   bool Valid;
   Cardinal LineN,		/* number of lines */
     LineMax;
-  BDimension Width,		/* size of cell */
-    Height, Delta;		/* distance to next symbol in 0.00001'' */
-} SymbolType, *SymbolTypePtr;
+  Coord Width, Height,		/* size of cell */
+    Delta;			/* distance to next symbol */
+} SymbolType;
 
 typedef struct			/* complete set of symbols */
 {
-  LocationType MaxHeight,	/* maximum cell width and height */
+  Coord MaxHeight,	/* maximum cell width and height */
     MaxWidth;
   BoxType DefaultSymbol;	/* the default symbol is a filled box */
   SymbolType Symbol[MAX_FONTPOSITION + 1];
   bool Valid;
-} FontType, *FontTypePtr;
+} FontType;
 
 typedef struct			/* holds all objects */
 {
@@ -382,11 +402,12 @@ typedef struct			/* holds all objects */
    *rat_tree;
   struct PCBType *pcb;
   LayerType Layer[MAX_LAYER + 2];	/* add 2 silkscreen layers */
-} DataType, *DataTypePtr;
+  int polyClip;
+} DataType;
 
 typedef struct			/* holds drill information */
 {
-  BDimension DrillSize;		/* this drill's diameter */
+  Coord DrillSize;		/* this drill's diameter */
   Cardinal ElementN,		/* the number of elements using this drill size */
     ElementMax,			/* max number of elements from malloc() */
     PinCount,			/* number of pins drilled this size */
@@ -394,26 +415,26 @@ typedef struct			/* holds drill information */
     UnplatedCount,		/* number of these holes that are unplated */
     PinN,			/* number of drill coordinates in the list */
     PinMax;			/* max number of coordinates from malloc() */
-  PinTypePtr *Pin;		/* coordinates to drill */
-  ElementTypePtr *Element;	/* a pointer to an array of element pointers */
-} DrillType, *DrillTypePtr;
+  PinType **Pin;		/* coordinates to drill */
+  ElementType **Element;	/* a pointer to an array of element pointers */
+} DrillType;
 
 typedef struct			/* holds a range of Drill Infos */
 {
   Cardinal DrillN,		/* number of drill sizes */
     DrillMax;			/* max number from malloc() */
-  DrillTypePtr Drill;		/* plated holes */
-} DrillInfoType, *DrillInfoTypePtr;
+  DrillType *Drill;		/* plated holes */
+} DrillInfoType;
 
 typedef struct
 {
-  BDimension Thick,		/* line thickness */
+  Coord Thick,			/* line thickness */
     Diameter,			/* via diameter */
     Hole,			/* via drill hole */
     Keepaway;			/* min. separation from other nets */
   char *Name;
   int index;
-} RouteStyleType, *RouteStyleTypePtr;
+} RouteStyleType;
 
 /* ---------------------------------------------------------------------------
  * structure used by library routines
@@ -427,8 +448,7 @@ typedef struct
    *Package,			/* package */
    *Value,			/* the value field */
    *Description;		/* some descritional text */
-} LibraryEntryType, *LibraryEntryTypePtr;
-//typedef LibraryEntryType *LibraryEntryTypePtr;
+} LibraryEntryType;
 
 /* If the internal flag is set, the only field that is valid is Name,
    and the struct is allocated with malloc instead of
@@ -442,18 +462,18 @@ typedef struct
    *Style;			/* routing style */
   Cardinal EntryN,		/* number of objects */
     EntryMax;			/* number of reserved memory locations */
-  LibraryEntryTypePtr Entry;	/* the entries */
+  LibraryEntryType *Entry;	/* the entries */
   char flag;			/* used by the netlist window to enable/disable nets */
   char internal;		/* if set, this is an internal-only entry, not
 				   part of the global netlist. */
-} LibraryMenuType, *LibraryMenuTypePtr;
+} LibraryMenuType;
 
 typedef struct
 {
   Cardinal MenuN;               /* number of objects */
   Cardinal MenuMax;             /* number of reserved memory locations */
-  LibraryMenuTypePtr Menu;      /* the entries */
-} LibraryType, *LibraryTypePtr;
+  LibraryMenuType *Menu;      /* the entries */
+} LibraryType;
 
 
   /* The PCBType struct holds information about board layout most of which is
@@ -488,14 +508,14 @@ typedef struct PCBType
     *RatSelectedColor, *ConnectedColor, *WarnColor, *MaskColor;
   long CursorX,			/* cursor position as saved with layout */
     CursorY, Clipping;
-  int Bloat,			/* drc sizes saved with layout */
+  Coord Bloat,			/* drc sizes saved with layout */
     Shrink, minWid, minSlk, minDrill, minRing;
-  int GridOffsetX,		/* as saved with layout */
+  Coord GridOffsetX,		/* as saved with layout */
     GridOffsetY, MaxWidth,	/* allowed size */
     MaxHeight;
 
-  double Grid,			/* used grid with offsets */
-    Zoom,			/* zoom factor */
+  Coord Grid;			/* used grid with offsets */
+  double Zoom,			/* zoom factor */
     IsleArea,			/* minimum poly island to retain */
     ThermScale;			/* scale factor used with thermals */
   FontType Font;
@@ -503,20 +523,19 @@ typedef struct PCBType
   RouteStyleType RouteStyle[NUM_STYLES];
   LibraryType NetlistLib;
   AttributeListType Attributes;
-  DataTypePtr Data;		/* entire database */
+  DataType *Data;		/* entire database */
 
   bool is_footprint;		/* If set, the user has loaded a footprint, not a pcb. */
 }
-PCBType, *PCBTypePtr;
+PCBType;
 
 typedef struct			/* information about the paste buffer */
 {
-  LocationType X,		/* offset */
-    Y;
+  Coord X, Y;			/* offset */
   BoxType BoundingBox;
-  DataTypePtr Data;		/* data; not all members of PCBType */
+  DataType *Data;		/* data; not all members of PCBType */
   /* are used */
-} BufferType, *BufferTypePtr;
+} BufferType;
 
 /* ---------------------------------------------------------------------------
  * some types for cursor drawing, setting of block and lines
@@ -524,10 +543,10 @@ typedef struct			/* information about the paste buffer */
  */
 typedef struct			/* rubberband lines for element moves */
 {
-  LayerTypePtr Layer;		/* layer that holds the line */
-  LineTypePtr Line;		/* the line itself */
-  PointTypePtr MovedPoint;	/* and finally the point */
-} RubberbandType, *RubberbandTypePtr;
+  LayerType *Layer;		/* layer that holds the line */
+  LineType *Line;		/* the line itself */
+  PointType *MovedPoint;	/* and finally the point */
+} RubberbandType;
 
 typedef struct			/* current marked line */
 {
@@ -535,7 +554,7 @@ typedef struct			/* current marked line */
     Point2;
   long int State;
   bool draw;
-} AttachedLineType, *AttachedLineTypePtr;
+} AttachedLineType;
 
 typedef struct			/* currently marked block */
 {
@@ -543,12 +562,11 @@ typedef struct			/* currently marked block */
     Point2;
   long int State;
   bool otherway;
-} AttachedBoxType, *AttachedBoxTypePtr;
+} AttachedBoxType;
 
 typedef struct			/* currently attached object */
 {
-  LocationType X,		/* saved position when MOVE_MODE */
-    Y;				/* was entered */
+  Coord X, Y;			/* saved position when MOVE_MODE */
   BoxType BoundingBox;
   long int Type,		/* object type */
     State;
@@ -557,8 +575,8 @@ typedef struct			/* currently attached object */
    *Ptr3;
   Cardinal RubberbandN,		/* number of lines in array */
     RubberbandMax;
-  RubberbandTypePtr Rubberband;
-} AttachedObjectType, *AttachedObjectTypePtr;
+  RubberbandType *Rubberband;
+} AttachedObjectType;
 
 enum crosshair_shape
 {
@@ -572,21 +590,21 @@ typedef struct			/* holds cursor information */
 {
   hidGC GC,			/* GC for cursor drawing */
     AttachGC;			/* and for displaying buffer contents */
-  LocationType X,		/* position in PCB coordinates */
-    Y, MinX,			/* lowest and highest coordinates */
-    MinY, MaxX, MaxY;
+  Coord X, Y,			/* position in PCB coordinates */
+    MinX, MinY,			/* lowest and highest coordinates */
+    MaxX, MaxY;
   AttachedLineType AttachedLine;	/* data of new lines... */
   AttachedBoxType AttachedBox;
   PolygonType AttachedPolygon;
   AttachedObjectType AttachedObject;	/* data of attached objects */
-  enum crosshair_shape shape; /* shape of crosshair */
-} CrosshairType, *CrosshairTypePtr;
+  enum crosshair_shape shape; 	/* shape of crosshair */
+} CrosshairType;
 
 typedef struct
 {
   bool status;
-  long int X, Y;
-} MarkType, *MarkTypePtr;
+  Coord X, Y;
+} MarkType;
 
 /* ---------------------------------------------------------------------------
  * our resources
@@ -594,7 +612,8 @@ typedef struct
  */
 typedef struct			/* some resources... */
 {
-  bool grid_units_mm;
+  const Unit *grid_unit;
+  Increments *increments;
 
   int verbose;
 
@@ -617,25 +636,21 @@ typedef struct			/* some resources... */
     *GridColor,
     *LayerColor[MAX_LAYER],
     *LayerSelectedColor[MAX_LAYER], *WarnColor, *MaskColor;
-  int ViaThickness,		/* some preset values */
-    ViaDrillingHole, LineThickness, RatThickness, Keepaway, MaxWidth,	/* default size of a new layout */
-    MaxHeight, TextScale,	/* text scaling in % */
+  Coord ViaThickness,		/* some preset values */
+    ViaDrillingHole, LineThickness, RatThickness, Keepaway,	/* default size of a new layout */
+    MaxWidth, MaxHeight,
     AlignmentDistance, Bloat,	/* default drc sizes */
     Shrink, minWid, minSlk, minDrill, minRing;
-  double Grid,			/* grid 0.001'' */
+  int TextScale;		/* text scaling in % */
+  Coord Grid;			/* grid in pcb-units */
+  double Zoom,
     IsleArea,    		/* polygon min area */
-    grid_increment_mm,		/* key g and <shift>g value for mil units */
-    grid_increment_mil,		/* key g and <shift>g value for mil units */
-    size_increment_mm,		/* key s and <shift>s value for mil units */
-    size_increment_mil,		/* key s and <shift>s value for mil units */
-    line_increment_mm, line_increment_mil, clear_increment_mm, clear_increment_mil, Zoom,	/* number of shift operations for zooming */
     PinoutZoom;			/* same for pinout windows */
   int PinoutNameLength,		/* max displayed length of a pinname */
     Volume,			/* the speakers volume -100..100 */
     CharPerLine,		/* width of an output line in characters */
     Mode,			/* currently active mode */
-    BufferNumber,		/* number of the current buffer */
-    GridFactor;			/* factor used for grid-drawing */
+    BufferNumber;		/* number of the current buffer */
   int BackupInterval;		/* time between two backups in seconds */
   char *DefaultLayerName[MAX_LAYER], *FontCommand,	/* commands for file loading... */
    *FileCommand, *ElementCommand, *PrintFile, *LibraryCommandDir, *LibraryCommand, *LibraryContentsCommand, *LibraryTree,	/* path to library tree */
@@ -643,7 +658,6 @@ typedef struct			/* some resources... */
    *Groups,			/* string with layergroups */
    *Routes,			/* string with route styles */
    *FilePath, *RatPath, *RatCommand, *FontPath, *PinoutFont, *ElementPath, *LibraryPath, *Size,	/* geometry string for size */
-   *Media, *MenuFile,		/* file containing menu definitions */
    *BackgroundImage,		/* PPM file for board background */
    *ScriptFilename,		/* PCB Actions script to execute on startup */
    *ActionString,		/* PCB Actions string to execute on startup */
@@ -651,10 +665,9 @@ typedef struct			/* some resources... */
    *GnetlistProgram,		/* gnetlist program name */
    *MakeProgram,		/* make program name */
    *InitialLayerStack;		/* If set, the initial layer stack is set to this */
-  bool DumpMenuFile;		/* dump internal menu definitions */
-  LocationType PinoutOffsetX,	/* offset of origin */
+  Coord PinoutOffsetX,		/* offset of origin */
     PinoutOffsetY;
-  int PinoutTextOffsetX,	/* offset of text from pin center */
+  Coord PinoutTextOffsetX,	/* offset of text from pin center */
     PinoutTextOffsetY;
   RouteStyleType RouteStyle[NUM_STYLES];	/* default routing styles */
   LayerGroupType LayerGroups;	/* default layer groups */
@@ -682,26 +695,26 @@ typedef struct			/* some resources... */
     AutoPlace;			/* flag which says we should force placement of the
 				   windows on startup */
 }
-SettingType, *SettingTypePtr;
+SettingType;
 
 /* ----------------------------------------------------------------------
  * pointer to low-level copy, move and rotate functions
  */
 typedef struct
 {
-  void *(*Line) (LayerTypePtr, LineTypePtr);
-  void *(*Text) (LayerTypePtr, TextTypePtr);
-  void *(*Polygon) (LayerTypePtr, PolygonTypePtr);
-  void *(*Via) (PinTypePtr);
-  void *(*Element) (ElementTypePtr);
-  void *(*ElementName) (ElementTypePtr);
-  void *(*Pin) (ElementTypePtr, PinTypePtr);
-  void *(*Pad) (ElementTypePtr, PadTypePtr);
-  void *(*LinePoint) (LayerTypePtr, LineTypePtr, PointTypePtr);
-  void *(*Point) (LayerTypePtr, PolygonTypePtr, PointTypePtr);
-  void *(*Arc) (LayerTypePtr, ArcTypePtr);
-  void *(*Rat) (RatTypePtr);
-} ObjectFunctionType, *ObjectFunctionTypePtr;
+  void *(*Line) (LayerType *, LineType *);
+  void *(*Text) (LayerType *, TextType *);
+  void *(*Polygon) (LayerType *, PolygonType *);
+  void *(*Via) (PinType *);
+  void *(*Element) (ElementType *);
+  void *(*ElementName) (ElementType *);
+  void *(*Pin) (ElementType *, PinType *);
+  void *(*Pad) (ElementType *, PadType *);
+  void *(*LinePoint) (LayerType *, LineType *, PointType *);
+  void *(*Point) (LayerType *, PolygonType *, PointType *);
+  void *(*Arc) (LayerType *, ArcType *);
+  void *(*Rat) (RatType *);
+} ObjectFunctionType;
 
 /* ---------------------------------------------------------------------------
  * structure used by device drivers
@@ -709,62 +722,59 @@ typedef struct
 
 typedef struct			/* holds a connection */
 {
-  LocationType X, Y;		/* coordinate of connection */
+  Coord X, Y;			/* coordinate of connection */
   long int type;		/* type of object in ptr1 - 3 */
   void *ptr1, *ptr2;		/* the object of the connection */
   Cardinal group;		/* the layer group of the connection */
   LibraryMenuType *menu;	/* the netmenu this *SHOULD* belong too */
-} ConnectionType, *ConnectionTypePtr;
+} ConnectionType;
 
 typedef struct			/* holds a net of connections */
 {
   Cardinal ConnectionN,		/* the number of connections contained */
     ConnectionMax;		/* max connections from malloc */
-  ConnectionTypePtr Connection;
-  RouteStyleTypePtr Style;
-} NetType, *NetTypePtr;
+  ConnectionType *Connection;
+  RouteStyleType *Style;
+} NetType;
 
 typedef struct			/* holds a list of nets */
 {
   Cardinal NetN,		/* the number of subnets contained */
     NetMax;			/* max subnets from malloc */
-  NetTypePtr Net;
-} NetListType, *NetListTypePtr;
+  NetType *Net;
+} NetListType;
 
 typedef struct			/* holds a list of net lists */
 {
   Cardinal NetListN,		/* the number of net lists contained */
     NetListMax;			/* max net lists from malloc */
-  NetListTypePtr NetList;
-} NetListListType, *NetListListTypePtr;
+  NetListType *NetList;
+} NetListListType;
 
 typedef struct			/* holds a generic list of pointers */
 {
   Cardinal PtrN,		/* the number of pointers contained */
     PtrMax;			/* max subnets from malloc */
   void **Ptr;
-} PointerListType, *PointerListTypePtr;
+} PointerListType;
 
 typedef struct
 {
   Cardinal BoxN,		/* the number of boxes contained */
     BoxMax;			/* max boxes from malloc */
-  BoxTypePtr Box;
+  BoxType *Box;
 
-} BoxListType, *BoxListTypePtr;
+} BoxListType;
 
 struct drc_violation_st
 {
   char *title;
   char *explanation;
-  int x;
-  int y;
-  int angle;
+  Coord x, y;
+  Angle angle;
   int have_measured;
-  double measured_value;
-  double required_value;
-  int value_digits;
-  const char *value_units;
+  Coord measured_value;
+  Coord required_value;
   int object_count;
   long int *object_id_list;
   int *object_type_list;
@@ -811,8 +821,6 @@ struct drc_violation_st
 #define ATTRIBUTE_UNUSED
 #endif
 
-#define RCSID(x) static char *rcsid  ATTRIBUTE_UNUSED = x
-
 /* ---------------------------------------------------------------------------
  * Macros called by various action routines to show usage or to report
  * a syntax error and fail
@@ -832,4 +840,4 @@ extern char *pcbtreepath;  /* The search path for newlib fps */
 extern char *exec_prefix;
 extern char *homedir;
 
-#endif /* __GLOBAL_INCLUDED__  */
+#endif /* PCB_GLOBAL_H  */

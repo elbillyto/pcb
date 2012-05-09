@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -35,8 +33,8 @@
 /* prototypes for autoplace routines
  */
 
-#ifndef __AUTOPLACE_INCLUDED__
-#define __AUTOPLACE_INCLUDED__
+#ifndef PCB_AUTOPLACE_H
+#define PCB_AUTOPLACE_H
 
 #include "global.h"
 

@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for move routines
  */
 
-#ifndef	__MOVE_INCLUDED__
-#define	__MOVE_INCLUDED__
+#ifndef	PCB_MOVE_H
+#define	PCB_MOVE_H
 
 #include "global.h"
 
@@ -61,6 +60,8 @@
 	{ \
 		MOVE((a)->X,(a)->Y,(dx),(dy)) \
 		MOVE_BOX_LOWLEVEL(&((a)->BoundingBox),(dx),(dy));		\
+		MOVE((a)->Point1.X,(a)->Point1.Y,(dx),(dy))			\
+		MOVE((a)->Point2.X,(a)->Point2.Y,(dx),(dy))			\
 	}
 /* Rather than mode the line bounding box, we set it so the point bounding
  * boxes are updated too.
@@ -93,14 +94,13 @@
 /* ---------------------------------------------------------------------------
  * prototypes
  */
-void MovePolygonLowLevel (PolygonTypePtr, LocationType, LocationType);
-void MoveElementLowLevel (DataTypePtr, ElementTypePtr, LocationType,
-			  LocationType);
-void *MoveObject (int, void *, void *, void *, LocationType, LocationType);
-void *MoveObjectToLayer (int, void *, void *, void *, LayerTypePtr, bool);
+void MovePolygonLowLevel (PolygonType *, Coord, Coord);
+void MoveElementLowLevel (DataType *, ElementType *, Coord, Coord);
+void *MoveObject (int, void *, void *, void *, Coord, Coord);
+void *MoveObjectToLayer (int, void *, void *, void *, LayerType *, bool);
 void *MoveObjectAndRubberband (int, void *, void *, void *,
-			       LocationType, LocationType);
-bool MoveSelectedObjectsToLayer (LayerTypePtr);
+			       Coord, Coord);
+bool MoveSelectedObjectsToLayer (LayerType *);
 
 /* index is 0..MAX_LAYER-1.  If old_index is -1, a new layer is
    inserted at that index.  If new_index is -1, the specified layer is

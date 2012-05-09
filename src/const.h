@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* global source constants
  */
 
-#ifndef	__CONST_INCLUDED__
-#define	__CONST_INCLUDED__
+#ifndef	PCB_CONST_H
+#define	PCB_CONST_H
 
 #include <limits.h>
 #include <math.h>
@@ -46,7 +45,7 @@
 /* ---------------------------------------------------------------------------
  * misc constants
  */
-#define	MARK_SIZE		5000	/* relative marker size */
+#define	MARK_SIZE		MIL_TO_COORD(50)	/* relative marker size */
 #define	UNDO_WARNING_SIZE	(1024*1024)	/* warning limit of undo */
 #define	USERMEDIANAME		"user defined"	/* label of default media */
 
@@ -68,12 +67,17 @@
 #define LN_2_OVER_2		0.346573590
 
 /* PCB/physical unit conversions */
-#define COORD_TO_MIL(n)	((n) / 100.0)
-#define MIL_TO_COORD(n)	((n) * 100.0)
-#define COORD_TO_MM(n)	((n) * 0.000254)
-#define MM_TO_COORD(n)	((n) / 0.000254)
+#define COORD_TO_MIL(n)	((n) / 25400.0)
+#define MIL_TO_COORD(n)	((n) * 25400.0)
+#define COORD_TO_MM(n)	((n) / 1000000.0)
+#define MM_TO_COORD(n)	((n) * 1000000.0)
 #define COORD_TO_INCH(n)	(COORD_TO_MIL(n) / 1000.0)
 #define INCH_TO_COORD(n)	(MIL_TO_COORD(n) * 1000.0)
+
+/* These need to be carefully written to avoid overflows, and return
+   a Coord type.  */
+#define SCALE_TEXT(COORD,TEXTSCALE) ((Coord)((COORD) * ((double)(TEXTSCALE) / 100.0)))
+#define UNSCALE_TEXT(COORD,TEXTSCALE) ((Coord)((COORD) * (100.0 / (double)(TEXTSCALE))))
 
 /* ---------------------------------------------------------------------------
  * modes
@@ -315,6 +319,7 @@ When set, element names are not drawn.
 
 #define LOCKED_TYPE 		0x10000	/* used to tell search to include locked items. */
 #define NET_TYPE		0x20000 /* used to select whole net. */
+#define ARCPOINT_TYPE		0x40000
 
 #define PIN_TYPES     (VIA_TYPE | PIN_TYPE)
 #define LOCK_TYPES    (VIA_TYPE | LINE_TYPE | ARC_TYPE | POLYGON_TYPE | ELEMENT_TYPE \

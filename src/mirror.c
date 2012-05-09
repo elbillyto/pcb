@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -54,18 +52,13 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
-
-
-
 /* ---------------------------------------------------------------------------
  * mirrors the coordinates of an element
  * an additional offset is passed
  */
 void
-MirrorElementCoordinates (DataTypePtr Data, ElementTypePtr Element,
-			  LocationType yoff)
+MirrorElementCoordinates (DataType *Data, ElementType *Element,
+			  Coord yoff)
 {
   r_delete_element (Data, Element);
   ELEMENTLINE_LOOP (Element);

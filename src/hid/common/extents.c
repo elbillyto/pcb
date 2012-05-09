@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -19,8 +17,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 #ifndef MAXINT
 #define MAXINT (((unsigned int)(~0))>>1)
@@ -90,7 +86,7 @@ extents_set_line_cap (hidGC gc, EndCapStyle style)
 }
 
 static void
-extents_set_line_width (hidGC gc, int width)
+extents_set_line_width (hidGC gc, Coord width)
 {
   gc->width = width;
 }
@@ -106,7 +102,7 @@ extents_set_draw_xor (hidGC gc, int xor_)
 	if (box.Y2 < (y)+(w)) box.Y2 = (y)+(w)
 
 static void
-extents_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
+extents_draw_line (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   PEX (x1, gc->width);
   PEY (y1, gc->width);
@@ -115,8 +111,8 @@ extents_draw_line (hidGC gc, int x1, int y1, int x2, int y2)
 }
 
 static void
-extents_draw_arc (hidGC gc, int cx, int cy, int width, int height,
-		  int start_angle, int end_angle)
+extents_draw_arc (hidGC gc, Coord cx, Coord cy, Coord width, Coord height,
+		  Angle start_angle, Angle end_angle)
 {
   /* Naive but good enough.  */
   PEX (cx, width + gc->width);
@@ -124,7 +120,7 @@ extents_draw_arc (hidGC gc, int cx, int cy, int width, int height,
 }
 
 static void
-extents_draw_rect (hidGC gc, int x1, int y1, int x2, int y2)
+extents_draw_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   PEX (x1, gc->width);
   PEY (y1, gc->width);
@@ -133,14 +129,14 @@ extents_draw_rect (hidGC gc, int x1, int y1, int x2, int y2)
 }
 
 static void
-extents_fill_circle (hidGC gc, int cx, int cy, int radius)
+extents_fill_circle (hidGC gc, Coord cx, Coord cy, Coord radius)
 {
   PEX (cx, radius);
   PEY (cy, radius);
 }
 
 static void
-extents_fill_polygon (hidGC gc, int n_coords, int *x, int *y)
+extents_fill_polygon (hidGC gc, int n_coords, Coord *x, Coord *y)
 {
   int i;
   for (i = 0; i < n_coords; i++)
@@ -151,7 +147,7 @@ extents_fill_polygon (hidGC gc, int n_coords, int *x, int *y)
 }
 
 static void
-extents_fill_rect (hidGC gc, int x1, int y1, int x2, int y2)
+extents_fill_rect (hidGC gc, Coord x1, Coord y1, Coord x2, Coord y2)
 {
   PEX (x1, 0);
   PEY (y1, 0);

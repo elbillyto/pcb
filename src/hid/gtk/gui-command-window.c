@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -41,8 +39,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 static GtkWidget *command_window;
 static GtkWidget *combo_vbox;
@@ -236,7 +232,7 @@ command_combo_box_entry_create (void)
 {
   ghidgui->command_combo_box = gtk_combo_box_entry_new_text ();
   ghidgui->command_entry =
-    GTK_ENTRY (GTK_BIN (ghidgui->command_combo_box)->child);
+    GTK_ENTRY (gtk_bin_get_child (GTK_BIN (ghidgui->command_combo_box)));
 
   gtk_entry_set_width_chars (ghidgui->command_entry, 40);
   gtk_entry_set_activates_default (ghidgui->command_entry, TRUE);
@@ -414,9 +410,7 @@ ghid_command_entry_get (gchar * prompt, gchar * command)
      |  insensitive so all the user can do is enter a command, grab focus
      |  and connect a handler to look for the escape key.
    */
-  gtk_window_remove_accel_group (GTK_WINDOW (out->top_window),
-				 gtk_ui_manager_get_accel_group (ghidgui->
-								 ui_manager));
+  ghid_remove_accel_groups (GTK_WINDOW (gport->top_window), ghidgui);
   ghid_interface_input_signals_disconnect ();
   ghid_interface_set_sensitive (FALSE);
   gtk_widget_grab_focus (GTK_WIDGET (ghidgui->command_entry));
@@ -437,9 +431,7 @@ ghid_command_entry_get (gchar * prompt, gchar * command)
   g_signal_handler_disconnect (ghidgui->command_entry, escape_sig_id);
   ghid_interface_input_signals_connect ();
   ghid_interface_set_sensitive (TRUE);
-  gtk_window_add_accel_group (GTK_WINDOW (out->top_window),
-			      gtk_ui_manager_get_accel_group (ghidgui->
-							      ui_manager));
+  ghid_install_accel_groups (GTK_WINDOW (gport->top_window), ghidgui);
 
   /* Restore the status line label and give focus back to the drawing area
    */

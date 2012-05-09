@@ -22,7 +22,6 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for thermal routines
@@ -34,13 +33,13 @@
  * operations, and the functions in thermal.h help implement that.
  */
 
-#ifndef	__THERMAL_INCLUDED__
-#define	__THERMAL_INCLUDED__
+#ifndef	PCB_THERMAL_H
+#define	PCH_THERMAL_H
 
 #include <stdlib.h>
 #include "global.h"
 #include "mymem.h"
 
-POLYAREA * ThermPoly (PCBTypePtr, PinTypePtr, Cardinal);
+POLYAREA * ThermPoly (PCBType *, PinType *, Cardinal);
 
 #endif

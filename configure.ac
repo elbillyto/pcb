@@ -410,24 +410,13 @@ Either do not use --enable-gl or enable the gtk HID.])
 	;;
 	esac
 
-	AC_CHECK_HEADERS(GL/gl.h)
-	case $ac_cv_header_GL_gl_h in
-	  no )
-	    AC_MSG_ERROR([You don't seem to have the GL library headers installed.])
-	    ;;
-	  * ) ;;
-	esac
+	AX_CHECK_GL
+	AS_IF([test X$no_gl = Xyes],
+	      [AC_MSG_FAILURE([OpenGL is required.])])
 
-	AC_CHECK_HEADERS(GL/glu.h)
-	case $ac_cv_header_GL_glu_h in
-	  no )
-	    AC_MSG_ERROR([You don't seem to have the GL glu library headers installed.])
-	    ;;
-	  * ) ;;
-	esac
-
-	GLU_CFLAGS=
-	GLU_LIBS=-lGLU
+	AX_CHECK_GLU
+	AS_IF([test X$no_glu = Xyes],
+	      [AC_MSG_FAILURE([The OpenGL GLU library is required.])])
 
 	AC_DEFINE([ENABLE_GL], 1,
 		[Define to 1 if GL support is to be compiled in])
@@ -589,14 +578,8 @@ GNUM4=$M4
 AC_SUBST(GNUM4)
 AC_DEFINE_UNQUOTED(GNUM4,"$M4",[m4 program used by pcb])
 
-AC_PATH_PROG(LATEX, latex, notfound)
-AM_CONDITIONAL(MISSING_LATEX, test x$LATEX = xnotfound)
-
 AC_PATH_PROG(PDFLATEX, pdflatex, notfound)
 AM_CONDITIONAL(MISSING_PDFLATEX, test x$PDFLATEX = xnotfound)
-
-AC_PATH_PROG(DVIPS, dvips, notfound)
-AM_CONDITIONAL(MISSING_DVIPS, test x$DVIPS = xnotfound)
 
 AC_PATH_PROG(TEXI2DVI, texi2dvi, notfound)
 AM_CONDITIONAL(MISSING_TEXI2DVI, test x$TEXI2DVI = xnotfound)
@@ -609,13 +592,11 @@ AC_PATH_PROG(GSCHEM, gschem, notfound)
 AM_CONDITIONAL(MISSING_GSCHEM, test x$GSCHEM = xnotfound)
 
 if test "X$docs_yesno" = "Xyes" -a "X$pcb_git_version" = "Xyes" ; then
-	if test "$LATEX" = "notfound" -o "$PDFLATEX" = "notfound" -o "$DVIPS" = "notfound" -o "$TEXI2DVI" = "notfound" -o "$PS2PDF" = "notfound" ; then
+	if test "$PDFLATEX" = "notfound" -o "$TEXI2DVI" = "notfound" -o "$PS2PDF" = "notfound" ; then
 		AC_MSG_ERROR([It appears that you are building from a source tree obtained
 via git but you do not have the required tools installed to build the documentation.  Here
 is a list of tools and the detected values:
-LATEX:  $LATEX
 PDFLATEX:  $PDFLATEX
-DVIPS:     $DVIPS
 TEXI2DVI:  $TEXI2DVI
 PS2PDF:    $PS2PDF
 GSCHEM:    $GSCHEM
@@ -760,8 +741,8 @@ for e in $HIDLIST; do
 		AC_MSG_ERROR([Cannot find pkg-config, make sure it is installed and in your PATH])
 	fi
 
-	PKG_CHECK_MODULES(GTK, gtk+-2.0 >= 2.12.0, ,
-		[AC_MSG_ERROR([Cannot find gtk+ >= 2.12.0, install it and rerun ./configure
+	PKG_CHECK_MODULES(GTK, gtk+-2.0 >= 2.18.0, ,
+		[AC_MSG_ERROR([Cannot find gtk+ >= 2.18.0, install it and rerun ./configure
 Please review the following errors:
 $GTK_PKG_ERRORS])]
 	)
@@ -1008,6 +989,22 @@ case "$have_xrender:$enable_xrender" in
      ;;
 esac
 
+# ------------- Xinerama -------------------
+have_xinerama=no
+AC_CHECK_LIB(Xinerama,XineramaQueryExtension,have_xinerama=yes,have_xinerama=no,$X_LIBS)
+
+AC_ARG_ENABLE([xinerama],
+[  --disable-xinerama       Compile and link with Xinerama [default=yes]])
+case "$have_xinerama:$enable_xinerama" in
+   no:* ) ;;
+   *:no ) ;;
+   * )
+     X_LIBS="-lXinerama $X_LIBS"
+     AC_DEFINE([HAVE_XINERAMA], 1,
+		[Define to 1 if Xinerama is available])
+     ;;
+esac
+
 # ------------- dmalloc -------------------
 dnl dmalloc checks
 with_dmalloc=no
@@ -1068,10 +1065,53 @@ AM_CONDITIONAL(DEBUG_BUILD, test x$enable_debug = xyes)
 m4_include([m4/m4_ax_func_mkdir.m4])
 AX_FUNC_MKDIR
 
+# ------------- Type used for "Coord" type -------------------
+
+AC_CHECK_HEADERS(stdint.h)
+AC_ARG_ENABLE([coord64],
+[  --enable-coord64        Force 64-bit coordinate types],
+[],[enable_coord64=no])
+AC_ARG_ENABLE([coord32],
+[  --enable-coord32        Force 32-bit coordinate types],
+[],[enable_coord32=no])
+
+COORDTYPE="long"
+
+echo "$enable_coord32:$enable_coord64:$ac_cv_header_stdint_h"
+case "$enable_coord32:$enable_coord64:$ac_cv_header_stdint_h" in
+  yes:no:yes )
+    COORD_TYPE="int32_t"
+    COORD_MAX="INT32_MAX"
+    ;;
+  no:yes:yes )
+    COORD_TYPE="int64_t"
+    COORD_MAX="INT64_MAX"
+    ;;
+  yes:no:no  )
+    COORD_TYPE="int"
+    COORD_MAX="INT_MAX"
+    ;;
+  no:yes:no  )
+    COORD_TYPE="long long"
+    COORD_MAX="LLONG_MAX"
+    ;;
+  yes:yes:*  )
+    AC_MSG_ERROR("*** cannot require both 32 and 64 bit coordinates")
+    ;;
+  *:*:*    )
+    COORD_TYPE="long"
+    COORD_MAX="LONG_MAX"
+    ;;
+esac
+AC_DEFINE_UNQUOTED([COORD_TYPE],[$COORD_TYPE],
+  [C type for Coordinates])
+AC_DEFINE_UNQUOTED([COORD_MAX],[$COORD_MAX],
+  [Maximum value of coordinate type])
+
 # ------------- Complete set of CFLAGS and LIBS -------------------
 
-CFLAGS="$CFLAGS $X_CFLAGS $DBUS_CFLAGS $GLIB_CFLAGS $GTK_CFLAGS $CAIRO_CFLAGS $GTKGLEXT_CFLAGS $GLU_CFLAGS"
-LIBS="$LIBS $XM_LIBS $DBUS_LIBS $X_LIBS $GLIB_LIBS $GTK_LIBS $DMALLOC_LIBS $GD_LIBS $INTLLIBS $CAIRO_LIBS $GTKGLEXT_LIBS $GLU_LIBS"
+CFLAGS="$CFLAGS $X_CFLAGS $DBUS_CFLAGS $GLIB_CFLAGS $GTK_CFLAGS $CAIRO_CFLAGS $GTKGLEXT_CFLAGS $GLU_CFLAGS $GL_CFLAGS"
+LIBS="$LIBS $XM_LIBS $DBUS_LIBS $X_LIBS $GLIB_LIBS $GTK_LIBS $DMALLOC_LIBS $GD_LIBS $INTLLIBS $CAIRO_LIBS $GTKGLEXT_LIBS $GLU_LIBS $GL_LIBS"
 
 
 # if we have gcc then add -Wall
@@ -1271,16 +1311,17 @@ AC_CONFIG_FILES(tests/golden/hid_gcode10/Makefile)
 AC_CONFIG_FILES(tests/golden/hid_gcode11/Makefile)
 AC_CONFIG_FILES(tests/golden/hid_gerber1/Makefile)
 AC_CONFIG_FILES(tests/golden/hid_gerber2/Makefile)
+AC_CONFIG_FILES(tests/golden/hid_gerber3/Makefile)
 AC_CONFIG_FILES(tests/golden/hid_png1/Makefile)
 AC_CONFIG_FILES(tests/golden/hid_png2/Makefile)
 AC_CONFIG_FILES(tests/golden/hid_png3/Makefile)
 AC_CONFIG_FILES(tests/Makefile)
 
-dnl win32 build scripts
-AC_CONFIG_FILES(win32/Makefile)
-
 dnl GTS 0.7.6 - http://gts.sourceforge.net/
 AC_CONFIG_FILES(gts/Makefile)
+
+dnl win32 build scripts
+AC_CONFIG_FILES(w32/Makefile)
 
 AC_OUTPUT
 
@@ -1297,6 +1338,7 @@ AC_MSG_RESULT([
    GUI:                      $with_gui
    Printer:                  $with_printer
    Exporters:                $with_exporters
+   Coordinate type:          $COORD_TYPE
    Source tree distribution: $pcb_sources
    Build documentation:      $docs_yesno
    Build toporouter:         $enable_toporouter

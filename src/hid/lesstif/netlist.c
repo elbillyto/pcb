@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -31,8 +29,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 static Arg args[30];
 static int n;
 #define stdarg(t,v) XtSetArg(args[n], t, v); n++
@@ -45,7 +41,7 @@ static XmString *netnode_strings = 0;
 static int n_netnode_strings;
 static int last_pick = -1;
 
-static int LesstifNetlistChanged (int argc, char **argv, int x, int y);
+static int LesstifNetlistChanged (int argc, char **argv, Coord x, Coord y);
 
 static void
 pick_net (int pick)
@@ -62,7 +58,7 @@ pick_net (int pick)
   n_netnode_strings = menu->EntryN;
   netnode_strings = (XmString *) malloc (menu->EntryN * sizeof (XmString));
   for (i = 0; i < menu->EntryN; i++)
-    netnode_strings[i] = XmStringCreateLocalized (menu->Entry[i].ListEntry);
+    netnode_strings[i] = XmStringCreatePCB (menu->Entry[i].ListEntry);
   n = 0;
   stdarg (XmNitems, netnode_strings);
   stdarg (XmNitemCount, menu->EntryN);
@@ -74,7 +70,7 @@ netlist_select (Widget w, void *v, XmListCallbackStruct * cbs)
 {
   XmString str;
   int pos = cbs->item_position;
-  LibraryMenuTypePtr net = & (PCB->NetlistLib.Menu[pos - 1]);
+  LibraryMenuType *net = & (PCB->NetlistLib.Menu[pos - 1]);
   char *name = net->Name;
   if (name[0] == ' ')
     {
@@ -87,7 +83,7 @@ netlist_select (Widget w, void *v, XmListCallbackStruct * cbs)
       net->flag = 1;
     }
 
-  str = XmStringCreateLocalized (name);
+  str = XmStringCreatePCB (name);
   XmListReplaceItemsPos (netlist_list, &str, 1, pos);
   XmStringFree (str);
   XmListSelectPos (netlist_list, pos, False);
@@ -100,28 +96,28 @@ netlist_extend (Widget w, void *v, XmListCallbackStruct * cbs)
     pick_net (cbs->item_position - 1);
 }
 
-typedef void (*Std_Nbcb_Func)(LibraryMenuTypePtr, int);
+typedef void (*Std_Nbcb_Func)(LibraryMenuType *, int);
 
 static void
-nbcb_rat_on (LibraryMenuTypePtr net, int pos)
+nbcb_rat_on (LibraryMenuType *net, int pos)
 {
   XmString str;
   char *name = net->Name;
   name[0] = ' ';
   net->flag = 1;
-  str = XmStringCreateLocalized (name);
+  str = XmStringCreatePCB (name);
   XmListReplaceItemsPos (netlist_list, &str, 1, pos);
   XmStringFree (str);
 }
 
 static void
-nbcb_rat_off (LibraryMenuTypePtr net, int pos)
+nbcb_rat_off (LibraryMenuType *net, int pos)
 {
   XmString str;
   char *name = net->Name;
   name[0] = '*';
   net->flag = 0;
-  str = XmStringCreateLocalized (name);
+  str = XmStringCreatePCB (name);
   XmListReplaceItemsPos (netlist_list, &str, 1, pos);
   XmStringFree (str);
 }
@@ -130,7 +126,7 @@ nbcb_rat_off (LibraryMenuTypePtr net, int pos)
 /* Select on the layout the current net treeview selection
  */
 static void
-nbcb_select_common (LibraryMenuTypePtr net, int pos, int select_flag)
+nbcb_select_common (LibraryMenuType *net, int pos, int select_flag)
 {
   LibraryEntryType *entry;
   ConnectionType conn;
@@ -151,19 +147,19 @@ nbcb_select_common (LibraryMenuTypePtr net, int pos, int select_flag)
 }
 
 static void
-nbcb_select (LibraryMenuTypePtr net, int pos)
+nbcb_select (LibraryMenuType *net, int pos)
 {
   nbcb_select_common (net, pos, 1);
 }
 
 static void
-nbcb_deselect (LibraryMenuTypePtr net, int pos)
+nbcb_deselect (LibraryMenuType *net, int pos)
 {
   nbcb_select_common (net, pos, 0);
 }
 
 static void
-nbcb_find (LibraryMenuTypePtr net, int pos)
+nbcb_find (LibraryMenuType *net, int pos)
 {
   char *name = net->Name + 2;
   hid_actionl ("netlist", "find", name, NULL);
@@ -180,7 +176,7 @@ nbcb_std_callback (Widget w, Std_Nbcb_Func v, XmPushButtonCallbackStruct * cbs)
     hid_actionl ("connection", "reset", NULL);
   for (i=0; i<posc; i++)
     {
-      LibraryMenuTypePtr net = & (PCB->NetlistLib.Menu[posl[i] - 1]);
+      LibraryMenuType *net = & (PCB->NetlistLib.Menu[posl[i] - 1]);
       v(net, posl[i]);
     }
   n = 0;
@@ -289,7 +285,7 @@ netlist_button (Widget parent, char *name, char *string,
   NLB_W (bottom);
   NLB_W (left);
   NLB_W (right);
-  str = XmStringCreateLocalized (string);
+  str = XmStringCreatePCB (string);
   stdarg(XmNlabelString, str);
   rv = XmCreatePushButton (parent, name, args, n);
   XtManageChild (rv);
@@ -351,7 +347,7 @@ build_netlist_dialog ()
   stdarg (XmNbottomAttachment, XmATTACH_WIDGET);
   stdarg (XmNbottomWidget, b_sel);
   stdarg (XmNleftAttachment, XmATTACH_FORM);
-  ops_str = XmStringCreateLocalized ("Operations on selected net names:");
+  ops_str = XmStringCreatePCB ("Operations on selected net names:");
   stdarg (XmNlabelString, ops_str);
   l_ops = XmCreateLabel (netlist_dialog, "ops", args, n);
   XtManageChild (l_ops);
@@ -385,7 +381,7 @@ build_netlist_dialog ()
 }
 
 static int
-LesstifNetlistChanged (int argc, char **argv, int x, int y)
+LesstifNetlistChanged (int argc, char **argv, Coord x, Coord y)
 {
   int i;
   if (!PCB->NetlistLib.MenuN)
@@ -399,7 +395,7 @@ LesstifNetlistChanged (int argc, char **argv, int x, int y)
     (XmString *) malloc (PCB->NetlistLib.MenuN * sizeof (XmString));
   for (i = 0; i < PCB->NetlistLib.MenuN; i++)
     netlist_strings[i] =
-      XmStringCreateLocalized (PCB->NetlistLib.Menu[i].Name);
+      XmStringCreatePCB (PCB->NetlistLib.Menu[i].Name);
   n = 0;
   stdarg (XmNitems, netlist_strings);
   stdarg (XmNitemCount, PCB->NetlistLib.MenuN);
@@ -419,14 +415,14 @@ static const char netlistshow_help[] =
 %end-doc */
 
 static int
-LesstifNetlistShow (int argc, char **argv, int x, int y)
+LesstifNetlistShow (int argc, char **argv, Coord x, Coord y)
 {
   if (build_netlist_dialog ())
     return 0;
 
   if (argc == 1)
     {
-      LibraryMenuTypePtr net;
+      LibraryMenuType *net;
 
       net = netnode_to_netname(argv[0]);
       if (net)
@@ -435,13 +431,13 @@ LesstifNetlistShow (int argc, char **argv, int x, int y)
 	  int vis = 0;
 
 	  /* Select net first, 'True' causes pick_net() to be invoked */
-	  item = XmStringCreateLocalized (net->Name);
+	  item = XmStringCreatePCB (net->Name);
 	  XmListSelectItem (netlist_list, item, True);
 	  XmListSetItem (netlist_list, item);
 	  XmStringFree (item);
 
 	  /* Now the netnode_list has the right contents */
-	  item = XmStringCreateLocalized (argv[0]);
+	  item = XmStringCreatePCB (argv[0]);
 	  XmListSelectItem (netnode_list, item, False);
 
 	  /*
@@ -467,7 +463,7 @@ LesstifNetlistShow (int argc, char **argv, int x, int y)
 	    {
 	      XmString item;
 
-	      item = XmStringCreateLocalized (net->Name);
+	      item = XmStringCreatePCB (net->Name);
 	      XmListSetItem (netlist_list, item);
 	      XmListSelectItem (netlist_list, item, True);
 	      XmStringFree (item);

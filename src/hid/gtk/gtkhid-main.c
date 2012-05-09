@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -20,60 +18,131 @@
 #include "gui.h"
 #include "hid/common/hidnogui.h"
 #include "hid/common/draw_helpers.h"
+#include "pcb-printf.h"
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
 
-
-RCSID ("$Id$");
-
-
-static void zoom_to (double factor, int x, int y);
-static void zoom_by (double factor, int x, int y);
-
-int ghid_flip_x = 0, ghid_flip_y = 0;
-
-
-void
-ghid_pan_fixup ()
+static void
+pan_common (GHidPort *port)
 {
+  int event_x, event_y;
 
-  /*
-   * don't pan so far to the right that we see way past the right 
-   * edge of the board.
+  /* We need to fix up the PCB coordinates corresponding to the last
+  * event so convert it back to event coordinates temporarily. */
+  ghid_pcb_to_event_coords (gport->pcb_x, gport->pcb_y, &event_x, &event_y);
+
+  /* Don't pan so far the board is completely off the screen */
+  port->view.x0 = MAX (-port->view.width,  port->view.x0);
+  port->view.y0 = MAX (-port->view.height, port->view.y0);
+  port->view.x0 = MIN ( port->view.x0, PCB->MaxWidth);
+  port->view.y0 = MIN ( port->view.y0, PCB->MaxHeight);
+
+  /* Fix up noted event coordinates to match where we clamped. Alternatively
+   * we could call ghid_note_event_location (NULL); to get a new pointer
+   * location, but this costs us an xserver round-trip (on X11 platforms)
    */
-  if (gport->view_x0 > PCB->MaxWidth - gport->view_width)
-    gport->view_x0 = PCB->MaxWidth - gport->view_width;
-
-  /*
-   * don't pan so far down that we see way past the bottom edge of
-   * the board.
-   */
-  if (gport->view_y0 > PCB->MaxHeight - gport->view_height)
-    gport->view_y0 = PCB->MaxHeight - gport->view_height;
-
-  /* don't view above or to the left of the board... ever */
-  if (gport->view_x0 < 0)
-    gport->view_x0 = 0;
-
-   if (gport->view_y0 < 0)
-    gport->view_y0 = 0;
-
-  /* if we can see the entire board and some, then zoom to fit */
-  if (gport->view_width > PCB->MaxWidth &&
-      gport->view_height > PCB->MaxHeight)
-    {
-      zoom_by (1, 0, 0);
-      return;
-    }
+  ghid_event_to_pcb_coords (event_x, event_y, &gport->pcb_x, &gport->pcb_y);
 
   ghidgui->adjustment_changed_holdoff = TRUE;
-  gtk_range_set_value (GTK_RANGE (ghidgui->h_range), gport->view_x0);
-  gtk_range_set_value (GTK_RANGE (ghidgui->v_range), gport->view_y0);
+  gtk_range_set_value (GTK_RANGE (ghidgui->h_range), gport->view.x0);
+  gtk_range_set_value (GTK_RANGE (ghidgui->v_range), gport->view.y0);
   ghidgui->adjustment_changed_holdoff = FALSE;
 
   ghid_port_ranges_changed();
+}
+
+static void
+ghid_pan_view_abs (Coord pcb_x, Coord pcb_y, int widget_x, int widget_y)
+{
+  gport->view.x0 = SIDE_X (pcb_x) - widget_x * gport->view.coord_per_px;
+  gport->view.y0 = SIDE_Y (pcb_y) - widget_y * gport->view.coord_per_px;
+
+  pan_common (gport);
+}
+
+void
+ghid_pan_view_rel (Coord dx, Coord dy)
+{
+  gport->view.x0 += dx;
+  gport->view.y0 += dy;
+
+  pan_common (gport);
+}
+
+
+/* gport->view.coord_per_px:
+ * zoom value is PCB units per screen pixel.  Larger numbers mean zooming
+ * out - the largest value means you are looking at the whole board.
+ *
+ * gport->view_width and gport->view_height are in PCB coordinates
+ */
+
+#define ALLOW_ZOOM_OUT_BY 10 /* Arbitrary, and same as the lesstif HID */
+static void
+ghid_zoom_view_abs (Coord center_x, Coord center_y, double new_zoom)
+{
+  double min_zoom, max_zoom;
+  double xtmp, ytmp;
+
+  /* Limit the "minimum" zoom constant (maximum zoom), at 1 pixel per PCB
+   * unit, and set the "maximum" zoom constant (minimum zoom), such that
+   * the entire board just fits inside the viewport
+   */
+  min_zoom = 1;
+  max_zoom = MAX (PCB->MaxWidth  / gport->width,
+                  PCB->MaxHeight / gport->height) * ALLOW_ZOOM_OUT_BY;
+  new_zoom = MIN (MAX (min_zoom, new_zoom), max_zoom);
+
+  if (gport->view.coord_per_px == new_zoom)
+    return;
+
+  xtmp = (SIDE_X (center_x) - gport->view.x0) / (double)gport->view.width;
+  ytmp = (SIDE_Y (center_y) - gport->view.y0) / (double)gport->view.height;
+
+  gport->view.coord_per_px = new_zoom;
+  pixel_slop = new_zoom;
+  ghid_port_ranges_scale ();
+
+  gport->view.x0 = SIDE_X (center_x) - xtmp * gport->view.width;
+  gport->view.y0 = SIDE_Y (center_y) - ytmp * gport->view.height;
+
+  pan_common (gport);
+
+  ghid_set_status_line_label ();
+}
+
+static void
+ghid_zoom_view_rel (Coord center_x, Coord center_y, double factor)
+{
+  ghid_zoom_view_abs (center_x, center_y, gport->view.coord_per_px * factor);
+}
+
+static void
+ghid_zoom_view_fit (void)
+{
+  ghid_pan_view_abs (SIDE_X (0), SIDE_Y (0), 0, 0);
+  ghid_zoom_view_abs (SIDE_X (0), SIDE_Y (0),
+                      MAX (PCB->MaxWidth  / gport->width,
+                           PCB->MaxHeight / gport->height));
+}
+
+static void
+ghid_flip_view (Coord center_x, Coord center_y, bool flip_x, bool flip_y)
+{
+  int widget_x, widget_y;
+
+  /* Work out where on the screen the flip point is */
+  ghid_pcb_to_event_coords (center_x, center_y, &widget_x, &widget_y);
+
+  gport->view.flip_x = gport->view.flip_x != flip_x;
+  gport->view.flip_y = gport->view.flip_y != flip_y;
+
+  /* Pan the board so the center location remains in the same place */
+  ghid_pan_view_abs (center_x, center_y, widget_x, widget_y);
+
+  ghid_invalidate_all ();
 }
 
 /* ------------------------------------------------------------ */
@@ -125,166 +194,41 @@ Note that zoom factors of zero are silently ignored.
 %end-doc */
 
 static int
-Zoom (int argc, char **argv, int x, int y)
+Zoom (int argc, char **argv, Coord x, Coord y)
 {
-  double factor;
   const char *vp;
   double v;
 
   if (argc > 1)
     AFAIL (zoom);
 
-  if (x == 0 && y == 0)
-    {
-      x = gport->view_width / 2;
-      y = gport->view_height / 2;
-    }
-  else
-    {
-      /* Px converts view->pcb, Vx converts pcb->view */
-      x = Vx (x);
-      y = Vy (y);
-    }
-
   if (argc < 1)
     {
-      zoom_to (1000000, 0, 0);
+      ghid_zoom_view_fit ();
       return 0;
     }
 
   vp = argv[0];
   if (*vp == '+' || *vp == '-' || *vp == '=')
     vp++;
-  v = strtod (vp, 0);
+  v = g_ascii_strtod (vp, 0);
   if (v <= 0)
     return 1;
   switch (argv[0][0])
     {
     case '-':
-      factor = 1 / v;
-      zoom_by (1 / v, x, y);
+      ghid_zoom_view_rel (x, y, 1 / v);
       break;
     default:
     case '+':
-      factor = v;
-      zoom_by (v, x, y);
+      ghid_zoom_view_rel (x, y, v);
       break;
     case '=':
-      /* this needs to set the scale factor absolutely*/
-      factor = 1.0;
-      zoom_to (v, x, y);
+      ghid_zoom_view_abs (x, y, v);
       break;
     }
 
   return 0;
-}
-
-
-static void
-zoom_to (double new_zoom, int x, int y)
-{
-  double max_zoom, xfrac, yfrac;
-  int cx, cy;
-
-  /* gport->zoom:
-   * zoom value is PCB units per screen pixel.  Larger numbers mean zooming
-   * out - the largest value means you are looking at the whole board.
-   *
-   * PCB units per screen pixel
-   *
-   * gport->view_width and gport->view_height are in PCB coordinates
-   */
-
-#ifdef DEBUG
-  printf ("\nzoom_to( %g, %d, %d)\n", new_zoom, x, y);
-#endif
-
-  xfrac = (double) x / (double) gport->view_width;
-  yfrac = (double) y / (double) gport->view_height;
-
-  if (ghid_flip_x)
-    xfrac = 1-xfrac;
-  if (ghid_flip_y)
-    yfrac = 1-yfrac;
-
-  /* Find the zoom that would just make the entire board fit */
-  max_zoom = PCB->MaxWidth / gport->width;
-  if (max_zoom < PCB->MaxHeight / gport->height)
-    max_zoom = PCB->MaxHeight / gport->height;
-
-#ifdef DEBUG
-  printf ("zoom_to():  max_zoom = %g\n", max_zoom);
-#endif
-
-  /* 
-   * clip the zooming so we can never have more than 1 pixel per PCB
-   * unit and never zoom out more than viewing the entire board
-   */
-     
-  if (new_zoom < 1)
-    new_zoom = 1;
-  if (new_zoom > max_zoom)
-    new_zoom = max_zoom;
-
-#ifdef DEBUG
-  printf ("max_zoom = %g, xfrac = %g, yfrac = %g, new_zoom = %g\n", 
-	  max_zoom, xfrac, yfrac, new_zoom);
-#endif
-
-  /* find center x and y */
-  cx = gport->view_x0 + gport->view_width * xfrac * gport->zoom;
-  cy = gport->view_y0 + gport->view_height * yfrac * gport->zoom;
-
-#ifdef DEBUG
-  printf ("zoom_to():  x0 = %d, cx = %d\n", gport->view_x0, cx);
-  printf ("zoom_to():  y0 = %d, cy = %d\n", gport->view_y0, cy);
-#endif
-
-  if (gport->zoom != new_zoom)
-    {
-      gdouble xtmp, ytmp;
-      gint x0, y0;
-
-      xtmp = (gport->view_x - gport->view_x0) / (gdouble) gport->view_width;
-      ytmp = (gport->view_y - gport->view_y0) / (gdouble) gport->view_height;
-      
-      gport->zoom = new_zoom;
-      pixel_slop = new_zoom;
-      ghid_port_ranges_scale(FALSE);
-
-      x0 = gport->view_x - xtmp * gport->view_width;
-      if (x0 < 0)
-	x0 = 0;
-      gport->view_x0 = x0;
-
-      y0 = gport->view_y - ytmp * gport->view_height;
-      if (y0 < 0)
-	y0 = 0;
-      gport->view_y0 = y0;
-      
-      ghidgui->adjustment_changed_holdoff = TRUE;
-      gtk_range_set_value (GTK_RANGE (ghidgui->h_range), gport->view_x0);
-      gtk_range_set_value (GTK_RANGE (ghidgui->v_range), gport->view_y0);
-      ghidgui->adjustment_changed_holdoff = FALSE;
-      
-      ghid_port_ranges_changed();
-    }
-
-#ifdef DEBUG
-  printf ("zoom_to():  new x0 = %d\n", gport->view_x0);
-  printf ("zoom_to():  new y0 = %d\n", gport->view_y0);
-#endif
-  ghid_set_status_line_label ();
-}
-
-void
-zoom_by (double factor, int x, int y)
-{
-#ifdef DEBUG
-  printf ("\nzoom_by( %g, %d, %d).  old gport->zoom = %g\n", 
-	  factor, x, y, gport->zoom);
-#endif
-  zoom_to (gport->zoom * factor, x, y);
 }
 
 /* ------------------------------------------------------------ */
@@ -295,12 +239,10 @@ ghid_calibrate (double xval, double yval)
   printf (_("ghid_calibrate() -- not implemented\n"));
 }
 
-static int ghid_gui_is_up = 0;
-
 void
 ghid_notify_gui_is_up ()
 {
-  ghid_gui_is_up = 1;
+  ghidgui->is_up = 1;
 }
 
 int
@@ -309,10 +251,11 @@ ghid_shift_is_pressed ()
   GdkModifierType mask;
   GHidPort *out = &ghid_port;
 
-  if( ! ghid_gui_is_up ) 
+  if (!ghidgui->is_up)
     return 0;
 
-  gdk_window_get_pointer (out->drawing_area->window, NULL, NULL, &mask);
+  gdk_window_get_pointer (gtk_widget_get_window (out->drawing_area),
+                          NULL, NULL, &mask);
   return (mask & GDK_SHIFT_MASK) ? TRUE : FALSE;
 }
 
@@ -322,10 +265,11 @@ ghid_control_is_pressed ()
   GdkModifierType mask;
   GHidPort *out = &ghid_port;
 
-  if( ! ghid_gui_is_up )
+  if (!ghidgui->is_up)
     return 0;
 
-  gdk_window_get_pointer (out->drawing_area->window, NULL, NULL, &mask);
+  gdk_window_get_pointer (gtk_widget_get_window (out->drawing_area),
+                          NULL, NULL, &mask);
   return (mask & GDK_CONTROL_MASK) ? TRUE : FALSE;
 }
 
@@ -335,10 +279,11 @@ ghid_mod1_is_pressed ()
   GdkModifierType mask;
   GHidPort *out = &ghid_port;
 
-  if( ! ghid_gui_is_up )
+  if (!ghidgui->is_up)
     return 0;
 
-  gdk_window_get_pointer (out->drawing_area->window, NULL, NULL, &mask);
+  gdk_window_get_pointer (gtk_widget_get_window (out->drawing_area),
+                          NULL, NULL, &mask);
 #ifdef __APPLE__
   return (mask & ( 1 << 13 ) ) ? TRUE : FALSE;  // The option key is not MOD1, although it should be...
 #else
@@ -349,103 +294,78 @@ ghid_mod1_is_pressed ()
 void
 ghid_set_crosshair (int x, int y, int action)
 {
-  if (gport->x_crosshair != x || gport->y_crosshair != y)
+  GdkDisplay *display;
+  GdkScreen *screen;
+  int offset_x, offset_y;
+  int widget_x, widget_y;
+  int pointer_x, pointer_y;
+  Coord pcb_x, pcb_y;
+
+  if (gport->crosshair_x != x || gport->crosshair_y != y)
     {
       ghid_set_cursor_position_labels ();
-      gport->x_crosshair = x;
-      gport->y_crosshair = y;
+      gport->crosshair_x = x;
+      gport->crosshair_y = y;
 
-      /*
-       * FIXME - does this trigger the idle_proc stuff?  It is in the
+      /* FIXME - does this trigger the idle_proc stuff?  It is in the
        * lesstif HID.  Maybe something is needed here?
        *
        * need_idle_proc ();
        */
-
     }
 
-  /*
-   * Pan the viewport so that the crosshair (which is in a fixed
-   * location relative to the board) lands where the pointer
-   * is.  What happens is the crosshair is moved on the board
-   * (see above) and then we move the board here to line it up
-   * again.  We do this by figuring out where the pointer is
-   * in board coordinates and we know where the crosshair is
-   * in board coordinates.  Then we know how far to pan.
-   */
-  if (action == HID_SC_PAN_VIEWPORT)
-    {
-      GdkDisplay *display;
-      GdkScreen *screen;
-      gint pos_x, pos_y, xofs, yofs;
-      
-      display = gdk_display_get_default ();
-      screen = gdk_display_get_default_screen (display); 
-      
-      /* figure out where the pointer is relative to the display */ 
-      gdk_display_get_pointer (display, NULL, &pos_x, &pos_y, NULL); 
-      
-      /*
-       * Figure out where the drawing area is on the screen so we can
-       * figure out where the pointer is relative to the viewport.
-       */ 
-      gdk_window_get_origin (gport->drawing_area->window, &xofs, &yofs);
-      
-      pos_x -= xofs;
-      pos_y -= yofs;
+  if (action != HID_SC_PAN_VIEWPORT &&
+      action != HID_SC_WARP_POINTER)
+    return;
 
-      /*
-       * pointer is at
-       *  px = gport->view_x0 + pos_x * gport->zoom
-       *  py = gport->view_y0 + pos_y * gport->zoom
-       *
-       * cross hair is at
-       *  x
-       *  y
-       *
-       * we need to shift x0 by (x - px) and y0 by (y - py)
-       * x0 = x0 + x - (x0 + pos_x * zoom)
-       *    = x - pos_x*zoom
+  /* Find out where the drawing area is on the screen. gdk_display_get_pointer
+   * and gdk_display_warp_pointer work relative to the whole display, whilst
+   * our coordinates are relative to the drawing area origin.
+   */
+  gdk_window_get_origin (gtk_widget_get_window (gport->drawing_area),
+                         &offset_x, &offset_y);
+  display = gdk_display_get_default ();
+
+  switch (action) {
+    case HID_SC_PAN_VIEWPORT:
+      /* Pan the board in the viewport so that the crosshair (who's location
+       * relative on the board was set above) lands where the pointer is.
+       * We pass the request to pan a particular point on the board to a
+       * given widget coordinate of the viewport into the rendering code
        */
 
-      if (ghid_flip_x)
-        gport->view_x0 = x - (gport->view_width - pos_x * gport->zoom);
-      else
-        gport->view_x0 = x - pos_x * gport->zoom;
+      /* Find out where the pointer is relative to the display */
+      gdk_display_get_pointer (display, NULL, &pointer_x, &pointer_y, NULL);
 
-      if (ghid_flip_y)
-        gport->view_y0 = y - (gport->view_height - pos_y * gport->zoom);
-      else
-        gport->view_y0 = y - pos_y * gport->zoom;
+      widget_x = pointer_x - offset_x;
+      widget_y = pointer_y - offset_y;
 
-      ghid_pan_fixup();
+      ghid_event_to_pcb_coords (widget_x, widget_y, &pcb_x, &pcb_y);
+      ghid_pan_view_abs (pcb_x, pcb_y, widget_x, widget_y);
 
-      action = HID_SC_WARP_POINTER;
-    }
+      /* Just in case we couldn't pan the board the whole way,
+       * we warp the pointer to where the crosshair DID land.
+       */
+      /* Fall through */
 
-  if (action == HID_SC_WARP_POINTER)
-    {
-      gint xofs, yofs;
-      GdkDisplay *display;
-      GdkScreen *screen;
-
-      display = gdk_display_get_default ();
+    case HID_SC_WARP_POINTER:
       screen = gdk_display_get_default_screen (display);
 
-      /*
-       * Figure out where the drawing area is on the screen because
-       * gdk_display_warp_pointer will warp relative to the whole display
-       * but the value we've been given is relative to your drawing area
-       */
-      gdk_window_get_origin (gport->drawing_area->window, &xofs, &yofs);
-      gdk_display_warp_pointer (display, screen, xofs + Vx (x), yofs + Vy (y));
-    }
+      ghid_pcb_to_event_coords (x, y, &widget_x, &widget_y);
+
+      pointer_x = offset_x + widget_x;
+      pointer_y = offset_y + widget_y;
+
+      gdk_display_warp_pointer (display, screen, pointer_x, pointer_y);
+
+      break;
+  }
 }
 
 typedef struct
 {
   void (*func) (hidval);
-  gint id;
+  guint id;
   hidval user_data;
 }
 GuiTimer;
@@ -470,7 +390,7 @@ ghid_add_timer (void (*func) (hidval user_data),
 
   timer->func = func;
   timer->user_data = user_data;
-  timer->id = gtk_timeout_add (milliseconds, (GtkFunction) ghid_timer, timer);
+  timer->id = g_timeout_add (milliseconds, (GSourceFunc) ghid_timer, timer);
   ret.ptr = (void *) timer;
   return ret;
 }
@@ -480,7 +400,7 @@ ghid_stop_timer (hidval timer)
 {
   void *ptr = timer.ptr;
 
-  gtk_timeout_remove (((GuiTimer *) ptr)->id);
+  g_source_remove (((GuiTimer *) ptr)->id);
   g_free( ptr );
 }
 
@@ -731,7 +651,7 @@ ghid_fileselect (const char *title, const char *descr,
 void
 ghid_show_item (void *item)
 {
-  ghid_pinout_window_show (&ghid_port, (ElementTypePtr) item);
+  ghid_pinout_window_show (&ghid_port, (ElementType *) item);
 }
 
 void
@@ -790,6 +710,7 @@ static struct progress_dialog *
 make_progress_dialog (void)
 {
   struct progress_dialog *pd;
+  GtkWidget *content_area;
   GtkWidget *alignment;
   GtkWidget *vbox;
 
@@ -824,8 +745,8 @@ make_progress_dialog (void)
   gtk_alignment_set_padding (GTK_ALIGNMENT (alignment), 8, 8, 8, 8);
   gtk_container_add (GTK_CONTAINER (alignment), vbox);
 
-  gtk_box_pack_start (GTK_BOX (GTK_DIALOG (pd->dialog)->vbox),
-                      alignment, true, true, 0);
+  content_area = gtk_dialog_get_content_area (GTK_DIALOG (pd->dialog));
+  gtk_box_pack_start (GTK_BOX (content_area), alignment, true, true, 0);
 
   gtk_widget_show_all (alignment);
 
@@ -1057,6 +978,7 @@ attributes_delete_callback (GtkWidget *w, void *v)
 static void
 ghid_attributes (char *owner, AttributeListType *attrs)
 {
+  GtkWidget *content_area;
   int response;
 
   attributes_list = attrs;
@@ -1074,8 +996,9 @@ ghid_attributes (char *owner, AttributeListType *attrs)
 
   attr_table = gtk_table_new (attrs->Number, 3, 0);
 
-  gtk_box_pack_start (GTK_BOX (GTK_DIALOG (attributes_dialog)->vbox), attr_table, FALSE, FALSE, 0);
-    
+  content_area = gtk_dialog_get_content_area (GTK_DIALOG (attributes_dialog));
+  gtk_box_pack_start (GTK_BOX (content_area), attr_table, FALSE, FALSE, 0);
+
   gtk_widget_show (attr_table);
 
   ghid_attributes_revert ();
@@ -1175,7 +1098,7 @@ This just pops up a dialog telling the user which version of
 
 
 static int
-About (int argc, char **argv, int x, int y)
+About (int argc, char **argv, Coord x, Coord y)
 {
   ghid_dialog_about ();
   return 0;
@@ -1195,14 +1118,14 @@ Prompts the user for a coordinate, if one is not already selected.
 %end-doc */
 
 static int
-GetXY (int argc, char **argv, int x, int y)
+GetXY (int argc, char **argv, Coord x, Coord y)
 {
   return 0;
 }
 
 /* ---------------------------------------------------------------------- */
 
-static int PointCursor (int argc, char **argv, int x, int y)
+static int PointCursor (int argc, char **argv, Coord x, Coord y)
 {
   if (!ghidgui)
     return 0;
@@ -1217,20 +1140,23 @@ static int PointCursor (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------------- */
 
 static int
-RouteStylesChanged (int argc, char **argv, int x, int y)
+RouteStylesChanged (int argc, char **argv, Coord x, Coord y)
 {
-  gint n;
+  if (!ghidgui || !ghidgui->route_style_selector)
+    return 0;
 
-  if (PCB && PCB->RouteStyle[0].Name)
-    for (n = 0; n < NUM_STYLES; ++n)
-      ghid_route_style_set_button_label ((&PCB->RouteStyle[n])->Name, n);
+  ghid_route_style_selector_sync
+    (GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector),
+     Settings.LineThickness, Settings.ViaDrillingHole,
+     Settings.ViaThickness, Settings.Keepaway);
+
   return 0;
 }
 
 /* ---------------------------------------------------------------------- */
 
 int
-PCBChanged (int argc, char **argv, int x, int y)
+PCBChanged (int argc, char **argv, Coord x, Coord y)
 {
   if (!ghidgui)
     return 0;
@@ -1239,11 +1165,18 @@ PCBChanged (int argc, char **argv, int x, int y)
 
   if (!gport->pixmap)
     return 0;
+
+  if (ghidgui->route_style_selector)
+    {
+      ghid_route_style_selector_empty
+        (GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector));
+      make_route_style_buttons
+        (GHID_ROUTE_STYLE_SELECTOR (ghidgui->route_style_selector));
+    }
   RouteStylesChanged (0, NULL, 0, 0);
-  ghid_port_ranges_scale (TRUE);
-  ghid_port_ranges_pan (0, 0, FALSE);
-  ghid_port_ranges_zoom (0);
-  ghid_port_ranges_changed ();
+
+  ghid_port_ranges_scale ();
+  ghid_zoom_view_fit ();
   ghid_sync_with_new_layout ();
   return 0;
 }
@@ -1251,7 +1184,7 @@ PCBChanged (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------------- */
 
 static int
-LayerGroupsChanged (int argc, char **argv, int x, int y)
+LayerGroupsChanged (int argc, char **argv, Coord x, Coord y)
 {
   printf (_("LayerGroupsChanged -- not implemented\n"));
   return 0;
@@ -1260,7 +1193,7 @@ LayerGroupsChanged (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------------- */
 
 static int
-LibraryChanged (int argc, char **argv, int x, int y)
+LibraryChanged (int argc, char **argv, Coord x, Coord y)
 {
   /* No need to show the library window every time it changes...
    *  ghid_library_window_show (&ghid_port, FALSE);
@@ -1271,7 +1204,7 @@ LibraryChanged (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------------- */
 
 static int
-Command (int argc, char **argv, int x, int y)
+Command (int argc, char **argv, Coord x, Coord y)
 {
   ghid_handle_user_command (TRUE);
   return 0;
@@ -1280,7 +1213,7 @@ Command (int argc, char **argv, int x, int y)
 /* ---------------------------------------------------------------------- */
 
 static int
-Load (int argc, char **argv, int x, int y)
+Load (int argc, char **argv, Coord x, Coord y)
 {
   char *function;
   char *name = NULL;
@@ -1354,7 +1287,7 @@ called with that filename.
 %end-doc */
 
 static int
-Save (int argc, char **argv, int x, int y)
+Save (int argc, char **argv, Coord x, Coord y)
 {
   char *function;
   char *name;
@@ -1382,23 +1315,6 @@ Save (int argc, char **argv, int x, int y)
   
   if (name)
     {
-      FILE *exist;
-      exist = fopen (name, "r");
-      if (exist)
-	{
-	  fclose (exist);
-	  if (ghid_dialog_confirm (_("File exists!  Ok to overwrite?"), NULL, NULL))
-	    {
-	      if (Settings.verbose)
-		fprintf (stderr, _("Overwriting %s\n"), name);
-	    }
-	  else
-	    {
-	      g_free (name);
-	      return 1;
-	    }
-	}
-      
       if (Settings.verbose)
 	fprintf (stderr, "%s:  Calling SaveTo(%s, %s)\n", 
 		 __FUNCTION__, function, name);
@@ -1470,85 +1386,48 @@ side'' of the board.
 
 
 static int
-SwapSides (int argc, char **argv, int x, int y)
+SwapSides (int argc, char **argv, Coord x, Coord y)
 {
-  gint flipd;
-  int do_flip_x = 0;
-  int do_flip_y = 0;
+  int active_group = GetLayerGroupNumberByNumber (LayerStack[0]);
   int comp_group = GetLayerGroupNumberByNumber (component_silk_layer);
   int solder_group = GetLayerGroupNumberByNumber (solder_silk_layer);
-  int active_group = GetLayerGroupNumberByNumber (LayerStack[0]);
-  int comp_showing =
-    PCB->Data->Layer[PCB->LayerGroups.Entries[comp_group][0]].On;
-  int solder_showing =
-    PCB->Data->Layer[PCB->LayerGroups.Entries[solder_group][0]].On;
-
+  bool comp_on = LAYER_PTR (PCB->LayerGroups.Entries[comp_group][0])->On;
+  bool solder_on = LAYER_PTR (PCB->LayerGroups.Entries[solder_group][0])->On;
 
   if (argc > 0)
     {
       switch (argv[0][0]) {
-      case 'h':
-      case 'H':
-	ghid_flip_x = ! ghid_flip_x;
-	do_flip_x = 1;
-	break;
-      case 'v':
-      case 'V':
-	ghid_flip_y = ! ghid_flip_y;
-	do_flip_y = 1;
-	break;
-      case 'r':
-      case 'R':
-	ghid_flip_x = ! ghid_flip_x;
-	ghid_flip_y = ! ghid_flip_y;
-	do_flip_x = 1;
-	do_flip_y = 1;
-	break;
-      default:
-	return 1;
+        case 'h':
+        case 'H':
+          ghid_flip_view (gport->pcb_x, gport->pcb_y, true, false);
+          break;
+        case 'v':
+        case 'V':
+          ghid_flip_view (gport->pcb_x, gport->pcb_y, false, true);
+          break;
+        case 'r':
+        case 'R':
+          ghid_flip_view (gport->pcb_x, gport->pcb_y, true, true);
+          Settings.ShowSolderSide = !Settings.ShowSolderSide; /* Swapped back below */
+          break;
+        default:
+          return 1;
       }
-      /* SwapSides will swap this */
-      Settings.ShowSolderSide = (ghid_flip_x == ghid_flip_y);
     }
 
   Settings.ShowSolderSide = !Settings.ShowSolderSide;
-  if (Settings.ShowSolderSide)
+
+  if ((active_group == comp_group   && comp_on   && !solder_on) ||
+      (active_group == solder_group && solder_on && !comp_on))
     {
-      if (active_group == comp_group && comp_showing && !solder_showing)
-	{
-	  ChangeGroupVisibility (PCB->LayerGroups.Entries[comp_group][0], 0,
-				 0);
-	  ChangeGroupVisibility (PCB->LayerGroups.Entries[solder_group][0], 1,
-				 1);
-	}
-    }
-  else
-    {
-      if (active_group == solder_group && solder_showing && !comp_showing)
-	{
-	  ChangeGroupVisibility (PCB->LayerGroups.Entries[solder_group][0], 0,
-				 0);
-	  ChangeGroupVisibility (PCB->LayerGroups.Entries[comp_group][0], 1,
-				 1);
-	}
+      bool new_solder_vis = Settings.ShowSolderSide;
+
+      ChangeGroupVisibility (PCB->LayerGroups.Entries[comp_group][0],
+                             !new_solder_vis, !new_solder_vis);
+      ChangeGroupVisibility (PCB->LayerGroups.Entries[solder_group][0],
+                             new_solder_vis, new_solder_vis);
     }
 
-  /* Update coordinates so that the current location stays where it was on the
-     other side; we need to do this since the actual flip center is the
-     center of the board while the user expect the center would be the current
-     location */
-  if (do_flip_x)
-    {
-	flipd = PCB->MaxWidth / 2 - gport->view_x;
-	ghid_port_ranges_pan (2 * flipd, 0, TRUE);
-    }
-  if (do_flip_y)
-    {
-	flipd = PCB->MaxHeight / 2 - gport->view_y;
-	ghid_port_ranges_pan (0, 2 * flipd, TRUE);
-    }
-
-  ghid_invalidate_all ();
   return 0;
 }
 
@@ -1568,7 +1447,7 @@ options, and print the layout.
 %end-doc */
 
 static int
-Print (int argc, char **argv, int x, int y)
+Print (int argc, char **argv, Coord x, Coord y)
 {
   HID **hids;
   int i;
@@ -1626,7 +1505,7 @@ the measurements in, so that future printouts will be more precise.
 %end-doc */
 
 static int
-PrintCalibrate (int argc, char **argv, int x, int y)
+PrintCalibrate (int argc, char **argv, Coord x, Coord y)
 {
   HID *printer = hid_find_printer ();
   printer->calibrate (0.0, 0.0);
@@ -1644,7 +1523,7 @@ PrintCalibrate (int argc, char **argv, int x, int y)
 /* ------------------------------------------------------------ */
 
 static int
-Export (int argc, char **argv, int x, int y)
+Export (int argc, char **argv, Coord x, Coord y)
 {
 
   /* check if layout is empty */
@@ -1661,26 +1540,21 @@ Export (int argc, char **argv, int x, int y)
 /* ------------------------------------------------------------ */
 
 static int
-Benchmark (int argc, char **argv, int x, int y)
+Benchmark (int argc, char **argv, Coord x, Coord y)
 {
   int i = 0;
   time_t start, end;
-  BoxType region;
   GdkDisplay *display;
 
   display = gdk_drawable_get_display (gport->drawable);
-
-  region.X1 = 0;
-  region.Y1 = 0;
-  region.X2 = PCB->MaxWidth;
-  region.Y2 = PCB->MaxHeight;
 
   gdk_display_sync (display);
   time (&start);
   do
     {
       ghid_invalidate_all ();
-      gdk_window_process_updates (gport->drawing_area->window, FALSE);
+      gdk_window_process_updates (gtk_widget_get_window (gport->drawing_area),
+                                  FALSE);
       time (&end);
       i++;
     }
@@ -1707,55 +1581,39 @@ currently within the window already.
 %end-doc */
 
 static int
-Center(int argc, char **argv, int x, int y)
+Center(int argc, char **argv, Coord pcb_x, Coord pcb_y)
 {
-  int x0, y0, w2, h2;
   GdkDisplay *display;
   GdkScreen *screen;
-  int xofs, yofs;
+  int offset_x, offset_y;
+  int widget_x, widget_y;
+  int pointer_x, pointer_y;
 
   if (argc != 0)
     AFAIL (center);
 
-  x = GRIDFIT_X (SIDE_X (x), PCB->Grid);
-  y = GRIDFIT_Y (SIDE_Y (y), PCB->Grid);
+  /* Aim to put the given x, y PCB coordinates in the center of the widget */
+  widget_x = gport->width / 2;
+  widget_y = gport->height / 2;
 
-  w2 = gport->view_width / 2;
-  h2 = gport->view_height / 2;
-  x0 = x - w2;
-  y0 = y - h2;
+  ghid_pan_view_abs (pcb_x, pcb_y, widget_x, widget_y);
 
-  if (x0 < 0)
-    {
-      x0 = 0;
-      x = x0 + w2;
-    }
+  /* Now move the mouse pointer to the place where the board location
+   * actually ended up.
+   *
+   * XXX: Should only do this if we confirm we are inside our window?
+   */
 
-  if (y0 < 0)
-    {
-      y0 = 0;
-      y = y0 + h2;
-    }
+  ghid_pcb_to_event_coords (pcb_x, pcb_y, &widget_x, &widget_y);
+  gdk_window_get_origin (gtk_widget_get_window (gport->drawing_area),
+                         &offset_x, &offset_y);
 
-  gport->view_x0 = x0;
-  gport->view_y0 = y0;
-
-  ghid_pan_fixup ();
-
-  /* Move the pointer to the center of the window, but only if it's
-     currently within the window already.  Watch out for edges,
-     though.  */
+  pointer_x = offset_x + widget_x;
+  pointer_y = offset_y + widget_y;
 
   display = gdk_display_get_default ();
   screen = gdk_display_get_default_screen (display);
-
-  /*
-   * Figure out where the drawing area is on the screen because
-   * gdk_display_warp_pointer will warp relative to the whole display
-   * but the value we've been given is relative to your drawing area
-   */
-  gdk_window_get_origin (gport->drawing_area->window, &xofs, &yofs);
-  gdk_display_warp_pointer (display, screen, xofs + Vx (x), yofs + Vy (y));
+  gdk_display_warp_pointer (display, screen, pointer_x, pointer_y);
 
   return 0;
 }
@@ -1803,17 +1661,17 @@ The values are percentages of the board size.  Thus, a move of
 %end-doc */
 
 static int
-CursorAction(int argc, char **argv, int x, int y)
+CursorAction(int argc, char **argv, Coord x, Coord y)
 {
   UnitList extra_units_x = {
     { "grid",  PCB->Grid, 0 },
-    { "view",  gport->view_width, UNIT_PERCENT },
+    { "view",  gport->view.width, UNIT_PERCENT },
     { "board", PCB->MaxWidth, UNIT_PERCENT },
     { "", 0, 0 }
   };
   UnitList extra_units_y = {
     { "grid",  PCB->Grid, 0 },
-    { "view",  gport->view_height, UNIT_PERCENT },
+    { "view",  gport->view.height, UNIT_PERCENT },
     { "board", PCB->MaxHeight, UNIT_PERCENT },
     { "", 0, 0 }
   };
@@ -1831,10 +1689,10 @@ CursorAction(int argc, char **argv, int x, int y)
     AFAIL (cursor);
 
   dx = GetValueEx (argv[1], argv[3], NULL, extra_units_x, "");
-  if (ghid_flip_x)
+  if (gport->view.flip_x)
     dx = -dx;
   dy = GetValueEx (argv[2], argv[3], NULL, extra_units_y, "");
-  if (!ghid_flip_y)
+  if (!gport->view.flip_y)
     dy = -dy;
 
   EventMoveCrosshair (Crosshair.X + dx, Crosshair.Y + dy);
@@ -1885,7 +1743,7 @@ Open the DRC violations window.
 %end-doc */
 
 static int
-DoWindows (int argc, char **argv, int x, int y)
+DoWindows (int argc, char **argv, Coord x, Coord y)
 {
   char *a = argc == 1 ? argv[0] : (char *)"";
 
@@ -1942,14 +1800,19 @@ Sets the display units to millimeters.
 %end-doc */
 
 static int
-SetUnits (int argc, char **argv, int x, int y)
+SetUnits (int argc, char **argv, Coord x, Coord y)
 {
+  const Unit *new_unit;
   if (argc == 0)
     return 0;
-  if (strcmp (argv[0], "mil") == 0)
-    Settings.grid_units_mm = 0;
-  if (strcmp (argv[0], "mm") == 0)
-    Settings.grid_units_mm = 1;
+
+  new_unit = get_unit_struct (argv[0]);
+  if (new_unit != NULL && new_unit->allow != NO_PRINT)
+    {
+      Settings.grid_unit = new_unit;
+      Settings.increments = get_increments_struct (Settings.grid_unit->family);
+      AttributePut (PCB, "PCB::grid::unit", argv[0]);
+    }
 
   ghid_config_handle_units_changed ();
 
@@ -1982,7 +1845,7 @@ default is given, div=40.
 %end-doc */
 
 static int
-ScrollAction (int argc, char **argv, int x, int y)
+ScrollAction (int argc, char **argv, Coord x, Coord y)
 {
   gdouble dx = 0.0, dy = 0.0;
   int div = 40;
@@ -1997,21 +1860,17 @@ ScrollAction (int argc, char **argv, int x, int y)
     div = atoi(argv[1]);
 
   if (strcasecmp (argv[0], "up") == 0)
-    dy = -(ghid_port.height * gport->zoom / div);
+    dy = -gport->view.height / div;
   else if (strcasecmp (argv[0], "down") == 0)
-    dy = ghid_port.height * gport->zoom / div;
+    dy = gport->view.height / div;
   else if (strcasecmp (argv[0], "right") == 0)
-    dx = ghid_port.width * gport->zoom / div;
+    dx = gport->view.width / div;
   else if (strcasecmp (argv[0], "left") == 0)
-    dx = -(ghid_port.width * gport->zoom / div);
+    dx = -gport->view.width / div;
   else
     AFAIL (scroll);
 
-  notify_crosshair_change (false);
-  ghid_port_ranges_pan (dx, dy, TRUE);
-  MoveCrosshairRelative (dx, dy);
-  AdjustAttachedObjects ();
-  notify_crosshair_change (true);
+  ghid_pan_view_rel (dx, dy);
 
   return 0;
 }
@@ -2027,15 +1886,13 @@ N_("Start or stop panning (Mode = 1 to start, 0 to stop)\n"
 /* %start-doc actions Pan
 
 Start or stop panning.  To start call with Mode = 1, to stop call with
-Mode = 0.  If the Mode is turned on and off with the cross hairs at
-the same coordinates, the auto pan mode is toggled.
+Mode = 0.
 
 %end-doc */
 
 static int
-PanAction (int argc, char **argv, int x, int y)
+PanAction (int argc, char **argv, Coord x, Coord y)
 {
-  static int on_x, on_y;
   int mode;
 
   if (!ghidgui)
@@ -2055,18 +1912,6 @@ PanAction (int argc, char **argv, int x, int y)
 
   gport->panning = mode;
 
-  if (mode == 1)
-    {
-      on_x = x;
-      on_y = y;
-    }
-  else if (x == on_x && y == on_y)
-    {
-      notify_crosshair_change (false);
-      ghidgui->auto_pan_on = !ghidgui->auto_pan_on;
-      notify_crosshair_change (true);
-    }
-
   return 0;
 }
 
@@ -2083,39 +1928,21 @@ N_("Bring up the popup menu specified by @code{MenuName}.\n"
 
 This just pops up the specified menu.  The menu must have been defined
 as a named subresource of the Popups resource in the menu resource
-file.  If called as a response to a mouse button click, the mouse 
-button number must be specified as the second argument.  
+file. The second, optional (and ignored) argument represents the mouse
+button number which is triggering the popup.
 
 %end-doc */
 
 
 static int
-Popup (int argc, char **argv, int x, int y)
+Popup (int argc, char **argv, Coord x, Coord y)
 {
-  GtkWidget *menu;
-  char *element;
-  guint button;
+  GtkMenu *menu;
 
   if (argc != 1 && argc != 2)
     AFAIL (popup);
 
-  if (argc == 1)
-    button = 0;
-  else
-    button = atoi (argv[1]);
-
-  if ( (element = (char *) malloc ( (strlen (argv[0]) + 2) * sizeof (char))) == NULL )
-    {
-      fprintf (stderr, _("Popup():  malloc failed\n"));
-      exit (1);
-    }
-
-  sprintf (element, "/%s", argv[0]);
-  printf (_("Loading popup \"%s\". Button = %u\n"), element, button);
-
-  menu = gtk_ui_manager_get_widget (ghidgui->ui_manager, element);
-  free (element);
-
+  menu = ghid_main_menu_get_popup (GHID_MAIN_MENU (ghidgui->menu_bar), argv[0]);
   if (! GTK_IS_MENU (menu))
     {
       Message (_("The specified popup menu \"%s\" has not been defined.\n"), argv[0]);
@@ -2125,14 +1952,14 @@ Popup (int argc, char **argv, int x, int y)
     {
       ghidgui->in_popup = TRUE;
       gtk_widget_grab_focus (ghid_port.drawing_area);
-      gtk_menu_popup (GTK_MENU (menu), NULL, NULL, NULL, NULL, 0, 
+      gtk_menu_popup (menu, NULL, NULL, NULL, NULL, 0, 
 		      gtk_get_current_event_time());
     }
   return 0;
 }
 /* ------------------------------------------------------------ */
 static const char importgui_syntax[] =
-"Popup(MenuName, [Button])";
+"ImportGUI()";
 
 static const char importgui_help[] =
 N_("Asks user which schematics to import into PCB.\n");
@@ -2145,27 +1972,40 @@ Asks user which schematics to import into PCB.
 
 
 static int
-ImportGUI (int argc, char **argv, int x, int y)
+ImportGUI (int argc, char **argv, Coord x, Coord y)
 {
-    char *name = NULL;
+    GSList *names = NULL;
+    gchar *name = NULL;
+    gchar sname[128];
     static gchar *current_layout_dir = NULL;
     static int I_am_recursing = 0; 
-    int rv;
+    int rv, nsources;
 
     if (I_am_recursing)
 	return 1;
 
 
-    name = ghid_dialog_file_select_open (_("Load schematics"),
-					 &current_layout_dir,
-					 Settings.FilePath);
+    names = ghid_dialog_file_select_multiple (_("Load schematics"),
+					      &current_layout_dir,
+					      Settings.FilePath);
+
+    nsources = 0;
+    while (names != NULL)
+      {
+        name = names->data;
 
 #ifdef DEBUG
-    printf("File selected = %s\n", name);
+        printf("File selected = %s\n", name);
 #endif
 
-    AttributePut (PCB, "import::src0", name);
-    free (name);
+        sprintf (sname, "import::src%d", nsources);
+        AttributePut (PCB, sname, name);
+
+        g_free (name);
+        nsources++;
+        names = g_slist_next (names);
+      }
+    g_slist_free (names);
 
     I_am_recursing = 1;
     rv = hid_action ("Import");
@@ -2176,7 +2016,7 @@ ImportGUI (int argc, char **argv, int x, int y)
 
 /* ------------------------------------------------------------ */
 static int
-Busy (int argc, char **argv, int x, int y)
+Busy (int argc, char **argv, Coord x, Coord y)
 {
   ghid_watch_cursor ();
   return 0;
@@ -2196,7 +2036,7 @@ HID_Action ghid_main_action_list[] = {
   {"LayerGroupsChanged", 0, LayerGroupsChanged},
   {"LibraryChanged", 0, LibraryChanged},
   {"Load", 0, Load},
-  {"Pan", N_("Click on a place to pan"), PanAction, pan_help, pan_syntax},
+  {"Pan", 0, PanAction, pan_help, pan_syntax},
   {"PCBChanged", 0, PCBChanged},
   {"PointCursor", 0, PointCursor},
   {"Popup", 0, Popup, popup_help, popup_syntax},
@@ -2217,19 +2057,20 @@ REGISTER_ACTIONS (ghid_main_action_list)
 
 static int
 flag_flipx (int x)
-{ 
-  return ghid_flip_x;
-} 
-static int  
+{
+  return gport->view.flip_x;
+}
+
+static int
 flag_flipy (int x)
-{ 
-  return ghid_flip_y;
-} 
+{
+  return gport->view.flip_y;
+}
 
 HID_Flag ghid_main_flag_list[] = {
   {"flip_x", flag_flipx, 0},
   {"flip_y", flag_flipy, 0}
-};  
+};
 
 REGISTER_FLAGS (ghid_main_flag_list)
 
@@ -2253,18 +2094,35 @@ hid_gtk_init ()
 #ifdef WIN32
   char * tmps;
   char * share_dir;
+  char *loader_cache;
+  FILE *loader_file;
 #endif
 
 #ifdef WIN32
   tmps = g_win32_get_package_installation_directory (PACKAGE "-" VERSION, NULL);
 #define REST_OF_PATH G_DIR_SEPARATOR_S "share" G_DIR_SEPARATOR_S PACKAGE
+#define REST_OF_CACHE G_DIR_SEPARATOR_S "loaders.cache"
   share_dir = (char *) malloc(strlen(tmps) + 
 			  strlen(REST_OF_PATH) +
 			  1);
   sprintf (share_dir, "%s%s", tmps, REST_OF_PATH);
+
+  /* Point to our gdk-pixbuf loader cache.  */
+  loader_cache = (char *) malloc (strlen (bindir) +
+				  strlen (REST_OF_CACHE) +
+				  1);
+  sprintf (loader_cache, "%s%s", bindir, REST_OF_CACHE);
+  loader_file = fopen (loader_cache, "r");
+  if (loader_file)
+    {
+      fclose (loader_file);
+      g_setenv ("GDK_PIXBUF_MODULE_FILE", loader_cache, TRUE);
+    }
+
   free (tmps);
 #undef REST_OF_PATH
   printf ("\"Share\" installation path is \"%s\"\n", share_dir);
+  free (share_dir);
 #endif
 
   memset (&ghid_hid, 0, sizeof (HID));
@@ -2330,6 +2188,9 @@ hid_gtk_init ()
   ghid_hid.request_debug_draw       = ghid_request_debug_draw;
   ghid_hid.flush_debug_draw         = ghid_flush_debug_draw;
   ghid_hid.finish_debug_draw        = ghid_finish_debug_draw;
+
+  ghid_hid.notify_save_pcb          = ghid_notify_save_pcb;
+  ghid_hid.notify_filename_changed  = ghid_notify_filename_changed;
 
   hid_register_hid (&ghid_hid);
 #include "gtk_lists.h"

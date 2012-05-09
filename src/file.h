@@ -27,8 +27,8 @@
 /* prototypes for file routines
  */
 
-#ifndef	__FILE_INCLUDED__
-#define	__FILE_INCLUDED__
+#ifndef	PCB_FILE_H
+#define	PCB_FILE_H
 
 #include <stdio.h>		/* needed to define 'FILE *' */
 #include "global.h"
@@ -37,6 +37,7 @@ FILE *CheckAndOpenFile (char *, bool, bool, bool *, bool *);
 FILE *OpenConnectionDataFile (void);
 int SavePCB (char *);
 int LoadPCB (char *);
+int RevertPCB (void);
 void EnableAutosave (void);
 void Backup (void);
 void SaveInTMP (void);
@@ -61,7 +62,7 @@ void sort_netlist (void);
 int PCBFileVersionNeeded (void);
 
 /* This is the version we support.  */
-#define PCB_FILE_VERSION 20100606
+#define PCB_FILE_VERSION 20110603
 
 
 #ifndef HAS_ATEXIT

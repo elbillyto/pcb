@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* common identifiers
  */
 
-#ifndef	__DATA_INCLUDED__
-#define	__DATA_INCLUDED__
+#ifndef	PCB_DATA_H
+#define	PCB_DATA_H
 
 #include "global.h"
 
@@ -44,7 +43,7 @@ extern MarkType Marked;
 
 extern OutputType Output;
 
-extern PCBTypePtr PCB;
+extern PCBType *PCB;
 
 #define max_group (PCB->Data->LayerN)
 #define max_copper_layer (PCB->Data->LayerN)

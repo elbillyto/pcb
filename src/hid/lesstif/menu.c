@@ -1,5 +1,3 @@
-//* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -16,6 +14,7 @@
 #include "data.h"
 #include "error.h"
 #include "misc.h"
+#include "pcb-printf.h"
 
 #include "hid.h"
 #include "../hidint.h"
@@ -29,8 +28,6 @@
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
-
-RCSID ("$Id$");
 
 #ifndef R_OK
 /* Common value for systems that don't define it.  */
@@ -59,7 +56,7 @@ Prompts the user for a coordinate, if one is not already selected.
 %end-doc */
 
 static int
-GetXY (int argc, char **argv, int x, int y)
+GetXY (int argc, char **argv, Coord x, Coord y)
 {
   return 0;
 }
@@ -92,13 +89,13 @@ on one.
 %end-doc */
 
 static int
-Debug (int argc, char **argv, int x, int y)
+Debug (int argc, char **argv, Coord x, Coord y)
 {
   int i;
   printf ("Debug:");
   for (i = 0; i < argc; i++)
     printf (" [%d] `%s'", i, argv[i]);
-  printf (" x,y %d,%d\n", x, y);
+  pcb_printf (" x,y %$mD\n", x, y);
   return 0;
 }
 
@@ -116,7 +113,7 @@ passed a 1, does nothing but pretends to fail.
 %end-doc */
 
 static int
-Return (int argc, char **argv, int x, int y)
+Return (int argc, char **argv, Coord x, Coord y)
 {
   return atoi (argv[0]);
 }
@@ -141,7 +138,7 @@ pcb --action-string DumpKeys
 
 static int do_dump_keys = 0;
 static int
-DumpKeys (int argc, char **argv, int x, int y)
+DumpKeys (int argc, char **argv, Coord x, Coord y)
 {
   do_dump_keys = 1;
   return 0;
@@ -173,7 +170,7 @@ static int bg_color;
 extern Widget lesstif_m_layer;
 
 static int
-LayersChanged (int argc, char **argv, int x, int y)
+LayersChanged (int argc, char **argv, Coord x, Coord y)
 {
   int l, i, set;
   char *name;
@@ -249,7 +246,7 @@ LayersChanged (int argc, char **argv, int x, int y)
 	  n = 0;
 	  if (i < MAX_LAYER && PCB->Data->Layer[i].Name)
 	    {
-	      XmString s = XmStringCreateLocalized (PCB->Data->Layer[i].Name);
+	      XmString s = XmStringCreatePCB (PCB->Data->Layer[i].Name);
 	      stdarg (XmNlabelString, s);
 	    }
 	  if (!lb->is_pick)
@@ -297,7 +294,7 @@ LayersChanged (int argc, char **argv, int x, int y)
       n = 0;
       stdarg (XmNbackground, fg_colors[current_layer]);
       stdarg (XmNforeground, bg_color);
-      stdarg (XmNlabelString, XmStringCreateLocalized (name));
+      stdarg (XmNlabelString, XmStringCreatePCB (name));
       XtSetValues (lesstif_m_layer, args, n);
     }
 
@@ -414,7 +411,7 @@ layerpick_button_callback (Widget w, int layer,
   n = 0;
   stdarg (XmNbackground, fg_colors[layer]);
   stdarg (XmNforeground, bg_color);
-  stdarg (XmNlabelString, XmStringCreateLocalized (name));
+  stdarg (XmNlabelString, XmStringCreatePCB (name));
   XtSetValues (lesstif_m_layer, args, n);
   lesstif_invalidate_all ();
 }
@@ -433,16 +430,22 @@ visible if it is not already visible
 %end-doc */
 
 static int
-SelectLayer (int argc, char **argv, int x, int y)
+SelectLayer (int argc, char **argv, Coord x, Coord y)
 {
-  int newl;
+  int i;
+  int newl = -1;
   if (argc == 0)
     return 1;
+
+  for (i = 0; i < max_copper_layer; ++i)
+    if (strcasecmp (argv[0], PCB->Data->Layer[i].Name) == 0)
+      newl = i;
+
   if (strcasecmp (argv[0], "silk") == 0)
     newl = LB_SILK;
   else if (strcasecmp (argv[0], "rats") == 0)
     newl = LB_RATS;
-  else
+  else if (newl == -1)
     newl = atoi (argv[0]) - 1;
   layerpick_button_callback (0, newl, 0);
   return 0;
@@ -470,7 +473,7 @@ the same as a special layer, the layer is chosen over the special layer.
 %end-doc */
 
 static int
-ToggleView (int argc, char **argv, int x, int y)
+ToggleView (int argc, char **argv, Coord x, Coord y)
 {
   int i, l;
 
@@ -527,15 +530,18 @@ insert_layerview_buttons (Widget menu)
     {
       static char namestr[] = "Label ";
       char *name = namestr;
+      int accel_idx = i;
       Widget btn;
       name[5] = 'A' + i;
       switch (i)
 	{
 	case LB_SILK:
 	  name = "Silk";
+          accel_idx = max_copper_layer;
 	  break;
 	case LB_RATS:
 	  name = "Rat Lines";
+          accel_idx = max_copper_layer + 1;
 	  break;
 	case LB_PINS:
 	  name = "Pins/Pads";
@@ -551,22 +557,22 @@ insert_layerview_buttons (Widget menu)
 	  break;
 	}
       n = 0;
-      if (i < MAX_LAYER && i < 9)
+      if (accel_idx < 9)
 	{
 	  char buf[20], av[30];
 	  Resource *ar;
 	  XmString as;
-	  sprintf (buf, "Ctrl-%d", i + 1);
-	  as = XmStringCreateLocalized (buf);
+	  sprintf (buf, "Ctrl-%d", accel_idx + 1);
+	  as = XmStringCreatePCB (buf);
 	  stdarg (XmNacceleratorText, as);
 	  ar = resource_create (0);
 	  sprintf (av, "ToggleView(%d)", i + 1);
 	  resource_add_val (ar, 0, strdup (av), 0);
 	  resource_add_val (ar, 0, strdup (av), 0);
 	  ar->flags |= FLAG_V;
-	  sprintf (av, "Ctrl<Key>%d", i + 1);
+	  sprintf (av, "Ctrl<Key>%d", accel_idx + 1);
 	  note_accelerator (av, ar);
-	  stdarg (XmNmnemonic, i + '1');
+	  stdarg (XmNmnemonic, accel_idx + '1');
 	}
       btn = XmCreateToggleButton (menu, name, args, n);
       XtManageChild (btn);
@@ -599,46 +605,42 @@ insert_layerpick_buttons (Widget menu)
     {
       static char namestr[] = "Label ";
       char *name = namestr;
+      int accel_idx = i;
+      char buf[20], av[30];
       Widget btn;
       name[5] = 'A' + i;
       switch (i)
 	{
 	case LB_SILK:
 	  name = "Silk";
+          accel_idx = max_copper_layer;
+	  strcpy (av, "SelectLayer(Silk)");
 	  break;
 	case LB_RATS:
 	  name = "Rat Lines";
-	  break;
+          accel_idx = max_copper_layer + 1;
+          strcpy (av, "SelectLayer(Rats)");
+          break;
+        default:
+          sprintf (av, "SelectLayer(%d)", i + 1);
+          break;
 	}
       n = 0;
-      if (i < MAX_LAYER && i < 9)
-	{
-	  char buf[20], av[30];
+      if (accel_idx < 9)
+        {
 	  Resource *ar;
 	  XmString as;
-	  sprintf (buf, "%d", i + 1);
-	  as = XmStringCreateLocalized (buf);
-	  stdarg (XmNacceleratorText, as);
 	  ar = resource_create (0);
-	  switch (i)
-	    {
-	    case LB_SILK:
-	      strcpy (av, "SelectLayer(Silk)");
-	      break;
-	    case LB_RATS:
-	      strcpy (av, "SelectLayer(Rats)");
-	      break;
-	    default:
-	      sprintf (av, "SelectLayer(%d)", i + 1);
-	      break;
-	    }
 	  resource_add_val (ar, 0, strdup (av), 0);
 	  resource_add_val (ar, 0, strdup (av), 0);
 	  ar->flags |= FLAG_V;
-	  sprintf (av, "<Key>%d", i + 1);
+	  sprintf (buf, "%d", i + 1);
+	  as = XmStringCreatePCB (buf);
+	  stdarg (XmNacceleratorText, as);
+	  sprintf (av, "<Key>%d", accel_idx + 1);
 	  note_accelerator (av, ar);
-	  stdarg (XmNmnemonic, i + '1');
-	}
+	  stdarg (XmNmnemonic, accel_idx + '1');
+        }
       stdarg (XmNindicatorType, XmONE_OF_MANY);
       btn = XmCreateToggleButton (menu, name, args, n);
       XtManageChild (btn);
@@ -780,7 +782,7 @@ lesstif_button_event (Widget w, XEvent * e)
 void
 lesstif_get_xy (const char *message)
 {
-  XmString ls = XmStringCreateLocalized ((char *)message);
+  XmString ls = XmStringCreatePCB ((char *)message);
 
   XtManageChild (m_click);
   n = 0;
@@ -801,7 +803,7 @@ lesstif_get_xy (const char *message)
 }
 
 void
-lesstif_get_coords (const char *msg, int *px, int *py)
+lesstif_get_coords (const char *msg, Coord *px, Coord *py)
 {
   if (!have_xy && msg)
     lesstif_get_xy (msg);
@@ -837,7 +839,7 @@ callback (Widget w, Resource * node, XmPushButtonCallbackStruct * pbcs)
 	  if (p == aw)
 	    have_xy = 1;
 	}
-      //printf("have xy from %s: %d %d\n", XtName(aw), action_x, action_y);
+      //pcb_printf("have xy from %s: %$mD\n", XtName(aw), action_x, action_y);
     }
 
   lesstif_need_idle_proc ();
@@ -1140,6 +1142,7 @@ lesstif_key_event (XKeyEvent * e)
     case XK_Super_R:
     case XK_Hyper_L:
     case XK_Hyper_R:
+    case XK_ISO_Level3_Shift:
       return 1;
     }
 
@@ -1265,7 +1268,7 @@ add_resource_to_menu (Widget menu, Resource * node, XtCallbackProc callback)
 	  }
 	if ((r = resource_subres (node->v[i].subres, "a")))
 	  {
-	    XmString as = XmStringCreateLocalized (r->v[0].value);
+	    XmString as = XmStringCreatePCB (r->v[0].value);
 	    stdarg (XmNacceleratorText, as);
 	    //stdarg(XmNaccelerator, r->v[1].value);
 	    note_accelerator (r->v[1].value, node->v[i].subres);
@@ -1277,7 +1280,7 @@ add_resource_to_menu (Widget menu, Resource * node, XtCallbackProc callback)
 	      v = node->v[i].subres->v[j].value;
 	      break;
 	    }
-	stdarg (XmNlabelString, XmStringCreateLocalized (v));
+	stdarg (XmNlabelString, XmStringCreatePCB (v));
 	if (node->v[i].subres->flags & FLAG_S)
 	  {
 	    int nn = n;

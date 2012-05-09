@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -59,62 +57,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
-
-
-/* ---------------------------------------------------------------------------
- * toggle selection of pin
- * This SelectPin function was moved to here from the original netlist.c
- * as part of the gui code separation for the Gtk port. SelectPin() is
- * written by and is Copyright (C) 1998, 1999, 2000, 2001 harry eaton
- */
-void
-SelectPin (LibraryEntryTypePtr entry, bool toggle)
-{
-  ConnectionType conn;
-
-  if (SeekPad (entry, &conn, false))
-    {
-      switch (conn.type)
-	{
-	case PIN_TYPE:
-	  {
-	    PinTypePtr pin = (PinTypePtr) conn.ptr2;
-
-	    AddObjectToFlagUndoList (PIN_TYPE, conn.ptr1, conn.ptr2,
-				     conn.ptr2);
-	    if (toggle)
-	      {
-		TOGGLE_FLAG (SELECTEDFLAG, pin);
-		CenterDisplay (pin->X, pin->Y, false);
-	      }
-	    else
-	      SET_FLAG (SELECTEDFLAG, pin);
-	    DrawPin (pin);
-	    break;
-	  }
-	case PAD_TYPE:
-	  {
-	    PadTypePtr pad = (PadTypePtr) conn.ptr2;
-
-	    AddObjectToFlagUndoList (PAD_TYPE, conn.ptr1, conn.ptr2,
-				     conn.ptr2);
-	    if (toggle)
-	      {
-		TOGGLE_FLAG (SELECTEDFLAG, pad);
-		CenterDisplay (pad->Point1.X, pad->Point1.Y, false);
-	      }
-	    else
-	      SET_FLAG (SELECTEDFLAG, pad);
-	    DrawPad (pad);
-	    break;
-	  }
-	}
-    }
-}
-
-
 /* ---------------------------------------------------------------------------
  * toggles the selection of any kind of object
  * the different types are defined by search.h
@@ -123,28 +65,28 @@ bool
 SelectObject (void)
 {
   void *ptr1, *ptr2, *ptr3;
-  LayerTypePtr layer;
+  LayerType *layer;
   int type;
 
   bool changed = true;
 
   type = SearchScreen (Crosshair.X, Crosshair.Y, SELECT_TYPES,
 		       &ptr1, &ptr2, &ptr3);
-  if (type == NO_TYPE || TEST_FLAG (LOCKFLAG, (PinTypePtr) ptr2))
+  if (type == NO_TYPE || TEST_FLAG (LOCKFLAG, (PinType *) ptr2))
     return (false);
   switch (type)
     {
     case VIA_TYPE:
       AddObjectToFlagUndoList (VIA_TYPE, ptr1, ptr1, ptr1);
-      TOGGLE_FLAG (SELECTEDFLAG, (PinTypePtr) ptr1);
-      DrawVia ((PinTypePtr) ptr1);
+      TOGGLE_FLAG (SELECTEDFLAG, (PinType *) ptr1);
+      DrawVia ((PinType *) ptr1);
       break;
 
     case LINE_TYPE:
       {
-	LineType *line = (LineTypePtr) ptr2;
+	LineType *line = (LineType *) ptr2;
 
-	layer = (LayerTypePtr) ptr1;
+	layer = (LayerType *) ptr1;
 	AddObjectToFlagUndoList (LINE_TYPE, ptr1, ptr2, ptr2);
 	TOGGLE_FLAG (SELECTEDFLAG, line);
 	DrawLine (layer, line);
@@ -153,7 +95,7 @@ SelectObject (void)
 
     case RATLINE_TYPE:
       {
-	RatTypePtr rat = (RatTypePtr) ptr2;
+	RatType *rat = (RatType *) ptr2;
 
 	AddObjectToFlagUndoList (RATLINE_TYPE, ptr1, ptr1, ptr1);
 	TOGGLE_FLAG (SELECTEDFLAG, rat);
@@ -163,9 +105,9 @@ SelectObject (void)
 
     case ARC_TYPE:
       {
-	ArcType *arc = (ArcTypePtr) ptr2;
+	ArcType *arc = (ArcType *) ptr2;
 
-	layer = (LayerTypePtr) ptr1;
+	layer = (LayerType *) ptr1;
 	AddObjectToFlagUndoList (ARC_TYPE, ptr1, ptr2, ptr2);
 	TOGGLE_FLAG (SELECTEDFLAG, arc);
 	DrawArc (layer, arc);
@@ -174,9 +116,9 @@ SelectObject (void)
 
     case TEXT_TYPE:
       {
-	TextType *text = (TextTypePtr) ptr2;
+	TextType *text = (TextType *) ptr2;
 
-	layer = (LayerTypePtr) ptr1;
+	layer = (LayerType *) ptr1;
 	AddObjectToFlagUndoList (TEXT_TYPE, ptr1, ptr2, ptr2);
 	TOGGLE_FLAG (SELECTEDFLAG, text);
 	DrawText (layer, text);
@@ -185,9 +127,9 @@ SelectObject (void)
 
     case POLYGON_TYPE:
       {
-	PolygonType *poly = (PolygonTypePtr) ptr2;
+	PolygonType *poly = (PolygonType *) ptr2;
 
-	layer = (LayerTypePtr) ptr1;
+	layer = (LayerType *) ptr1;
 	AddObjectToFlagUndoList (POLYGON_TYPE, ptr1, ptr2, ptr2);
 	TOGGLE_FLAG (SELECTEDFLAG, poly);
 	DrawPolygon (layer, poly);
@@ -197,19 +139,19 @@ SelectObject (void)
 
     case PIN_TYPE:
       AddObjectToFlagUndoList (PIN_TYPE, ptr1, ptr2, ptr2);
-      TOGGLE_FLAG (SELECTEDFLAG, (PinTypePtr) ptr2);
-      DrawPin ((PinTypePtr) ptr2);
+      TOGGLE_FLAG (SELECTEDFLAG, (PinType *) ptr2);
+      DrawPin ((PinType *) ptr2);
       break;
 
     case PAD_TYPE:
       AddObjectToFlagUndoList (PAD_TYPE, ptr1, ptr2, ptr2);
-      TOGGLE_FLAG (SELECTEDFLAG, (PadTypePtr) ptr2);
-      DrawPad ((PadTypePtr) ptr2);
+      TOGGLE_FLAG (SELECTEDFLAG, (PadType *) ptr2);
+      DrawPad ((PadType *) ptr2);
       break;
 
     case ELEMENTNAME_TYPE:
       {
-	ElementTypePtr element = (ElementTypePtr) ptr1;
+	ElementType *element = (ElementType *) ptr1;
 
 	/* select all names of the element */
 	ELEMENTTEXT_LOOP (element);
@@ -224,7 +166,7 @@ SelectObject (void)
 
     case ELEMENT_TYPE:
       {
-	ElementTypePtr element = (ElementTypePtr) ptr1;
+	ElementType *element = (ElementType *) ptr1;
 
 	/* select all pins and names of the element */
 	PIN_LOOP (element);
@@ -271,14 +213,14 @@ SelectObject (void)
  * returns true if the state of any object has changed
  */
 bool
-SelectBlock (BoxTypePtr Box, bool Flag)
+SelectBlock (BoxType *Box, bool Flag)
 {
   bool changed = false;
 
   if (PCB->RatOn || !Flag)
     RAT_LOOP (PCB->Data);
   {
-    if (LINE_IN_BOX ((LineTypePtr) line, Box) &&
+    if (LINE_IN_BOX ((LineType *) line, Box) &&
 	!TEST_FLAG (LOCKFLAG, line) && TEST_FLAG (SELECTEDFLAG, line) != Flag)
       {
 	AddObjectToFlagUndoList (RATLINE_TYPE, line, line, line);
@@ -496,71 +438,71 @@ SelectBlock (BoxTypePtr Box, bool Flag)
  * performs several operations on the passed object
  */
 void *
-ObjectOperation (ObjectFunctionTypePtr F,
+ObjectOperation (ObjectFunctionType *F,
 		 int Type, void *Ptr1, void *Ptr2, void *Ptr3)
 {
   switch (Type)
     {
     case LINE_TYPE:
       if (F->Line)
-	return (F->Line ((LayerTypePtr) Ptr1, (LineTypePtr) Ptr2));
+	return (F->Line ((LayerType *) Ptr1, (LineType *) Ptr2));
       break;
 
     case ARC_TYPE:
       if (F->Arc)
-	return (F->Arc ((LayerTypePtr) Ptr1, (ArcTypePtr) Ptr2));
+	return (F->Arc ((LayerType *) Ptr1, (ArcType *) Ptr2));
       break;
 
     case LINEPOINT_TYPE:
       if (F->LinePoint)
-	return (F->LinePoint ((LayerTypePtr) Ptr1, (LineTypePtr) Ptr2,
-			      (PointTypePtr) Ptr3));
+	return (F->LinePoint ((LayerType *) Ptr1, (LineType *) Ptr2,
+			      (PointType *) Ptr3));
       break;
 
     case TEXT_TYPE:
       if (F->Text)
-	return (F->Text ((LayerTypePtr) Ptr1, (TextTypePtr) Ptr2));
+	return (F->Text ((LayerType *) Ptr1, (TextType *) Ptr2));
       break;
 
     case POLYGON_TYPE:
       if (F->Polygon)
-	return (F->Polygon ((LayerTypePtr) Ptr1, (PolygonTypePtr) Ptr2));
+	return (F->Polygon ((LayerType *) Ptr1, (PolygonType *) Ptr2));
       break;
 
     case POLYGONPOINT_TYPE:
       if (F->Point)
-	return (F->Point ((LayerTypePtr) Ptr1, (PolygonTypePtr) Ptr2,
-			  (PointTypePtr) Ptr3));
+	return (F->Point ((LayerType *) Ptr1, (PolygonType *) Ptr2,
+			  (PointType *) Ptr3));
       break;
 
     case VIA_TYPE:
       if (F->Via)
-	return (F->Via ((PinTypePtr) Ptr1));
+	return (F->Via ((PinType *) Ptr1));
       break;
 
     case ELEMENT_TYPE:
       if (F->Element)
-	return (F->Element ((ElementTypePtr) Ptr1));
+	return (F->Element ((ElementType *) Ptr1));
       break;
 
     case PIN_TYPE:
       if (F->Pin)
-	return (F->Pin ((ElementTypePtr) Ptr1, (PinTypePtr) Ptr2));
+	return (F->Pin ((ElementType *) Ptr1, (PinType *) Ptr2));
       break;
 
     case PAD_TYPE:
       if (F->Pad)
-	return (F->Pad ((ElementTypePtr) Ptr1, (PadTypePtr) Ptr2));
+	return (F->Pad ((ElementType *) Ptr1, (PadType *) Ptr2));
       break;
 
     case ELEMENTNAME_TYPE:
       if (F->ElementName)
-	return (F->ElementName ((ElementTypePtr) Ptr1));
+	return (F->ElementName ((ElementType *) Ptr1));
       break;
 
     case RATLINE_TYPE:
       if (F->Rat)
-	return (F->Rat ((RatTypePtr) Ptr1));
+	return (F->Rat ((RatType *) Ptr1));
       break;
     }
   return (NULL);
@@ -573,7 +515,7 @@ ObjectOperation (ObjectFunctionTypePtr F,
  * returns true if anything has changed
  */
 bool
-SelectedOperation (ObjectFunctionTypePtr F, bool Reset, int type)
+SelectedOperation (ObjectFunctionType *F, bool Reset, int type)
 {
   bool changed = false;
 

@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes to change object properties
  */
 
-#ifndef	__CHANGE_INCLUDED__
-#define	__CHANGE_INCLUDED__
+#ifndef	PCB_CHANGE_H
+#define	PCB_CHANGE_H
 
 #include "global.h"
 
@@ -66,11 +65,11 @@
         (PIN_TYPE | VIA_TYPE | PAD_TYPE)
 
 bool ChangeLayoutName (char *);
-bool ChangeLayerName (LayerTypePtr, char *);
-bool ChangeSelectedSize (int, LocationType, bool);
-bool ChangeSelectedClearSize (int, LocationType, bool);
-bool ChangeSelected2ndSize (int, LocationType, bool);
-bool ChangeSelectedMaskSize (int, LocationType, bool);
+bool ChangeLayerName (LayerType *, char *);
+bool ChangeSelectedSize (int, Coord, bool);
+bool ChangeSelectedClearSize (int, Coord, bool);
+bool ChangeSelected2ndSize (int, Coord, bool);
+bool ChangeSelectedMaskSize (int, Coord, bool);
 bool ChangeSelectedJoin (int);
 bool SetSelectedJoin (int);
 bool ClrSelectedJoin (int);
@@ -84,16 +83,16 @@ bool ChangeSelectedOctagon (int);
 bool SetSelectedOctagon (int);
 bool ClrSelectedOctagon (int);
 bool ChangeSelectedElementSide (void);
-bool ChangeElementSide (ElementTypePtr, LocationType);
-bool ChangeHole (PinTypePtr);
-bool ChangePaste (PadTypePtr);
-bool ChangeObjectSize (int, void *, void *, void *, LocationType, bool);
+bool ChangeElementSide (ElementType *, Coord);
+bool ChangeHole (PinType *);
+bool ChangePaste (PadType *);
+bool ChangeObjectSize (int, void *, void *, void *, Coord, bool);
 bool ChangeObjectThermal (int, void *, void *, void *, int);
-bool ChangeObjectClearSize (int, void *, void *, void *, LocationType,
+bool ChangeObjectClearSize (int, void *, void *, void *, Coord,
 			       bool);
-bool ChangeObject2ndSize (int, void *, void *, void *, LocationType,
+bool ChangeObject2ndSize (int, void *, void *, void *, Coord,
 			     bool, bool);
-bool ChangeObjectMaskSize (int, void *, void *, void *, LocationType,
+bool ChangeObjectMaskSize (int, void *, void *, void *, Coord,
 			      bool);
 bool ChangeObjectJoin (int, void *, void *, void *);
 bool SetObjectJoin (int, void *, void *, void *);
@@ -106,12 +105,12 @@ bool SetObjectOctagon (int, void *, void *, void *);
 bool ClrObjectOctagon (int, void *, void *, void *);
 void *ChangeObjectName (int, void *, void *, void *, char *);
 void *QueryInputAndChangeObjectName (int, void *, void *, void *);
-void ChangePCBSize (BDimension, BDimension);
+void ChangePCBSize (Coord, Coord);
 
 /* Change the specified text on an element, either on the board (give
    PCB, PCB->Data) or in a buffer (give NULL, Buffer->Data).  The old
    string is returned, and must be properly freed by the caller.  */
-char *ChangeElementText (PCBType *pcb, DataType *data, ElementTypePtr Element,
+char *ChangeElementText (PCBType *pcb, DataType *data, ElementType *Element,
 			 int which, char *new_name);
 
 #endif

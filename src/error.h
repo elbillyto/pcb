@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for error and debug functions
  */
 
-#ifndef	__ERROR_INCLUDED__
-#define	__ERROR_INCLUDED__
+#ifndef	PCB_ERROR_H
+#define	PCB_ERROR_H
 
 
 #define	STATUS_OK		0

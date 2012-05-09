@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -58,35 +56,29 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
-
-
-
 /* ---------------------------------------------------------------------------
  * some local prototypes
  */
-static void *MoveElementName (ElementTypePtr);
-static void *MoveElement (ElementTypePtr);
-static void *MoveVia (PinTypePtr);
-static void *MoveLine (LayerTypePtr, LineTypePtr);
-static void *MoveArc (LayerTypePtr, ArcTypePtr);
-static void *MoveText (LayerTypePtr, TextTypePtr);
-static void *MovePolygon (LayerTypePtr, PolygonTypePtr);
-static void *MoveLinePoint (LayerTypePtr, LineTypePtr, PointTypePtr);
-static void *MovePolygonPoint (LayerTypePtr, PolygonTypePtr, PointTypePtr);
-static void *MoveLineToLayer (LayerTypePtr, LineTypePtr);
-static void *MoveArcToLayer (LayerTypePtr, ArcTypePtr);
-static void *MoveRatToLayer (RatTypePtr);
-static void *MoveTextToLayer (LayerTypePtr, TextTypePtr);
-static void *MovePolygonToLayer (LayerTypePtr, PolygonTypePtr);
+static void *MoveElementName (ElementType *);
+static void *MoveElement (ElementType *);
+static void *MoveVia (PinType *);
+static void *MoveLine (LayerType *, LineType *);
+static void *MoveArc (LayerType *, ArcType *);
+static void *MoveText (LayerType *, TextType *);
+static void *MovePolygon (LayerType *, PolygonType *);
+static void *MoveLinePoint (LayerType *, LineType *, PointType *);
+static void *MovePolygonPoint (LayerType *, PolygonType *, PointType *);
+static void *MoveLineToLayer (LayerType *, LineType *);
+static void *MoveArcToLayer (LayerType *, ArcType *);
+static void *MoveRatToLayer (RatType *);
+static void *MoveTextToLayer (LayerType *, TextType *);
+static void *MovePolygonToLayer (LayerType *, PolygonType *);
 
 /* ---------------------------------------------------------------------------
  * some local identifiers
  */
-static LocationType DeltaX,	/* used by local routines as offset */
-  DeltaY;
-static LayerTypePtr Dest;
+static Coord DeltaX, DeltaY;	/* used by local routines as offset */
+static LayerType *Dest;
 static bool MoreToCome;
 static ObjectFunctionType MoveFunctions = {
   MoveLine,
@@ -113,8 +105,8 @@ MoveLineToLayer,
  * moves a element by +-X and +-Y
  */
 void
-MoveElementLowLevel (DataTypePtr Data, ElementTypePtr Element,
-		     LocationType DX, LocationType DY)
+MoveElementLowLevel (DataType *Data, ElementType *Element,
+		     Coord DX, Coord DY)
 {
   if (Data)
     r_delete_entry (Data->element_tree, (BoxType *)Element);
@@ -178,7 +170,7 @@ MoveElementLowLevel (DataTypePtr Data, ElementTypePtr Element,
  * moves all names of an element to a new position
  */
 static void *
-MoveElementName (ElementTypePtr Element)
+MoveElementName (ElementType *Element)
 {
   if (PCB->ElementOn && (FRONT (Element) || PCB->InvisibleObjectsOn))
     {
@@ -214,7 +206,7 @@ MoveElementName (ElementTypePtr Element)
  * moves an element
  */
 static void *
-MoveElement (ElementTypePtr Element)
+MoveElement (ElementType *Element)
 {
   bool didDraw = false;
 
@@ -246,7 +238,7 @@ MoveElement (ElementTypePtr Element)
  * moves a via
  */
 static void *
-MoveVia (PinTypePtr Via)
+MoveVia (PinType *Via)
 {
   r_delete_entry (PCB->Data->via_tree, (BoxType *)Via);
   RestoreToPolygon (PCB->Data, VIA_TYPE, Via, Via);
@@ -267,7 +259,7 @@ MoveVia (PinTypePtr Via)
  * moves a line
  */
 static void *
-MoveLine (LayerTypePtr Layer, LineTypePtr Line)
+MoveLine (LayerType *Layer, LineType *Line)
 {
   if (Layer->On)
     EraseLine (Line);
@@ -288,7 +280,7 @@ MoveLine (LayerTypePtr Layer, LineTypePtr Line)
  * moves an arc
  */
 static void *
-MoveArc (LayerTypePtr Layer, ArcTypePtr Arc)
+MoveArc (LayerType *Layer, ArcType *Arc)
 {
   RestoreToPolygon (PCB->Data, ARC_TYPE, Layer, Arc);
   r_delete_entry (Layer->arc_tree, (BoxType *)Arc);
@@ -312,7 +304,7 @@ MoveArc (LayerTypePtr Layer, ArcTypePtr Arc)
  * moves a text object
  */
 static void *
-MoveText (LayerTypePtr Layer, TextTypePtr Text)
+MoveText (LayerType *Layer, TextType *Text)
 {
   RestoreToPolygon (PCB->Data, TEXT_TYPE, Layer, Text);
   r_delete_entry (Layer->text_tree, (BoxType *)Text);
@@ -334,8 +326,7 @@ MoveText (LayerTypePtr Layer, TextTypePtr Text)
  * low level routine to move a polygon
  */
 void
-MovePolygonLowLevel (PolygonTypePtr Polygon, LocationType DeltaX,
-		     LocationType DeltaY)
+MovePolygonLowLevel (PolygonType *Polygon, Coord DeltaX, Coord DeltaY)
 {
   POLYGONPOINT_LOOP (Polygon);
   {
@@ -349,7 +340,7 @@ MovePolygonLowLevel (PolygonTypePtr Polygon, LocationType DeltaX,
  * moves a polygon
  */
 static void *
-MovePolygon (LayerTypePtr Layer, PolygonTypePtr Polygon)
+MovePolygon (LayerType *Layer, PolygonType *Polygon)
 {
   if (Layer->On)
     {
@@ -371,7 +362,7 @@ MovePolygon (LayerTypePtr Layer, PolygonTypePtr Polygon)
  * moves one end of a line
  */
 static void *
-MoveLinePoint (LayerTypePtr Layer, LineTypePtr Line, PointTypePtr Point)
+MoveLinePoint (LayerType *Layer, LineType *Line, PointType *Point)
 {
   if (Layer)
     {
@@ -393,14 +384,14 @@ MoveLinePoint (LayerTypePtr Layer, LineTypePtr Line, PointTypePtr Point)
   else				/* must be a rat */
     {
       if (PCB->RatOn)
-	EraseRat ((RatTypePtr) Line);
+	EraseRat ((RatType *) Line);
       r_delete_entry (PCB->Data->rat_tree, &Line->BoundingBox);
       MOVE (Point->X, Point->Y, DeltaX, DeltaY);
       SetLineBoundingBox (Line);
       r_insert_entry (PCB->Data->rat_tree, &Line->BoundingBox, 0);
       if (PCB->RatOn)
 	{
-	  DrawRat ((RatTypePtr) Line);
+	  DrawRat ((RatType *) Line);
 	  Draw ();
 	}
       return (Line);
@@ -411,8 +402,8 @@ MoveLinePoint (LayerTypePtr Layer, LineTypePtr Line, PointTypePtr Point)
  * moves a polygon-point
  */
 static void *
-MovePolygonPoint (LayerTypePtr Layer, PolygonTypePtr Polygon,
-		  PointTypePtr Point)
+MovePolygonPoint (LayerType *Layer, PolygonType *Polygon,
+		  PointType *Point)
 {
   if (Layer->On)
     {
@@ -442,7 +433,9 @@ MoveLineToLayerLowLevel (LayerType *Source, LineType *line,
   r_delete_entry (Source->line_tree, (BoxType *)line);
 
   Source->Line = g_list_remove (Source->Line, line);
+  Source->LineN --;
   Destination->Line = g_list_append (Destination->Line, line);
+  Destination->LineN ++;
 
   if (!Destination->line_tree)
     Destination->line_tree = r_create_tree (NULL, 0, 0);
@@ -460,7 +453,9 @@ MoveArcToLayerLowLevel (LayerType *Source, ArcType *arc,
   r_delete_entry (Source->arc_tree, (BoxType *)arc);
 
   Source->Arc = g_list_remove (Source->Arc, arc);
+  Source->ArcN --;
   Destination->Arc = g_list_append (Destination->Arc, arc);
+  Destination->ArcN ++;
 
   if (!Destination->arc_tree)
     Destination->arc_tree = r_create_tree (NULL, 0, 0);
@@ -475,7 +470,7 @@ MoveArcToLayerLowLevel (LayerType *Source, ArcType *arc,
 static void *
 MoveArcToLayer (LayerType *Layer, ArcType *Arc)
 {
-  ArcTypePtr newone;
+  ArcType *newone;
 
   if (TEST_FLAG (LOCKFLAG, Arc))
     {
@@ -493,7 +488,7 @@ MoveArcToLayer (LayerType *Layer, ArcType *Arc)
   RestoreToPolygon (PCB->Data, ARC_TYPE, Layer, Arc);
   if (Layer->On)
     EraseArc (Arc);
-  newone = (ArcTypePtr)MoveArcToLayerLowLevel (Layer, Arc, Dest);
+  newone = (ArcType *)MoveArcToLayerLowLevel (Layer, Arc, Dest);
   ClearFromPolygon (PCB->Data, ARC_TYPE, Dest, Arc);
   if (Dest->On)
     DrawArc (Dest, newone);
@@ -507,9 +502,9 @@ MoveArcToLayer (LayerType *Layer, ArcType *Arc)
 static void *
 MoveRatToLayer (RatType *Rat)
 {
-  LineTypePtr newone;
-  //LocationType X1 = Rat->Point1.X, Y1 = Rat->Point1.Y;
-  //LocationType X1 = Rat->Point1.X, Y1 = Rat->Point1.Y;
+  LineType *newone;
+  //Coord X1 = Rat->Point1.X, Y1 = Rat->Point1.Y;
+  //Coord X1 = Rat->Point1.X, Y1 = Rat->Point1.Y;
   // if VIAFLAG
   //   if we're on a pin, add a thermal
   //   else make a via and a wire, but 0-length wire not good
@@ -538,7 +533,7 @@ MoveRatToLayer (RatType *Rat)
 
 struct via_info
 {
-  LocationType X, Y;
+  Coord X, Y;
   jmp_buf env;
 };
 
@@ -546,7 +541,7 @@ static int
 moveline_callback (const BoxType * b, void *cl)
 {
   struct via_info *i = (struct via_info *) cl;
-  PinTypePtr via;
+  PinType *via;
 
   if ((via =
        CreateNewVia (PCB->Data, i->X, i->Y,
@@ -565,7 +560,7 @@ MoveLineToLayer (LayerType *Layer, LineType *Line)
 {
   struct via_info info;
   BoxType sb;
-  LineTypePtr newone;
+  LineType *newone;
   void *ptr1, *ptr2, *ptr3;
 
   if (TEST_FLAG (LOCKFLAG, Line))
@@ -585,7 +580,7 @@ MoveLineToLayer (LayerType *Layer, LineType *Line)
   if (Layer->On)
     EraseLine (Line);
   RestoreToPolygon (PCB->Data, LINE_TYPE, Layer, Line);
-  newone = (LineTypePtr)MoveLineToLayerLowLevel (Layer, Line, Dest);
+  newone = (LineType *)MoveLineToLayerLowLevel (Layer, Line, Dest);
   Line = NULL;
   ClearFromPolygon (PCB->Data, LINE_TYPE, Dest, newone);
   if (Dest->On)
@@ -640,7 +635,9 @@ MoveTextToLayerLowLevel (LayerType *Source, TextType *text,
   r_delete_entry (Source->text_tree, (BoxType *)text);
 
   Source->Text = g_list_remove (Source->Text, text);
+  Source->TextN --;
   Destination->Text = g_list_append (Destination->Text, text);
+  Destination->TextN ++;
 
   if (GetLayerGroupNumberByNumber (solder_silk_layer) ==
       GetLayerGroupNumberByPointer (Destination))
@@ -693,7 +690,9 @@ MovePolygonToLayerLowLevel (LayerType *Source, PolygonType *polygon,
   r_delete_entry (Source->polygon_tree, (BoxType *)polygon);
 
   Source->Polygon = g_list_remove (Source->Polygon, polygon);
+  Source->PolygonN --;
   Destination->Polygon = g_list_append (Destination->Polygon, polygon);
+  Destination->PolygonN ++;
 
   if (!Destination->polygon_tree)
     Destination->polygon_tree = r_create_tree (NULL, 0, 0);
@@ -706,14 +705,14 @@ struct mptlc
 {
   Cardinal snum, dnum;
   int type;
-  PolygonTypePtr polygon;
+  PolygonType *polygon;
 } mptlc;
 
 int
 mptl_pin_callback (const BoxType *b, void *cl)
 {
   struct mptlc *d = (struct mptlc *) cl;
-  PinTypePtr pin = (PinTypePtr) b;
+  PinType *pin = (PinType *) b;
   if (!TEST_THERM (d->snum, pin) || !
 	IsPointInPolygon (pin->X, pin->Y, pin->Thickness + pin->Clearance + 2,
 			  d->polygon))
@@ -733,7 +732,7 @@ mptl_pin_callback (const BoxType *b, void *cl)
 static void *
 MovePolygonToLayer (LayerType *Layer, PolygonType *Polygon)
 {
-  PolygonTypePtr newone;
+  PolygonType *newone;
   struct mptlc d;
 
   if (TEST_FLAG (LOCKFLAG, Polygon))
@@ -769,8 +768,7 @@ MovePolygonToLayer (LayerType *Layer, PolygonType *Polygon)
  * not we don't bump the undo serial number
  */
 void *
-MoveObject (int Type, void *Ptr1, void *Ptr2, void *Ptr3,
-	    LocationType DX, LocationType DY)
+MoveObject (int Type, void *Ptr1, void *Ptr2, void *Ptr3, Coord DX, Coord DY)
 {
   void *result;
   /* setup offset */
@@ -787,16 +785,14 @@ MoveObject (int Type, void *Ptr1, void *Ptr2, void *Ptr3,
  */
 void *
 MoveObjectAndRubberband (int Type, void *Ptr1, void *Ptr2, void *Ptr3,
-			 LocationType DX, LocationType DY)
+			 Coord DX, Coord DY)
 {
-  RubberbandTypePtr ptr;
+  RubberbandType *ptr;
   void *ptr2;
 
   /* setup offset */
   DeltaX = DX;
   DeltaY = DY;
-  if (DX == 0 && DY == 0)
-    return (NULL);
 
   /* move all the lines... and reset the counter */
   ptr = Crosshair.AttachedObject.Rubberband;
@@ -804,13 +800,20 @@ MoveObjectAndRubberband (int Type, void *Ptr1, void *Ptr2, void *Ptr3,
     {
       /* first clear any marks that we made in the line flags */
       CLEAR_FLAG (RUBBERENDFLAG, ptr->Line);
-      AddObjectToMoveUndoList (LINEPOINT_TYPE,
-			       ptr->Layer, ptr->Line, ptr->MovedPoint, DX,
-			       DY);
-      MoveLinePoint (ptr->Layer, ptr->Line, ptr->MovedPoint);
+      /* only update undo list if an actual movement happened */
+      if (DX != 0 || DY != 0)
+        {
+          AddObjectToMoveUndoList (LINEPOINT_TYPE,
+                                   ptr->Layer, ptr->Line,
+                                   ptr->MovedPoint, DX, DY);
+          MoveLinePoint (ptr->Layer, ptr->Line, ptr->MovedPoint);
+        }
       Crosshair.AttachedObject.RubberbandN--;
       ptr++;
     }
+
+  if (DX == 0 && DY == 0)
+    return (NULL);
 
   AddObjectToMoveUndoList (Type, Ptr1, Ptr2, Ptr3, DX, DY);
   ptr2 = ObjectOperation (&MoveFunctions, Type, Ptr1, Ptr2, Ptr3);
@@ -824,7 +827,7 @@ MoveObjectAndRubberband (int Type, void *Ptr1, void *Ptr2, void *Ptr3,
  */
 void *
 MoveObjectToLayer (int Type, void *Ptr1, void *Ptr2, void *Ptr3,
-		   LayerTypePtr Target, bool enmasse)
+		   LayerType *Target, bool enmasse)
 {
   void *result;
 
@@ -841,7 +844,7 @@ MoveObjectToLayer (int Type, void *Ptr1, void *Ptr2, void *Ptr3,
  * positions
  */
 bool
-MoveSelectedObjectsToLayer (LayerTypePtr Target)
+MoveSelectedObjectsToLayer (LayerType *Target)
 {
   bool changed;
 
@@ -904,11 +907,32 @@ move_all_thermals (int old_index, int new_index)
   ENDALL_LOOP;
 }
 
+static int
+LastLayerInComponentGroup (int layer)
+{
+  int cgroup = GetLayerGroupNumberByNumber(max_group + COMPONENT_LAYER);
+  int lgroup = GetLayerGroupNumberByNumber(layer);
+  if (cgroup == lgroup
+      && PCB->LayerGroups.Number[lgroup] == 2)
+    return 1;
+  return 0;
+}
+
+static int
+LastLayerInSolderGroup (int layer)
+{
+  int sgroup = GetLayerGroupNumberByNumber(max_group + SOLDER_LAYER);
+  int lgroup = GetLayerGroupNumberByNumber(layer);
+  if (sgroup == lgroup
+      && PCB->LayerGroups.Number[lgroup] == 2)
+    return 1;
+  return 0;
+}
 
 int
 MoveLayer (int old_index, int new_index)
 {
-  int groups[MAX_LAYER + 2], l, g;
+  int group_of_layer[MAX_LAYER + 2], l, g, i;
   LayerType saved_layer;
   int saved_group;
 
@@ -930,13 +954,30 @@ MoveLayer (int old_index, int new_index)
   if (old_index == new_index)
     return 0;
 
+  if (new_index == -1
+      && LastLayerInComponentGroup (old_index))
+    {
+      gui->confirm_dialog ("You can't delete the last top-side layer\n", "Ok", NULL);
+      return 1;
+    }
+
+  if (new_index == -1
+      && LastLayerInSolderGroup (old_index))
+    {
+      gui->confirm_dialog ("You can't delete the last bottom-side layer\n", "Ok", NULL);
+      return 1;
+    }
+
+  for (l = 0; l < MAX_LAYER+2; l++)
+    group_of_layer[l] = -1;
+
   for (g = 0; g < MAX_LAYER; g++)
-    for (l = 0; l < PCB->LayerGroups.Number[g]; l++)
-      groups[PCB->LayerGroups.Entries[g][l]] = g;
+    for (i = 0; i < PCB->LayerGroups.Number[g]; i++)
+      group_of_layer[PCB->LayerGroups.Entries[g][i]] = g;
 
   if (old_index == -1)
     {
-      LayerTypePtr lp;
+      LayerType *lp;
       if (max_copper_layer == MAX_LAYER)
 	{
 	  Message ("No room for new layers\n");
@@ -946,10 +987,10 @@ MoveLayer (int old_index, int new_index)
       lp = &PCB->Data->Layer[new_index];
       memmove (&PCB->Data->Layer[new_index + 1],
 	       &PCB->Data->Layer[new_index],
-	       (max_copper_layer - new_index + 2) * sizeof (LayerType));
-      memmove (&groups[new_index + 1],
-	       &groups[new_index],
-	       (max_copper_layer - new_index + 2) * sizeof (int));
+	       (max_copper_layer + 2 - new_index) * sizeof (LayerType));
+      memmove (&group_of_layer[new_index + 1],
+	       &group_of_layer[new_index],
+	       (max_copper_layer + 2 - new_index) * sizeof (int));
       max_copper_layer++;
       memset (lp, 0, sizeof (LayerType));
       lp->On = 1;
@@ -966,11 +1007,11 @@ MoveLayer (int old_index, int new_index)
       /* Delete the layer at old_index */
       memmove (&PCB->Data->Layer[old_index],
 	       &PCB->Data->Layer[old_index + 1],
-	       (max_copper_layer - old_index + 2 - 1) * sizeof (LayerType));
-      memset (&PCB->Data->Layer[max_copper_layer + 1], 0, sizeof (LayerType));
-      memmove (&groups[old_index],
-	       &groups[old_index + 1],
-	       (max_copper_layer - old_index + 2 - 1) * sizeof (int));
+	       (max_copper_layer + 2 - old_index - 1) * sizeof (LayerType));
+      memset (&PCB->Data->Layer[max_copper_layer + 2 - 1], 0, sizeof (LayerType));
+      memmove (&group_of_layer[old_index],
+	       &group_of_layer[old_index + 1],
+	       (max_copper_layer + 2 - old_index - 1) * sizeof (int));
       for (l = 0; l < max_copper_layer; l++)
 	if (LayerStack[l] == old_index)
 	  memmove (LayerStack + l,
@@ -985,14 +1026,14 @@ MoveLayer (int old_index, int new_index)
     {
       /* Move an existing layer */
       memcpy (&saved_layer, &PCB->Data->Layer[old_index], sizeof (LayerType));
-      saved_group = groups[old_index];
+      saved_group = group_of_layer[old_index];
       if (old_index < new_index)
 	{
 	  memmove (&PCB->Data->Layer[old_index],
 		   &PCB->Data->Layer[old_index + 1],
 		   (new_index - old_index) * sizeof (LayerType));
-	  memmove (&groups[old_index],
-		   &groups[old_index + 1],
+	  memmove (&group_of_layer[old_index],
+		   &group_of_layer[old_index + 1],
 		   (new_index - old_index) * sizeof (int));
 	}
       else
@@ -1000,12 +1041,12 @@ MoveLayer (int old_index, int new_index)
 	  memmove (&PCB->Data->Layer[new_index + 1],
 		   &PCB->Data->Layer[new_index],
 		   (old_index - new_index) * sizeof (LayerType));
-	  memmove (&groups[new_index + 1],
-		   &groups[new_index],
+	  memmove (&group_of_layer[new_index + 1],
+		   &group_of_layer[new_index],
 		   (old_index - new_index) * sizeof (int));
 	}
       memcpy (&PCB->Data->Layer[new_index], &saved_layer, sizeof (LayerType));
-      groups[new_index] = saved_group;
+      group_of_layer[new_index] = saved_group;
     }
 
   move_all_thermals(old_index, new_index);
@@ -1014,21 +1055,25 @@ MoveLayer (int old_index, int new_index)
     PCB->LayerGroups.Number[g] = 0;
   for (l = 0; l < max_copper_layer + 2; l++)
     {
-      int i;
-      g = groups[l];
+      g = group_of_layer[l];
+
+      /* XXX: Should this ever happen? */
+      if (g < 0)
+        continue;
+
       i = PCB->LayerGroups.Number[g]++;
       PCB->LayerGroups.Entries[g][i] = l;
     }
 
-  for (g = 0; g < MAX_LAYER; g++)
-    if (PCB->LayerGroups.Number[g] == 0)
+  for (g = 1; g < MAX_LAYER; g++)
+    if (PCB->LayerGroups.Number[g - 1] == 0)
       {
-	memmove (&PCB->LayerGroups.Number[g],
-		 &PCB->LayerGroups.Number[g + 1],
-		 (MAX_LAYER - g - 1) * sizeof (PCB->LayerGroups.Number[g]));
-	memmove (&PCB->LayerGroups.Entries[g],
-		 &PCB->LayerGroups.Entries[g + 1],
-		 (MAX_LAYER - g - 1) * sizeof (PCB->LayerGroups.Entries[g]));
+	memmove (&PCB->LayerGroups.Number[g - 1],
+		 &PCB->LayerGroups.Number[g],
+		 (MAX_LAYER - g) * sizeof (PCB->LayerGroups.Number[g]));
+	memmove (&PCB->LayerGroups.Entries[g - 1],
+		 &PCB->LayerGroups.Entries[g],
+		 (MAX_LAYER - g) * sizeof (PCB->LayerGroups.Entries[g]));
       }
 
   hid_action ("LayersChanged");
@@ -1085,7 +1130,7 @@ Creates a new layer.
 %end-doc */
 
 int
-MoveLayerAction (int argc, char **argv, int x, int y)
+MoveLayerAction (int argc, char **argv, Coord x, Coord y)
 {
   int old_index, new_index;
   int new_top = -1;

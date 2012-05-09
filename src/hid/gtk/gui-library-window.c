@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -69,8 +67,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 static GtkWidget *library_window;
 
 #include "gui-pinout-preview.h"
@@ -93,8 +89,11 @@ static gint
 library_window_configure_event_cb (GtkWidget * widget, GdkEventConfigure * ev,
 				   gpointer data)
 {
-  ghidgui->library_window_width = widget->allocation.width;
-  ghidgui->library_window_height = widget->allocation.height;
+  GtkAllocation allocation;
+
+  gtk_widget_get_allocation (widget, &allocation);
+  ghidgui->library_window_width = allocation.width;
+  ghidgui->library_window_height = allocation.height;
   ghidgui->config_modified = TRUE;
   return FALSE;
 }
@@ -173,7 +172,7 @@ ghid_library_window_create (GHidPort * out)
 
   gtk_widget_realize (library_window);
   if (Settings.AutoPlace)
-    gtk_widget_set_uposition (GTK_WIDGET (library_window), 10, 10);
+    gtk_window_move (GTK_WINDOW (library_window), 10, 10);
 
   gtk_editable_select_region (GTK_EDITABLE
 			      (GHID_LIBRARY_WINDOW (library_window)->
@@ -364,7 +363,6 @@ static void
 library_window_callback_tree_selection_changed (GtkTreeSelection * selection,
 						gpointer user_data)
 {
-  GtkTreeView *view;
   GtkTreeModel *model;
   GtkTreeIter iter;
   GhidLibraryWindow *library_window = (GhidLibraryWindow *) user_data;
@@ -374,7 +372,6 @@ library_window_callback_tree_selection_changed (GtkTreeSelection * selection,
   if (!gtk_tree_selection_get_selected (selection, &model, &iter))
     return;
 
-  view = gtk_tree_selection_get_tree_view (selection);
   gtk_tree_model_get (model, &iter, MENU_ENTRY_COLUMN, &entry, -1);
 
   if (entry == NULL)
@@ -386,8 +383,11 @@ library_window_callback_tree_selection_changed (GtkTreeSelection * selection,
   if (entry->Template == (char *) -1)
     {
       if (LoadElementToBuffer (PASTEBUFFER, entry->AllocatedMemory, true))
-	SetMode (PASTEBUFFER_MODE);
-      goto out;
+        {
+          SetMode (PASTEBUFFER_MODE);
+          goto out;
+        }
+      return;
     }
 
   /* Otherwise, it's a m4 element and we need to create a string of
@@ -398,8 +398,14 @@ library_window_callback_tree_selection_changed (GtkTreeSelection * selection,
 			     EMPTY (entry->Value), EMPTY (entry->Package));
 
   if (LoadElementToBuffer (PASTEBUFFER, m4_args, false))
-    SetMode (PASTEBUFFER_MODE);
+    {
+      SetMode (PASTEBUFFER_MODE);
+      g_free (m4_args);
+      goto out;
+    }
+
   g_free (m4_args);
+  return;
 
 out:
 
@@ -473,10 +479,7 @@ library_window_callback_filter_entry_changed (GtkEditable * editable,
   sensitive =
     (g_ascii_strcasecmp (gtk_entry_get_text (library_window->entry_filter),
 			 "") != 0);
-  if (GTK_WIDGET_IS_SENSITIVE (button) != sensitive)
-    {
-      gtk_widget_set_sensitive (button, sensitive);
-    }
+  gtk_widget_set_sensitive (button, sensitive);
 
   /* Cancel any pending update of the footprint list filter */
   if (library_window->filter_timeout != 0)
@@ -784,7 +787,7 @@ library_window_constructor (GType type,
 {
   GObject *object;
   GhidLibraryWindow *library_window;
-
+  GtkWidget *content_area;
   GtkWidget *hpaned, *notebook;
   GtkWidget *libview;
   GtkWidget *preview;
@@ -805,7 +808,7 @@ library_window_constructor (GType type,
 		"modal", FALSE, "window-position", GTK_WIN_POS_NONE,
 		/* GtkDialog */
 		"has-separator", TRUE, NULL);
-  g_object_set (GTK_DIALOG (library_window)->vbox,
+  g_object_set (gtk_dialog_get_content_area (GTK_DIALOG (library_window)),
 		"homogeneous", FALSE, NULL);
 
   /* horizontal pane containing selection and preview */
@@ -852,9 +855,9 @@ library_window_constructor (GType type,
 
   gtk_paned_pack2 (GTK_PANED (hpaned), frame, FALSE, FALSE);
 
-  /* add the hpaned to the dialog vbox */
-  gtk_box_pack_start (GTK_BOX (GTK_DIALOG (library_window)->vbox), hpaned,
-		      TRUE, TRUE, 0);
+  /* add the hpaned to the dialog content area */
+  content_area = gtk_dialog_get_content_area (GTK_DIALOG (library_window));
+  gtk_box_pack_start (GTK_BOX (content_area), hpaned, TRUE, TRUE, 0);
   gtk_widget_show_all (hpaned);
 
 

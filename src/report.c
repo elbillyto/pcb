@@ -41,31 +41,39 @@
 #include "search.h"
 #include "misc.h"
 #include "mymem.h"
+#include "rats.h"
 #include "rtree.h"
 #include "strflags.h"
 #include "macro.h"
 #include "undo.h"
 #include "find.h"
 #include "draw.h"
+#include "pcb-printf.h"
+#ifdef HAVE_REGEX_H
+#include <regex.h>
+#endif
+
+#ifdef HAVE_REGCOMP
+#undef HAVE_RE_COMP
+#endif
+
+#if defined(HAVE_REGCOMP) || defined(HAVE_RE_COMP)
+#define USE_RE
+#endif
 
 #ifdef HAVE_LIBDMALLOC
 #include <dmalloc.h>
 #endif
 
-static double
-units(double value)
-{return (Settings.grid_units_mm ? COORD_TO_MM(value) : COORD_TO_MIL(value));}
-
-#define UNIT(value) units(value), (Settings.grid_units_mm ? "mm" : "mils")
+#define USER_UNITMASK (Settings.grid_unit->allow)
 
 static int
-ReportDrills (int argc, char **argv, int x, int y)
+ReportDrills (int argc, char **argv, Coord x, Coord y)
 {
-  DrillInfoTypePtr AllDrills;
+  DrillInfoType *AllDrills;
   Cardinal n;
   char *stringlist, *thestring;
   int total_drills = 0;
-  int prec = Settings.grid_units_mm? 4: 2;
 
   AllDrills = GetDrillInfo (PCB->Data);
   RoundDrillInfo (AllDrills, 100);
@@ -85,16 +93,16 @@ ReportDrills (int argc, char **argv, int x, int y)
   sprintf (stringlist,
 	   "There are %d different drill sizes used in this layout, %d holes total\n\n"
 	   "Drill Diam. (%s)\t# of Pins\t# of Vias\t# of Elements\t# Unplated\n",
-	   AllDrills->DrillN, total_drills,
-	   Settings.grid_units_mm? "mm": "mils");
+	   AllDrills->DrillN, total_drills, Settings.grid_unit->suffix);
   thestring = stringlist;
   while (*thestring != '\0')
     thestring++;
   for (n = 0; n < AllDrills->DrillN; n++)
     {
-      sprintf (thestring,
-	       "\t%.*f\t\t%d\t\t%d\t\t%d\t\t%d\n",
-	       prec, units (AllDrills->Drill[n].DrillSize),
+      pcb_sprintf (thestring,
+	       "%10m*\t\t%d\t\t%d\t\t%d\t\t%d\n",
+	       Settings.grid_unit->suffix,
+	       AllDrills->Drill[n].DrillSize,
 	       AllDrills->Drill[n].PinCount, AllDrills->Drill[n].ViaCount,
 	       AllDrills->Drill[n].ElementN,
 	       AllDrills->Drill[n].UnplatedCount);
@@ -122,10 +130,10 @@ This is a shortcut for @code{Report(Object)}.
 %end-doc */
 
 static int
-ReportDialog (int argc, char **argv, int x, int y)
+ReportDialog (int argc, char **argv, Coord x, Coord y)
 {
   void *ptr1, *ptr2, *ptr3;
-  int type, prec = Settings.grid_units_mm? 4: 2;
+  int type;
   char report[2048];
 
   type = SearchScreen (x, y, REPORT_TYPES, &ptr1, &ptr2, &ptr3);
@@ -137,7 +145,7 @@ ReportDialog (int argc, char **argv, int x, int y)
     {
     case VIA_TYPE:
       {
-	PinTypePtr via;
+	PinType *via;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
@@ -145,42 +153,39 @@ ReportDialog (int argc, char **argv, int x, int y)
 	    return 0;
 	  }
 #endif
-	via = (PinTypePtr) ptr2;
+	via = (PinType *) ptr2;
 	if (TEST_FLAG (HOLEFLAG, via))
-	  sprintf (&report[0], "VIA ID# %ld; Flags:%s\n"
-		   "(X,Y) = (%.*f, %.*f) %s.\n"
-		   "It is a pure hole of diameter %.*f %s.\n"
+	  pcb_sprintf (&report[0], "%m+VIA ID# %ld; Flags:%s\n"
+		   "(X,Y) = %$mD.\n"
+		   "It is a pure hole of diameter %$mS.\n"
 		   "Name = \"%s\"."
-		   "%s", via->ID, flags_to_string (via->Flags, VIA_TYPE),
-		   prec, units (via->X), prec, UNIT (via->Y),
-		   prec, UNIT (via->DrillingHole),
-		   EMPTY (via->Name), TEST_FLAG (LOCKFLAG,
-						 via) ? "It is LOCKED.\n" :
-		   "");
+		   "%s", USER_UNITMASK, via->ID, flags_to_string (via->Flags, VIA_TYPE),
+		   via->X, via->Y, via->DrillingHole, EMPTY (via->Name),
+		   TEST_FLAG (LOCKFLAG, via) ? "It is LOCKED.\n" : "");
 	else
-	  sprintf (&report[0], "VIA ID# %ld;  Flags:%s\n"
-		   "(X,Y) = (%.*f, %.*f) %s.\n"
-		   "Copper width = %0.*f %s. Drill width = %0.*f %s.\n"
-		   "Clearance width in polygons = %0.*f %s.\n"
-		   "Annulus = %0.*f %s.\n"
-		   "Solder mask hole = %0.*f %s (gap = %0.*f %s).\n"
+	  pcb_sprintf (&report[0], "%m+VIA ID# %ld;  Flags:%s\n"
+		   "(X,Y) = %$mD.\n"
+		   "Copper width = %$mS. Drill width = %$mS.\n"
+		   "Clearance width in polygons = %$mS.\n"
+		   "Annulus = %$mS.\n"
+		   "Solder mask hole = %$mS (gap = %$mS).\n"
 		   "Name = \"%s\"."
-		   "%s", via->ID, flags_to_string (via->Flags, VIA_TYPE),
-		   prec, units (via->X), prec, UNIT (via->Y),
-		   prec, UNIT (via->Thickness),
-		   prec, UNIT (via->DrillingHole),
-		   prec, UNIT (via->Clearance / 2.),
-		   prec, UNIT ((via->Thickness - via->DrillingHole)/2),
-		   prec, UNIT (via->Mask),
-		   prec, UNIT ((via->Mask - via->Thickness)/2),
+		   "%s", USER_UNITMASK, via->ID, flags_to_string (via->Flags, VIA_TYPE),
+		   via->X, via->Y,
+		   via->Thickness,
+		   via->DrillingHole,
+		   via->Clearance / 2,
+		   (via->Thickness - via->DrillingHole) / 2,
+		   via->Mask,
+		   (via->Mask - via->Thickness) / 2,
 		   EMPTY (via->Name), TEST_FLAG (LOCKFLAG, via) ?
 		   "It is LOCKED.\n" : "");
 	break;
       }
     case PIN_TYPE:
       {
-	PinTypePtr Pin;
-	ElementTypePtr element;
+	PinType *Pin;
+	ElementType *element;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
@@ -188,8 +193,8 @@ ReportDialog (int argc, char **argv, int x, int y)
 	    return 0;
 	  }
 #endif
-	Pin = (PinTypePtr) ptr2;
-	element = (ElementTypePtr) ptr1;
+	Pin = (PinType *) ptr2;
+	element = (ElementType *) ptr1;
 
 	PIN_LOOP (element);
 	{
@@ -198,33 +203,31 @@ ReportDialog (int argc, char **argv, int x, int y)
 	}
 	END_LOOP;
 	if (TEST_FLAG (HOLEFLAG, Pin))
-	  sprintf (&report[0], "PIN ID# %ld; Flags:%s\n"
-		   "(X,Y) = (%.*f, %.*f) %s.\n"
-		   "It is a mounting hole. Drill width = %0.*f %s.\n"
-		   "It is owned by element %s.\n"
-		   "%s", Pin->ID, flags_to_string (Pin->Flags, PIN_TYPE),
-		   prec, units (Pin->X), prec, UNIT (Pin->Y),
-		   prec, UNIT (Pin->DrillingHole),
+	  pcb_sprintf (&report[0], "%m+PIN ID# %ld; Flags:%s\n"
+		   "(X,Y) = %$mD.\n"
+		   "It is a mounting hole. Drill width = %$mS.\n"
+		   "It is owned by element %$mS.\n"
+		   "%s", USER_UNITMASK, Pin->ID, flags_to_string (Pin->Flags, PIN_TYPE),
+		   Pin->X, Pin->Y, Pin->DrillingHole,
 		   EMPTY (element->Name[1].TextString),
 		   TEST_FLAG (LOCKFLAG, Pin) ? "It is LOCKED.\n" : "");
 	else
-	  sprintf (&report[0],
-		   "PIN ID# %ld;  Flags:%s\n" "(X,Y) = (%.*f, %.*f) %s.\n"
-		   "Copper width = %0.*f %s. Drill width = %0.*f %s.\n"
-		   "Clearance width to Polygon = %0.*f %s.\n"
-		   "Annulus = %0.*f %s.\n"
-		   "Solder mask hole = %0.*f %s (gap = %0.*f %s).\n"
+	  pcb_sprintf (&report[0],
+		   "%m+PIN ID# %ld;  Flags:%s\n" "(X,Y) = %$mD.\n"
+		   "Copper width = %$mS. Drill width = %$mS.\n"
+		   "Clearance width to Polygon = %$mS.\n"
+		   "Annulus = %$mS.\n"
+		   "Solder mask hole = %$mS (gap = %$mS).\n"
 		   "Name = \"%s\".\n"
 		   "It is owned by element %s\n as pin number %s.\n"
-		   "%s",
+		   "%s", USER_UNITMASK,
 		   Pin->ID, flags_to_string (Pin->Flags, PIN_TYPE),
-		   prec, units(Pin->X), prec, UNIT(Pin->Y),
-		   prec, UNIT (Pin->Thickness),
-		   prec, UNIT (Pin->DrillingHole),
-		   prec, UNIT (Pin->Clearance / 2.),
-		   prec, UNIT ((Pin->Thickness - Pin->DrillingHole)/2),
-		   prec, UNIT (Pin->Mask),
-		   prec, UNIT ((Pin->Mask - Pin->Thickness)/2),
+		   Pin->X, Pin->Y, Pin->Thickness,
+		   Pin->DrillingHole,
+		   Pin->Clearance / 2,
+		   (Pin->Thickness - Pin->DrillingHole) / 2,
+		   Pin->Mask,
+		   (Pin->Mask - Pin->Thickness) / 2,
 		   EMPTY (Pin->Name),
 		   EMPTY (element->Name[1].TextString), EMPTY (Pin->Number),
 		   TEST_FLAG (LOCKFLAG, Pin) ? "It is LOCKED.\n" : "");
@@ -232,37 +235,35 @@ ReportDialog (int argc, char **argv, int x, int y)
       }
     case LINE_TYPE:
       {
-	LineTypePtr line;
+	LineType *line;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
-	    LayerTypePtr layer = (LayerTypePtr) ptr1;
+	    LayerType *layer = (LayerType *) ptr1;
 	    __r_dump_tree (layer->line_tree->root, 0);
 	    return 0;
 	  }
 #endif
-	line = (LineTypePtr) ptr2;
-	sprintf (&report[0], "LINE ID# %ld;  Flags:%s\n"
-		 "FirstPoint(X,Y)  = (%.*f, %.*f) %s, ID = %ld.\n"
-		 "SecondPoint(X,Y) = (%.*f, %.*f) %s, ID = %ld.\n"
-		 "Width = %0.*f %s.\nClearance width in polygons = %0.*f %s.\n"
+	line = (LineType *) ptr2;
+	pcb_sprintf (&report[0], "%m+LINE ID# %ld;  Flags:%s\n"
+		 "FirstPoint(X,Y)  = %$mD, ID = %ld.\n"
+		 "SecondPoint(X,Y) = %$mD, ID = %ld.\n"
+		 "Width = %$mS.\nClearance width in polygons = %$mS.\n"
 		 "It is on layer %d\n"
 		 "and has name \"%s\".\n"
-		 "%s",
+		 "%s", USER_UNITMASK,
 		 line->ID, flags_to_string (line->Flags, LINE_TYPE),
-		 prec, units (line->Point1.X), prec, UNIT (line->Point1.Y),
-		 line->Point1.ID, prec, units (line->Point2.X), prec, UNIT (line->Point2.Y),
-		 line->Point2.ID, prec, UNIT (line->Thickness),
-		 prec, UNIT (line->Clearance / 2.), GetLayerNumber (PCB->Data,
-							 (LayerTypePtr) ptr1),
-		 UNKNOWN (line->Number), TEST_FLAG (LOCKFLAG,
-						    line) ? "It is LOCKED.\n" :
-		 "");
+		 line->Point1.X, line->Point1.Y, line->Point1.ID,
+		 line->Point2.X, line->Point2.Y, line->Point2.ID,
+		 line->Thickness, line->Clearance / 2,
+		 GetLayerNumber (PCB->Data, (LayerType *) ptr1),
+		 UNKNOWN (line->Number),
+		 TEST_FLAG (LOCKFLAG, line) ? "It is LOCKED.\n" : "");
 	break;
       }
     case RATLINE_TYPE:
       {
-	RatTypePtr line;
+	RatType *line;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
@@ -270,91 +271,87 @@ ReportDialog (int argc, char **argv, int x, int y)
 	    return 0;
 	  }
 #endif
-	line = (RatTypePtr) ptr2;
-	sprintf (&report[0], "RAT-LINE ID# %ld;  Flags:%s\n"
-		 "FirstPoint(X,Y)  = (%.*f, %.*f) %s; ID = %ld; "
+	line = (RatType *) ptr2;
+	pcb_sprintf (&report[0], "%m+RAT-LINE ID# %ld;  Flags:%s\n"
+		 "FirstPoint(X,Y)  = %$mD; ID = %ld; "
 		 "connects to layer group %d.\n"
-		 "SecondPoint(X,Y) = (%.*f, %.*f) %s; ID = %ld; "
+		 "SecondPoint(X,Y) = %$mD; ID = %ld; "
 		 "connects to layer group %d.\n",
-		 line->ID, flags_to_string (line->Flags, LINE_TYPE),
-		 prec, units (line->Point1.X), prec, UNIT (line->Point1.Y),
+		 USER_UNITMASK, line->ID, flags_to_string (line->Flags, LINE_TYPE),
+		 line->Point1.X, line->Point1.Y,
 		 line->Point1.ID, line->group1,
-		 prec, units (line->Point2.X), prec, UNIT (line->Point2.Y),
+		 line->Point2.X, line->Point2.Y,
 		 line->Point2.ID, line->group2);
 	break;
       }
     case ARC_TYPE:
       {
-	ArcTypePtr Arc;
-	BoxTypePtr box;
+	ArcType *Arc;
+	BoxType *box;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
-	    LayerTypePtr layer = (LayerTypePtr) ptr1;
+	    LayerType *layer = (LayerType *) ptr1;
 	    __r_dump_tree (layer->arc_tree->root, 0);
 	    return 0;
 	  }
 #endif
-	Arc = (ArcTypePtr) ptr2;
+	Arc = (ArcType *) ptr2;
 	box = GetArcEnds (Arc);
 
-	sprintf (&report[0], "ARC ID# %ld;  Flags:%s\n"
-		 "CenterPoint(X,Y) = (%.*f, %.*f) %s.\n"
-		 "Radius = %0.*f %s, Thickness = %0.*f %s.\n"
-		 "Clearance width in polygons = %0.*f %s.\n"
-		 "StartAngle = %ld degrees, DeltaAngle = %ld degrees.\n"
-		 "Bounding Box is (%.*f,%.*f), (%.*f,%.*f) %s.\n"
-		 "That makes the end points at (%.*f,%.*f) %s and (%.*f,%.*f) %s.\n"
+	pcb_sprintf (&report[0], "%m+ARC ID# %ld;  Flags:%s\n"
+		 "CenterPoint(X,Y) = %$mD.\n"
+		 "Radius = %$mS, Thickness = %$mS.\n"
+		 "Clearance width in polygons = %$mS.\n"
+		 "StartAngle = %ma degrees, DeltaAngle = %ma degrees.\n"
+		 "Bounding Box is %$mD, %$mD.\n"
+		 "That makes the end points at %$mD and %$mD.\n"
 		 "It is on layer %d.\n"
-		 "%s", Arc->ID, flags_to_string (Arc->Flags, ARC_TYPE),
-		 prec, units(Arc->X), prec, UNIT(Arc->Y),
-		 prec, UNIT (Arc->Width), prec, UNIT (Arc->Thickness),
-		 prec, UNIT (Arc->Clearance / 2.), Arc->StartAngle, Arc->Delta,
-		 prec, units (Arc->BoundingBox.X1),
-		 prec, units (Arc->BoundingBox.Y1),
-		 prec, units (Arc->BoundingBox.X2),
-		 prec, UNIT (Arc->BoundingBox.Y2),
-		 prec, units (box->X1), prec, UNIT (box->Y1),
-		 prec, units (box->X2), prec, UNIT (box->Y2),
-		 GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1),
+		 "%s", USER_UNITMASK, Arc->ID, flags_to_string (Arc->Flags, ARC_TYPE),
+		 Arc->X, Arc->Y,
+		 Arc->Width, Arc->Thickness,
+		 Arc->Clearance / 2, Arc->StartAngle, Arc->Delta,
+		 Arc->BoundingBox.X1, Arc->BoundingBox.Y1,
+		 Arc->BoundingBox.X2, Arc->BoundingBox.Y2,
+		 box->X1, box->Y1,
+		 box->X2, box->Y2,
+		 GetLayerNumber (PCB->Data, (LayerType *) ptr1),
 		 TEST_FLAG (LOCKFLAG, Arc) ? "It is LOCKED.\n" : "");
 	break;
       }
     case POLYGON_TYPE:
       {
-	PolygonTypePtr Polygon;
+	PolygonType *Polygon;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
-	    LayerTypePtr layer = (LayerTypePtr) ptr1;
+	    LayerType *layer = (LayerType *) ptr1;
 	    __r_dump_tree (layer->polygon_tree->root, 0);
 	    return 0;
 	  }
 #endif
-	Polygon = (PolygonTypePtr) ptr2;
+	Polygon = (PolygonType *) ptr2;
 
-	sprintf (&report[0], "POLYGON ID# %ld;  Flags:%s\n"
-		 "Its bounding box is (%.*f,%.*f) (%.*f,%.*f) %s.\n"
+	pcb_sprintf (&report[0], "%m+POLYGON ID# %ld;  Flags:%s\n"
+		 "Its bounding box is %$mD %$mD.\n"
 		 "It has %d points and could store %d more\n"
 		 "  without using more memory.\n"
 		 "It has %d holes and resides on layer %d.\n"
-		 "%s", Polygon->ID,
+		 "%s", USER_UNITMASK, Polygon->ID,
 		 flags_to_string (Polygon->Flags, POLYGON_TYPE),
-		 prec, units(Polygon->BoundingBox.X1),
-		 prec, units(Polygon->BoundingBox.Y1),
-		 prec, units(Polygon->BoundingBox.X2),
-		 prec, UNIT(Polygon->BoundingBox.Y2),
+		 Polygon->BoundingBox.X1, Polygon->BoundingBox.Y1,
+		 Polygon->BoundingBox.X2, Polygon->BoundingBox.Y2,
 		 Polygon->PointN, Polygon->PointMax - Polygon->PointN,
 		 Polygon->HoleIndexN,
-		 GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1),
+		 GetLayerNumber (PCB->Data, (LayerType *) ptr1),
 		 TEST_FLAG (LOCKFLAG, Polygon) ? "It is LOCKED.\n" : "");
 	break;
       }
     case PAD_TYPE:
       {
-	int len, dx, dy, mgap;
-	PadTypePtr Pad;
-	ElementTypePtr element;
+	Coord len;
+	PadType *Pad;
+	ElementType *element;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
@@ -362,8 +359,8 @@ ReportDialog (int argc, char **argv, int x, int y)
 	    return 0;
 	  }
 #endif
-	Pad = (PadTypePtr) ptr2;
-	element = (ElementTypePtr) ptr1;
+	Pad = (PadType *) ptr2;
+	element = (ElementType *) ptr1;
 
 	PAD_LOOP (element);
 	{
@@ -373,31 +370,25 @@ ReportDialog (int argc, char **argv, int x, int y)
 	  }
 	}
 	END_LOOP;
-	dx = Pad->Point1.X - Pad->Point2.X;
-	dy = Pad->Point1.Y - Pad->Point2.Y;
-	len = sqrt (dx*dx+dy*dy);
-	mgap = (Pad->Mask - Pad->Thickness)/2;
-	sprintf (&report[0], "PAD ID# %ld;  Flags:%s\n"
-		 "FirstPoint(X,Y)  = (%.*f, %.*f) %s; ID = %ld.\n"
-		 "SecondPoint(X,Y) = (%.*f, %.*f) %s; ID = %ld.\n"
-		 "Width = %0.*f %s.  Length = %0.*f %s.\n"
-		 "Clearance width in polygons = %0.*f %s.\n"
-		 "Solder mask = %0.*f x %0.*f %s (gap = %0.*f %s).\n"
+	len = Distance (Pad->Point1.X, Pad->Point1.Y, Pad->Point2.X, Pad->Point2.Y);
+	pcb_sprintf (&report[0], "%m+PAD ID# %ld;  Flags:%s\n"
+		 "FirstPoint(X,Y)  = %$mD; ID = %ld.\n"
+		 "SecondPoint(X,Y) = %$mD; ID = %ld.\n"
+		 "Width = %$mS.  Length = %$mS.\n"
+		 "Clearance width in polygons = %$mS.\n"
+		 "Solder mask = %$mS x %$mS (gap = %$mS).\n"
 		 "Name = \"%s\".\n"
 		 "It is owned by SMD element %s\n"
 		 "  as pin number %s and is on the %s\n"
 		 "side of the board.\n"
-		 "%s", Pad->ID,
+		 "%s", USER_UNITMASK, Pad->ID,
 		 flags_to_string (Pad->Flags, PAD_TYPE),
-		 prec, units (Pad->Point1.X),
-		 prec, UNIT (Pad->Point1.Y), Pad->Point1.ID,
-		 prec, units (Pad->Point2.X),
-		 prec, UNIT (Pad->Point2.Y), Pad->Point2.ID,
-		 prec, UNIT (Pad->Thickness),
-		 prec, UNIT (len + Pad->Thickness),
-		 prec, UNIT (Pad->Clearance / 2.),
-		 prec, units (Pad->Mask), prec, UNIT (Pad->Mask + len),
-		 prec, UNIT (mgap),
+		 Pad->Point1.X, Pad->Point1.Y, Pad->Point1.ID,
+		 Pad->Point2.X, Pad->Point2.Y, Pad->Point2.ID,
+		 Pad->Thickness, len + Pad->Thickness,
+		 Pad->Clearance / 2,
+		 Pad->Mask, len + Pad->Mask,
+		 (Pad->Mask - Pad->Thickness) / 2,
 		 EMPTY (Pad->Name),
 		 EMPTY (element->Name[1].TextString),
 		 EMPTY (Pad->Number),
@@ -408,7 +399,7 @@ ReportDialog (int argc, char **argv, int x, int y)
       }
     case ELEMENT_TYPE:
       {
-	ElementTypePtr element;
+	ElementType *element;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
@@ -416,40 +407,35 @@ ReportDialog (int argc, char **argv, int x, int y)
 	    return 0;
 	  }
 #endif
-	element = (ElementTypePtr) ptr2;
-	sprintf (&report[0], "ELEMENT ID# %ld;  Flags:%s\n"
-		 "BoundingBox (%.*f,%.*f) (%.*f,%.*f) %s.\n"
+	element = (ElementType *) ptr2;
+	pcb_sprintf (&report[0], "%m+ELEMENT ID# %ld;  Flags:%s\n"
+		 "BoundingBox %$mD %$mD.\n"
 		 "Descriptive Name \"%s\".\n"
 		 "Name on board \"%s\".\n"
 		 "Part number name \"%s\".\n"
-		 "It is %.*f %s tall and is located at (X,Y) = (%.*f,%.*f)%s.\n"
-		 "Mark located at point (X,Y) = (%.*f,%.*f).\n"
+		 "It is %$mS tall and is located at (X,Y) = %$mD %s.\n"
+		 "Mark located at point (X,Y) = %$mD.\n"
 		 "It is on the %s side of the board.\n"
-		 "%s",
+		 "%s", USER_UNITMASK,
 		 element->ID, flags_to_string (element->Flags, ELEMENT_TYPE),
-		 prec, units(element->BoundingBox.X1),
-		 prec, units (element->BoundingBox.Y1),
-		 prec, units(element->BoundingBox.X2),
-		 prec, UNIT (element->BoundingBox.Y2),
+		 element->BoundingBox.X1, element->BoundingBox.Y1,
+		 element->BoundingBox.X2, element->BoundingBox.Y2,
 		 EMPTY (element->Name[0].TextString),
 		 EMPTY (element->Name[1].TextString),
 		 EMPTY (element->Name[2].TextString),
-		 prec, UNIT (0.45 * element->Name[1].Scale * 100.),
-		 prec, units(element->Name[1].X),
-		 prec, units(element->Name[1].Y),
-		 TEST_FLAG (HIDENAMEFLAG, element) ?
-		 ",\n  but it's hidden" : "", prec, units(element->MarkX),
-		 prec, units(element->MarkY),
-		 TEST_FLAG (ONSOLDERFLAG, element) ? "solder (bottom)" :
-		 "component", TEST_FLAG (LOCKFLAG, element) ?
-		 "It is LOCKED.\n" : "");
+		 SCALE_TEXT (FONT_CAPHEIGHT, element->Name[1].Scale),
+		 element->Name[1].X, element->Name[1].Y,
+		 TEST_FLAG (HIDENAMEFLAG, element) ? ",\n  but it's hidden" : "",
+		 element->MarkX, element->MarkY,
+		 TEST_FLAG (ONSOLDERFLAG, element) ? "solder (bottom)" : "component",
+		 TEST_FLAG (LOCKFLAG, element) ? "It is LOCKED.\n" : "");
 	break;
       }
     case TEXT_TYPE:
 #ifndef NDEBUG
       if (gui->shift_is_pressed ())
 	{
-	  LayerTypePtr layer = (LayerTypePtr) ptr1;
+	  LayerType *layer = (LayerType *) ptr1;
 	  __r_dump_tree (layer->text_tree->root, 0);
 	  return 0;
 	}
@@ -457,7 +443,7 @@ ReportDialog (int argc, char **argv, int x, int y)
     case ELEMENTNAME_TYPE:
       {
 	char laynum[32];
-	TextTypePtr text;
+	TextType *text;
 #ifndef NDEBUG
 	if (gui->shift_is_pressed ())
 	  {
@@ -465,26 +451,23 @@ ReportDialog (int argc, char **argv, int x, int y)
 	    return 0;
 	  }
 #endif
-	text = (TextTypePtr) ptr2;
+	text = (TextType *) ptr2;
 
 	if (type == TEXT_TYPE)
 	  sprintf (laynum, "It is on layer %d.",
-		   GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1));
-	sprintf (&report[0], "TEXT ID# %ld;  Flags:%s\n"
-		 "Located at (X,Y) = (%.*f,%.*f) %s.\n"
-		 "Characters are %0.*f %s tall.\n"
+		   GetLayerNumber (PCB->Data, (LayerType *) ptr1));
+	pcb_sprintf (&report[0], "%m+TEXT ID# %ld;  Flags:%s\n"
+		 "Located at (X,Y) = %$mD.\n"
+		 "Characters are %$mS tall.\n"
 		 "Value is \"%s\".\n"
 		 "Direction is %d.\n"
-		 "The bounding box is (%.*f,%.*f) (%.*f, %.*f) %s.\n"
+		 "The bounding box is %$mD %$mD.\n"
 		 "%s\n"
-		 "%s", text->ID, flags_to_string (text->Flags, TEXT_TYPE),
-		 prec, units(text->X), prec, UNIT (text->Y),
-		 prec, UNIT (0.45 * text->Scale * 100.),
+		 "%s", USER_UNITMASK, text->ID, flags_to_string (text->Flags, TEXT_TYPE),
+		 text->X, text->Y, SCALE_TEXT (FONT_CAPHEIGHT, text->Scale),
 		 text->TextString, text->Direction,
-		 prec, units(text->BoundingBox.X1),
-		 prec, units(text->BoundingBox.Y1),
-		 prec, units(text->BoundingBox.X2),
-		 prec, UNIT (text->BoundingBox.Y2),
+		 text->BoundingBox.X1, text->BoundingBox.Y1,
+		 text->BoundingBox.X2, text->BoundingBox.Y2,
 		 (type == TEXT_TYPE) ? laynum : "It is an element name.",
 		 TEST_FLAG (LOCKFLAG, text) ? "It is LOCKED.\n" : "");
 	break;
@@ -492,13 +475,13 @@ ReportDialog (int argc, char **argv, int x, int y)
     case LINEPOINT_TYPE:
     case POLYGONPOINT_TYPE:
       {
-	PointTypePtr point = (PointTypePtr) ptr2;
-	sprintf (&report[0], "POINT ID# %ld.\n"
-		 "Located at (X,Y) = (%.*f,%.*f) %s.\n"
-		 "It belongs to a %s on layer %d.\n", point->ID,
-		 prec, units (point->X), prec, UNIT (point->Y),
+	PointType *point = (PointType *) ptr2;
+	pcb_sprintf (&report[0], "%m+POINT ID# %ld.\n"
+		 "Located at (X,Y) = %$mD.\n"
+		 "It belongs to a %s on layer %d.\n", USER_UNITMASK, point->ID,
+		 point->X, point->Y,
 		 (type == LINEPOINT_TYPE) ? "line" : "polygon",
-		 GetLayerNumber (PCB->Data, (LayerTypePtr) ptr1));
+		 GetLayerNumber (PCB->Data, (LayerType *) ptr1));
 	break;
       }
     case NO_TYPE:
@@ -522,7 +505,7 @@ ReportDialog (int argc, char **argv, int x, int y)
 }
 
 static int
-ReportFoundPins (int argc, char **argv, int x, int y)
+ReportFoundPins (int argc, char **argv, Coord x, Coord y)
 {
   static DynamicStringType list;
   char temp[64];
@@ -562,14 +545,22 @@ ReportFoundPins (int argc, char **argv, int x, int y)
   return 0;
 }
 
+/* Assumes that we start with a blank connection state,
+ * e.g. ResetConnections() has been run.
+ * Does not add its own changes to the undo system
+ */
 static double
-XYtoNetLength (int x, int y, int *found)
+XYtoNetLength (Coord x, Coord y, int *found)
 {
   double length;
 
   length = 0;
   *found = 0;
-  LookupConnection (x, y, true, PCB->Grid, FOUNDFLAG);
+
+  /* NB: The third argument here, 'false' ensures LookupConnection
+   *     does not add its changes to the undo system.
+   */
+  LookupConnection (x, y, false, PCB->Grid, FOUNDFLAG);
 
   ALLLINE_LOOP (PCB->Data);
   {
@@ -603,46 +594,28 @@ XYtoNetLength (int x, int y, int *found)
 }
 
 static int
-ReportAllNetLengths (int argc, char **argv, int x, int y)
+ReportAllNetLengths (int argc, char **argv, Coord x, Coord y)
 {
   int ni;
   int found;
-  double length;
-  int prec;
-  double scale;
-  const char *units_name;
 
-  units_name = argv[0];
-  if (argc < 1)
-    units_name = Settings.grid_units_mm ? "mm" : "mil";
-
-  if (strcmp (units_name, "mm") == 0)
-    {
-      prec = 4;
-      scale = COORD_TO_MM(1);
-    }
-  else if (strcmp (units_name, "mil") == 0)
-    {
-      prec = 2;
-      scale = COORD_TO_MIL(1);
-    }
-  else if (strcmp (units_name, "in") == 0)
-    {
-      prec = 5;
-      scale = COORD_TO_INCH(1);
-    }
-  else
-    {
-      prec = 0;
-      units_name = "pcb";
-      scale = 1;
-    }
+  /* Reset all connection flags and save an undo-state to get back
+   * to the state the board was in when we started this function.
+   *
+   * After this, we don't add any changes to the undo system, but
+   * ensure we get back to a point where we can Undo() our changes
+   * by resetting the connections with ResetConnections() before
+   * calling Undo() at the end of the procedure.
+   */
+  ResetConnections (true);
+  IncrementUndoSerialNumber ();
 
   for (ni = 0; ni < PCB->NetlistLib.MenuN; ni++)
     {
       char *netname = PCB->NetlistLib.Menu[ni].Name + 2;
       char *ename = PCB->NetlistLib.Menu[ni].Entry[0].ListEntry;
       char *pname;
+      bool got_one = 0;
 
       ename = strdup (ename);
       pname = strchr (ename, '-');
@@ -664,7 +637,8 @@ ReportAllNetLengths (int argc, char **argv, int x, int y)
 		{
 		  x = pin->X;
 		  y = pin->Y;
-		  goto got_one;
+		  got_one = 1;
+                  break;
 		}
 	    }
 	    END_LOOP;
@@ -674,7 +648,8 @@ ReportAllNetLengths (int argc, char **argv, int x, int y)
 		{
 		  x = (pad->Point1.X + pad->Point2.X) / 2;
 		  y = (pad->Point1.Y + pad->Point2.Y) / 2;
-		  goto got_one;
+		  got_one = 1;
+                  break;
 		}
 	    }
 	    END_LOOP;
@@ -682,39 +657,56 @@ ReportAllNetLengths (int argc, char **argv, int x, int y)
       }
       END_LOOP;
 
-      continue;
+      if (got_one)
+        {
+          char buf[50];
+          const char *units_name = argv[0];
+          Coord length;
 
-    got_one:
-      if (ResetConnections (true))
-        Draw ();
-      /* NB: XYtoNetLength calls LookupConnection, which performs an undo
-       *     serial number update, so we don't need to add one here.
-       */
-      length = XYtoNetLength (x, y, &found);
+          if (argc < 1)
+            units_name = Settings.grid_unit->suffix;
 
-      gui->log("Net %s length %.*f %s\n", netname, prec, length*scale, units_name);
+          length = XYtoNetLength (x, y, &found);
+
+          /* Reset connectors for the next lookup */
+          ResetConnections (false);
+
+          pcb_sprintf(buf, "%$m*", units_name, length);
+          gui->log("Net %s length %s\n", netname, buf);
+        }
     }
+
+  ResetConnections (false);
+  Undo (true);
   return 0;
 }
 
 static int
-ReportNetLength (int argc, char **argv, int x, int y)
+ReportNetLength (int argc, char **argv, Coord x, Coord y)
 {
-  double length = 0;
+  Coord length = 0;
   char *netname = 0;
   int found = 0;
 
-  if (ResetConnections (true))
-    Draw ();
-  /* NB: XYtoNetLength calls LookupConnection, which performs an undo
-   *     serial number update, so we don't need to add one here.
-   */
   gui->get_coords ("Click on a connection", &x, &y);
+
+  /* Reset all connection flags and save an undo-state to get back
+   * to the state the board was in when we started this function.
+   *
+   * After this, we don't add any changes to the undo system, but
+   * ensure we get back to a point where we can Undo() our changes
+   * by resetting the connections with ResetConnections() before
+   * calling Undo() at the end of the procedure.
+   */
+  ResetConnections (true);
+  IncrementUndoSerialNumber ();
 
   length = XYtoNetLength (x, y, &found);
 
   if (!found)
     {
+      ResetConnections (false);
+      Undo (true);
       gui->log ("No net under cursor.\n");
       return 1;
     }
@@ -773,23 +765,182 @@ ReportNetLength (int argc, char **argv, int x, int y)
     END_LOOP;
   }
   END_LOOP;
- got_net_name:
+
+got_net_name:
+  ResetConnections (false);
+  Undo (true);
 
   {
-    int prec = Settings.grid_units_mm? 4: 2;
+    char buf[50];
+    pcb_sprintf(buf, "%$m*", Settings.grid_unit->suffix, length);
     if (netname)
-      gui->log ("Net \"%s\" length: %.*f %s\n", netname, prec, UNIT (length));
+      gui->log ("Net \"%s\" length: %s\n", netname, buf);
     else
-      gui->log ("Net length: %.*f %s\n", prec, UNIT (length));
+      gui->log ("Net length: %s\n", buf);
   }
+
   return 0;
 }
+
+static int
+ReportNetLengthByName (char *tofind, int x, int y)
+{
+  int result;
+  char *netname = 0;
+  Coord length = 0;
+  int found = 0;
+  int i;
+  LibraryMenuType *net;
+  ConnectionType conn;
+  int net_found = 0;
+#if defined(USE_RE)
+  int use_re = 0;
+#endif
+#if defined(HAVE_REGCOMP)
+  regex_t elt_pattern;
+  regmatch_t match;
+#endif
+#if defined(HAVE_RE_COMP)
+  char *elt_pattern;
+#endif
+
+  if (!PCB)
+    return 1;
+
+  if (!tofind)
+    return 1;
+
+#if defined(USE_RE)
+      use_re = 1;
+      for (i = 0; i < PCB->NetlistLib.MenuN; i++)
+	{
+	  net = PCB->NetlistLib.Menu + i;
+	  if (strcasecmp (tofind, net->Name + 2) == 0)
+	    use_re = 0;
+	}
+      if (use_re)
+	{
+#if defined(HAVE_REGCOMP)
+	  result =
+	    regcomp (&elt_pattern, tofind,
+		     REG_EXTENDED | REG_ICASE | REG_NOSUB);
+	  if (result)
+	    {
+	      char errorstring[128];
+
+	      regerror (result, &elt_pattern, errorstring, 128);
+	      Message (_("regexp error: %s\n"), errorstring);
+	      regfree (&elt_pattern);
+	      return (1);
+	    }
+#endif
+#if defined(HAVE_RE_COMP)
+	  if ((elt_pattern = re_comp (tofind)) != NULL)
+	    {
+	      Message (_("re_comp error: %s\n"), elt_pattern);
+	      return (1);
+	    }
+#endif
+	}
+#endif
+
+  for (i = 0; i < PCB->NetlistLib.MenuN; i++)
+    {
+      net = PCB->NetlistLib.Menu + i;
+
+#if defined(USE_RE)
+	  if (use_re)
+	    {
+#if defined(HAVE_REGCOMP)
+	      if (regexec (&elt_pattern, net->Name + 2, 1, &match, 0) != 0)
+		continue;
+#endif
+#if defined(HAVE_RE_COMP)
+	      if (re_exec (net->Name + 2) != 1)
+		continue;
+#endif
+	    }
+	  else
+#endif
+	  if (strcasecmp (net->Name + 2, tofind))
+	    continue;
+
+        if (SeekPad (net->Entry, &conn, false))
+        {
+          switch (conn.type)
+          {
+            case PIN_TYPE:
+              x = ((PinType *) (conn.ptr2))->X;
+              y = ((PinType *) (conn.ptr2))->Y;
+              net_found=1;
+	      break;
+            case PAD_TYPE:
+              x = ((PadType *) (conn.ptr2))->Point1.X;
+              y = ((PadType *) (conn.ptr2))->Point1.Y;
+              net_found=1;
+	      break;
+          }
+	  if (net_found)
+	    break;
+        }
+    }
+
+  if (!net_found)
+    {
+      gui->log ("No net named %s\n", tofind);
+      return 1;
+    }
+
+#ifdef HAVE_REGCOMP
+  if (use_re)
+    regfree (&elt_pattern);
+#endif
+
+  /* Reset all connection flags and save an undo-state to get back
+   * to the state the board was in when we started.
+   *
+   * After this, we don't add any changes to the undo system, but
+   * ensure we get back to a point where we can Undo() our changes
+   * by resetting the connections with ResetConnections() before
+   * calling Undo() when we are finished.
+   */
+  ResetConnections (true);
+  IncrementUndoSerialNumber ();
+
+  length = XYtoNetLength (x, y, &found);
+  netname = net->Name + 2;
+
+  ResetConnections (false);
+  Undo (true);
+
+  if (!found)
+    {
+      if (net_found)
+        gui->log ("Net found, but no lines or arcs were flagged.\n");
+      else
+        gui->log ("Net not found.\n");
+
+      return 1;
+    }
+
+  {
+    char buf[50];
+    pcb_sprintf(buf, "%$m*", Settings.grid_unit->suffix, length);
+    if (netname)
+      gui->log ("Net \"%s\" length: %s\n", netname, buf);
+    else
+      gui->log ("Net length: %s\n", buf);
+  }
+
+  return 0;
+}
+
 /* ---------------------------------------------------------------------------
  * reports on an object 
  * syntax: 
  */
 
-static const char report_syntax[] = "Report(Object|DrillReport|FoundPins|NetLength|AllNetLengths)";
+static const char report_syntax[] = "Report(Object|DrillReport|FoundPins|NetLength|AllNetLengths|[,name])";
 
 static const char report_help[] = "Produce various report.";
 
@@ -823,9 +974,9 @@ units
 %end-doc */
 
 static int
-Report (int argc, char **argv, int x, int y)
+Report (int argc, char **argv, Coord x, Coord y)
 {
-  if (argc < 1)
+  if ((argc < 1) || (argc > 2))
     AUSAGE (report);
   else if (strcasecmp (argv[0], "Object") == 0)
     {
@@ -836,10 +987,14 @@ Report (int argc, char **argv, int x, int y)
     return ReportDrills (argc - 1, argv + 1, x, y);
   else if (strcasecmp (argv[0], "FoundPins") == 0)
     return ReportFoundPins (argc - 1, argv + 1, x, y);
-  else if (strcasecmp (argv[0], "NetLength") == 0)
+  else if ((strcasecmp (argv[0], "NetLength") == 0) && (argc == 1))
     return ReportNetLength (argc - 1, argv + 1, x, y);
   else if (strcasecmp (argv[0], "AllNetLengths") == 0)
     return ReportAllNetLengths (argc - 1, argv + 1, x, y);
+  else if ((strcasecmp (argv[0], "NetLength") == 0) && (argc == 2))
+    return ReportNetLengthByName (argv[1], x, y);
+  else if (argc == 2)
+    AUSAGE (report);
   else
     AFAIL (report);
   return 1;

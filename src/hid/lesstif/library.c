@@ -1,5 +1,3 @@
-/* $Id$ */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -26,8 +24,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 static Arg args[30];
 static int n;
 #define stdarg(t,v) XtSetArg(args[n], t, v); n++
@@ -53,7 +49,7 @@ pick_net (int pick)
     free (libnode_strings);
   libnode_strings = (XmString *) malloc (menu->EntryN * sizeof (XmString));
   for (i = 0; i < menu->EntryN; i++)
-    libnode_strings[i] = XmStringCreateLocalized (menu->Entry[i].ListEntry);
+    libnode_strings[i] = XmStringCreatePCB (menu->Entry[i].ListEntry);
   n = 0;
   stdarg (XmNitems, libnode_strings);
   stdarg (XmNitemCount, menu->EntryN);
@@ -123,7 +119,7 @@ build_library_dialog ()
 }
 
 static int
-LibraryChanged (int argc, char **argv, int x, int y)
+LibraryChanged (int argc, char **argv, Coord x, Coord y)
 {
   int i;
   if (!Library.MenuN)
@@ -135,7 +131,7 @@ LibraryChanged (int argc, char **argv, int x, int y)
     free (library_strings);
   library_strings = (XmString *) malloc (Library.MenuN * sizeof (XmString));
   for (i = 0; i < Library.MenuN; i++)
-    library_strings[i] = XmStringCreateLocalized (Library.Menu[i].Name);
+    library_strings[i] = XmStringCreatePCB (Library.Menu[i].Name);
   n = 0;
   stdarg (XmNitems, library_strings);
   stdarg (XmNitemCount, Library.MenuN);
@@ -155,7 +151,7 @@ static const char libraryshow_help[] =
 %end-doc */
 
 static int
-LibraryShow (int argc, char **argv, int x, int y)
+LibraryShow (int argc, char **argv, Coord x, Coord y)
 {
   if (build_library_dialog ())
     return 0;

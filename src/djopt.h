@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -26,11 +24,11 @@
  *
  */
 
-#ifndef	__DJOPT_INCLUDED__
-#define	__DJOPT_INCLUDED__
+#ifndef	PCB_DJOPT_H
+#define	PCB_DJOPT_H
 
 #include "global.h"
 
-int ActionDJopt (int, char **, int, int);
-int djopt_set_auto_only (int, char **, int, int);
+int ActionDJopt (int, char **, Coord, Coord);
+int djopt_set_auto_only (int, char **, Coord, Coord);
 #endif

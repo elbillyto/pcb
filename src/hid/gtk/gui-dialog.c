@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -42,13 +40,13 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
 /* ---------------------------------------------- */
 gchar *
 ghid_dialog_input (const char * prompt, const char * initial)
 {
-  GtkWidget *dialog, *vbox, *label, *entry;
+  GtkWidget *dialog;
+  GtkWidget *content_area;
+  GtkWidget *vbox, *label, *entry;
   gchar *string;
   gboolean response;
   GHidPort *out = &ghid_port;
@@ -74,8 +72,10 @@ ghid_dialog_input (const char * prompt, const char * initial)
     gtk_entry_set_text (GTK_ENTRY (entry), initial);
 
   gtk_entry_set_activates_default (GTK_ENTRY (entry), TRUE);
-  gtk_box_pack_start_defaults (GTK_BOX (vbox), entry);
-  gtk_container_add (GTK_CONTAINER (GTK_DIALOG (dialog)->vbox), vbox);
+  gtk_box_pack_start (GTK_BOX (vbox), entry, TRUE, TRUE, 0);
+
+  content_area = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+  gtk_container_add (GTK_CONTAINER (content_area), vbox);
   gtk_widget_show_all (dialog);
 
   response = gtk_dialog_run (GTK_DIALOG (dialog));
@@ -109,7 +109,9 @@ ghid_dialog_about (void)
 gint
 ghid_dialog_confirm_all (gchar * all_message)
 {
-  GtkWidget *dialog, *label, *vbox;
+  GtkWidget *dialog;
+  GtkWidget *content_area;
+  GtkWidget *label, *vbox;
   gint response;
   GHidPort *out = &ghid_port;
 
@@ -122,7 +124,8 @@ ghid_dialog_confirm_all (gchar * all_message)
 					"Sequence OK",
 					GUI_DIALOG_RESPONSE_ALL, NULL);
 
-  vbox = ghid_framed_vbox (GTK_DIALOG (dialog)->vbox, NULL, 6, FALSE, 4, 6);
+  content_area = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+  vbox = ghid_framed_vbox (content_area, NULL, 6, FALSE, 4, 6);
 
   label = gtk_label_new (all_message);
   gtk_box_pack_start (GTK_BOX (vbox), label, FALSE, FALSE, 3);
@@ -358,6 +361,83 @@ ghid_dialog_file_select_open (gchar * title, gchar ** path, gchar * shortcuts)
   return result;
 }
 
+
+/* ---------------------------------------------- */
+/* Caller must g_slist_free() the returned list .*/
+GSList *
+ghid_dialog_file_select_multiple(gchar * title, gchar ** path, gchar * shortcuts)
+{
+  GtkWidget *dialog;
+  GSList *result = NULL;
+  gchar *folder, *seed;
+  GHidPort *out = &ghid_port;
+  GtkFileFilter *no_filter;
+
+  dialog = gtk_file_chooser_dialog_new (title,
+					GTK_WINDOW (out->top_window),
+					GTK_FILE_CHOOSER_ACTION_OPEN,
+					GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+					GTK_STOCK_OK, GTK_RESPONSE_OK,
+					NULL);
+
+  gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_OK);
+
+  gtk_file_chooser_set_select_multiple(GTK_FILE_CHOOSER (dialog), TRUE);
+
+  /* add a default filter for not filtering files */
+  no_filter = gtk_file_filter_new ();
+  gtk_file_filter_set_name (no_filter, "all");
+  gtk_file_filter_add_pattern (no_filter, "*.*");
+  gtk_file_filter_add_pattern (no_filter, "*");
+  gtk_file_chooser_add_filter (GTK_FILE_CHOOSER (dialog), no_filter);
+
+  /* in case we have a dialog for loading schematic files */
+  if (strcmp (title, _("Load schematics")) == 0)
+  {
+    /* add a filter for schematic files */
+    GtkFileFilter *sch_filter;
+    sch_filter = gtk_file_filter_new ();
+    gtk_file_filter_set_name (sch_filter, "sch");
+    gtk_file_filter_add_mime_type (sch_filter, "application/x-geda-schematic");
+    gtk_file_filter_add_pattern (sch_filter, "*.sch");
+    gtk_file_filter_add_pattern (sch_filter, "*.SCH");
+    gtk_file_chooser_add_filter (GTK_FILE_CHOOSER (dialog), sch_filter);
+  }
+
+  if (path && *path)
+    gtk_file_chooser_set_current_folder (GTK_FILE_CHOOSER (dialog), *path);
+
+  if (shortcuts && *shortcuts)
+    {
+      folder = g_strdup (shortcuts);
+      seed = folder;
+      while ((folder = strtok (seed, ":")) != NULL)
+	{
+	  gtk_file_chooser_add_shortcut_folder (GTK_FILE_CHOOSER (dialog),
+						folder, NULL);
+	  seed = NULL;
+	}
+      g_free (folder);
+    }
+
+  if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_OK)
+    {
+      result = gtk_file_chooser_get_filenames (GTK_FILE_CHOOSER (dialog));
+      folder =
+	gtk_file_chooser_get_current_folder (GTK_FILE_CHOOSER (dialog));
+      if (folder && path)
+	{
+	  dup_string (path, folder);
+	  g_free (folder);
+	}
+    }
+  gtk_widget_destroy (dialog);
+
+
+  return result;
+}
+
+
 /* ---------------------------------------------- */
 /* Caller must g_free() the returned filename. */
 gchar *
@@ -375,6 +455,8 @@ ghid_dialog_file_select_save (gchar * title, gchar ** path, gchar * file,
 					GTK_STOCK_OK, GTK_RESPONSE_OK,
 					NULL);
 
+  gtk_file_chooser_set_do_overwrite_confirmation (GTK_FILE_CHOOSER (dialog),
+                                                  TRUE);
   gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_OK);
 
   if (path && *path && **path)

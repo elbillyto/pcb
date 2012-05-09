@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -46,6 +44,7 @@
 #include "error.h"
 #include "draw.h"
 #include "misc.h" /* MKDIR() */
+#include "pcb-printf.h"
 #include "set.h"
 
 #if 0
@@ -56,14 +55,14 @@
 #endif
 
 extern int	MoveLayerAction(int argc, char **argv, int x, int y);
-
-
-RCSID ("$Id$");
+/* This is defined in main.c */
+void save_increments (const Increments *mm, const Increments *mil);
 
 enum ConfigType
 {
   CONFIG_Boolean,
   CONFIG_Integer,
+  CONFIG_Coord,
   CONFIG_Real,
   CONFIG_String,
   CONFIG_Unused
@@ -120,13 +119,21 @@ static gchar *config_dir, *color_dir;
 static ConfigAttribute config_attributes[] = {
   {"gui-compact-horizontal", CONFIG_Boolean, &_ghidgui.compact_horizontal},
   {"gui-compact-vertical", CONFIG_Boolean, &_ghidgui.compact_vertical},
-  {"gui-title-window", CONFIG_Boolean, &_ghidgui.ghid_title_window},
   {"use-command-window", CONFIG_Boolean, &_ghidgui.use_command_window},
   {"save-in-tmp", CONFIG_Unused, NULL},
-  {"grid-units-mm", CONFIG_Unused, NULL},
+  {"grid-units", CONFIG_Unused, NULL},
+  {"grid", CONFIG_Unused, NULL},
+
+  {"grid-increment-mm", CONFIG_Unused, NULL},
+  {"line-increment-mm", CONFIG_Unused, NULL},
+  {"size-increment-mm", CONFIG_Unused, NULL},
+  {"clear-increment-mm", CONFIG_Unused, NULL},
+  {"grid-increment-mil", CONFIG_Unused, NULL},
+  {"line-increment-mil", CONFIG_Unused, NULL},
+  {"size-increment-mil", CONFIG_Unused, NULL},
+  {"clear-increment-mil", CONFIG_Unused, NULL},
 
   {"history-size", CONFIG_Integer, &_ghidgui.history_size},
-  {"auto-pan-speed", CONFIG_Integer, &_ghidgui.auto_pan_speed},
   {"top-window-width", CONFIG_Integer, &_ghidgui.top_window_width},
   {"top-window-height", CONFIG_Integer, &_ghidgui.top_window_height},
   {"log-window-width", CONFIG_Integer, &_ghidgui.log_window_width},
@@ -153,15 +160,6 @@ static ConfigAttribute config_attributes[] = {
   {"default-PCB-width", CONFIG_Unused, NULL},
   {"default-PCB-height", CONFIG_Unused, NULL},
 
-  {"grid-increment-mil", CONFIG_Unused, NULL},
-  {"grid-increment-mm", CONFIG_Unused, NULL},
-  {"size-increment-mil", CONFIG_Unused, NULL},
-  {"size-increment-mm", CONFIG_Unused, NULL},
-  {"line-increment-mil", CONFIG_Unused, NULL},
-  {"line-increment-mm", CONFIG_Unused, NULL},
-  {"clear-increment-mil", CONFIG_Unused, NULL},
-  {"clear-increment-mm", CONFIG_Unused, NULL},
-
   {"groups", CONFIG_Unused, NULL},
   {"route-styles", CONFIG_Unused, NULL},
   {"library-newlib", CONFIG_String, &lib_newlib_config},
@@ -177,6 +175,20 @@ static ConfigAttribute config_attributes[] = {
   {"layer-name-8", CONFIG_Unused, NULL},
 };
 
+static gboolean
+dup_core_string (gchar ** dst, const gchar * src)
+{
+  if (dst == NULL || (*dst == NULL && src == NULL))
+    return FALSE;
+
+  if (*dst != NULL && src != NULL && strcmp (*dst, src) == 0)
+    return FALSE;
+
+  free (*dst);
+  *dst = (src == NULL) ? NULL : strdup (src);
+
+  return TRUE;
+}
 
 static FILE *
 config_file_open (gchar * mode)
@@ -263,8 +275,6 @@ ghid_config_init (void)
 
   ghidgui->n_mode_button_columns = 3;
   ghidgui->small_label_markup = TRUE;
-  ghidgui->auto_pan_on = TRUE;
-  ghidgui->auto_pan_speed = 3;
   ghidgui->history_size = 5;
   dup_string (&color_file, "");
 
@@ -287,6 +297,10 @@ ghid_config_init (void)
 	    case HID_Integer:
 	      *(int *) a->value = a->default_val.int_value;
 	      ca->type = CONFIG_Integer;
+	      break;
+	    case HID_Coord:
+	      *(Coord *) a->value = a->default_val.coord_value;
+	      ca->type = CONFIG_Coord;
 	      break;
 	    case HID_Real:
 	      *(double *) a->value = a->default_val.real_value;
@@ -319,6 +333,7 @@ ghid_config_init (void)
 	      break;
 
 	    case HID_Enum:
+	    case HID_Unit:
 	      *(int *) a->value = a->default_val.int_value;
 	      break;
 
@@ -420,6 +435,9 @@ set_config_attribute (gchar * option, gchar * arg)
     case CONFIG_String:
       dup_string ((gchar **) ca->value, arg ? arg : (gchar *)"");
       break;
+    case CONFIG_Coord:
+      *(Coord *) ca->value = GetValue (arg, NULL, NULL);
+      break;
     default:
       break;
     }
@@ -504,7 +522,6 @@ config_colors_read (gchar * path)
     }
   fclose (f);
 
-  ghid_layer_buttons_color_update ();
   return TRUE;
 }
 
@@ -538,6 +555,7 @@ parse_optionv (gint * argc, gchar *** argv, gboolean from_cmd_line)
 {
   HID_AttrNode *ha;
   HID_Attribute *a;
+  const Unit *unit;
   gchar *ep;
   gint e, ok, offset;
   gboolean matched = FALSE;
@@ -566,6 +584,14 @@ parse_optionv (gint * argc, gchar *** argv, gboolean from_cmd_line)
 		  (*argc)--;
 		  (*argv)++;
 		  break;
+		case HID_Coord:
+		  if (a->value)
+		    *(Coord *) a->value = GetValue ((*argv)[1], 0, 0);
+		  else
+		    a->default_val.coord_value = GetValue ((*argv)[1], 0, 0);
+		  (*argc)--;
+		  (*argv)++;
+                  break;
 		case HID_Real:
 		  if (a->value)
 		    *(double *) a->value = strtod ((*argv)[1], 0);
@@ -619,6 +645,20 @@ parse_optionv (gint * argc, gchar *** argv, gboolean from_cmd_line)
 		  (*argc)--;
 		  (*argv)++;
 		  break;
+	        case HID_Unit:
+                  unit = get_unit_struct ((*argv)[1]);
+                  if (unit == NULL)
+		    {
+		      fprintf (stderr,
+		               "ERROR:  unit \"%s\" is unknown to pcb (option --%s)\n",
+			       (*argv)[1], a->name);
+		      exit (1);
+		    }
+	          a->default_val.int_value = unit->index;
+	          a->default_val.str_value = unit->suffix;
+		  (*argc)--;
+		  (*argv)++;
+	          break;
 		}
 	      (*argc)--;
 	      (*argv)++;
@@ -754,6 +794,10 @@ ghid_config_files_write (void)
 	  fprintf (f, "%s = %f\n", ca->name, *(double *) ca->value);
 	  break;
 
+	case CONFIG_Coord:
+	  pcb_fprintf (f, "%s = %$mS\n", ca->name, *(Coord *) ca->value);
+	  break;
+
 	case CONFIG_String:
 	  if (*(char **) ca->value == NULL)
 	    fprintf (f, "# %s = NULL\n", ca->name);
@@ -806,20 +850,6 @@ config_compact_horizontal_toggle_cb (GtkToggleButton * button, gpointer data)
   gboolean active = gtk_toggle_button_get_active (button);
 
   ghidgui->compact_horizontal = active;
-  if (active)
-    {
-      gtk_container_remove (GTK_CONTAINER (ghidgui->compact_hbox),
-			    ghidgui->position_hbox);
-      gtk_box_pack_end (GTK_BOX (ghidgui->compact_vbox),
-			ghidgui->position_hbox, TRUE, FALSE, 0);
-    }
-  else
-    {
-      gtk_container_remove (GTK_CONTAINER (ghidgui->compact_vbox),
-			    ghidgui->position_hbox);
-      gtk_box_pack_end(GTK_BOX(ghidgui->compact_hbox), ghidgui->position_hbox,
-			FALSE, FALSE, 4);
-    }
   ghid_set_status_line_label ();
   ghidgui->config_modified = TRUE;
 }
@@ -831,16 +861,6 @@ config_compact_vertical_toggle_cb (GtkToggleButton * button, gpointer data)
 
   ghidgui->compact_vertical = active;
   ghid_pack_mode_buttons();
-  ghidgui->config_modified = TRUE;
-}
-
-static void
-config_title_window_cb (GtkToggleButton * button, gpointer data)
-{
-  gboolean active = gtk_toggle_button_get_active (button);
-
-  ghidgui->ghid_title_window = active;
-  ghid_window_set_name_label (ghidgui->name_label_string);
   ghidgui->config_modified = TRUE;
 }
 
@@ -863,14 +883,6 @@ static void
 config_history_spin_button_cb (GtkSpinButton * spin_button, gpointer data)
 {
   ghidgui->history_size = gtk_spin_button_get_value_as_int (spin_button);
-  ghidgui->config_modified = TRUE;
-}
-
-static void
-config_auto_pan_speed_spin_button_cb (GtkSpinButton * spin_button,
-				      gpointer data)
-{
-  ghidgui->auto_pan_speed = gtk_spin_button_get_value_as_int (spin_button);
   ghidgui->config_modified = TRUE;
 }
 
@@ -898,11 +910,6 @@ config_general_tab_create (GtkWidget * tab_vbox)
 			       config_compact_vertical_toggle_cb, NULL,
 			       _("Alternate window layout to allow smaller vertical size"));
 
-  ghid_check_button_connected (vbox, NULL, ghidgui->ghid_title_window,
-			       TRUE, FALSE, FALSE, 2,
-			       config_title_window_cb, NULL,
-			       _("Put layout name on the window title bar"));
-
   vbox = ghid_category_vbox (tab_vbox, _("Backups"), 4, 2, TRUE, TRUE);
   ghid_check_button_connected (vbox, NULL, Settings.SaveInTMP,
 			       TRUE, FALSE, FALSE, 2,
@@ -918,10 +925,6 @@ config_general_tab_create (GtkWidget * tab_vbox)
 		    5.0, 25.0, 1.0, 1.0, 0, 0,
 		    config_history_spin_button_cb, NULL, FALSE,
 		    _("Number of commands to remember in the history list"));
-  ghid_spin_button (vbox, NULL, ghidgui->auto_pan_speed,
-		    1.0, 10.0, 1.0, 1.0, 0, 0,
-		    config_auto_pan_speed_spin_button_cb, NULL, FALSE,
-		    _("Auto pan speed"));
 }
 
 
@@ -935,19 +938,15 @@ config_general_apply (void)
 
   /* -------------- The Sizes config page ----------------
    */
-#define	STEP0_SMALL_SIZE	(Settings.grid_units_mm ? 0.005 : 0.1)
-#define	STEP1_SMALL_SIZE	(Settings.grid_units_mm ? 0.05 : 1.0)
-#define	STEP0_SIZE			(Settings.grid_units_mm ? 5.0 : 100)
-#define	STEP1_SIZE			(Settings.grid_units_mm ? 25.0 : 1000)
-#define	SPIN_DIGITS			(Settings.grid_units_mm ? 3 : 1)
 
 static GtkWidget *config_sizes_vbox,
   *config_sizes_tab_vbox, *config_text_spin_button;
 
 static GtkWidget *use_board_size_default_button,
-  *use_drc_sizes_default_button;
+  *use_drc_sizes_default_button,
+  *use_increments_default_button;
 
-static gint new_board_width, new_board_height;
+static Coord new_board_width, new_board_height;
 
 static void
 config_sizes_apply (void)
@@ -979,6 +978,16 @@ config_sizes_apply (void)
       ghidgui->config_modified = TRUE;
     }
 
+  active =
+    gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON
+				  (use_increments_default_button));
+  if (active)
+    {
+      save_increments (get_increments_struct (METRIC),
+                       get_increments_struct (IMPERIAL));
+      ghidgui->config_modified = TRUE;
+    }
+
   if (PCB->MaxWidth != new_board_width || PCB->MaxHeight != new_board_height)
     ChangePCBSize (new_board_width, new_board_height);
 }
@@ -991,22 +1000,17 @@ text_spin_button_cb (GtkSpinButton * spin, void * dst)
   ghid_set_status_line_label ();
 }
 
-
 static void
-size_spin_button_cb (GtkSpinButton * spin, void * dst)
+coord_entry_cb (GHidCoordEntry * ce, void * dst)
 {
-  gdouble value;
-
-  value = gtk_spin_button_get_value (spin);
-  *(gint *)dst = TO_PCB_UNITS (value);
+  *(Coord *) dst = ghid_coord_entry_get_value (ce);
   ghidgui->config_modified = TRUE;
 }
 
 static void
 config_sizes_tab_create (GtkWidget * tab_vbox)
 {
-  GtkWidget *table, *vbox, *hbox, *label;
-  gchar *str;
+  GtkWidget *table, *vbox, *hbox;
 
   /* Need a vbox we can destroy if user changes grid units.
    */
@@ -1018,16 +1022,6 @@ config_sizes_tab_create (GtkWidget * tab_vbox)
       config_sizes_vbox = vbox;
       config_sizes_tab_vbox = tab_vbox;
     }
-
-  str = g_strdup_printf (_("<b>%s</b> grid units are selected"),
-			 Settings.grid_units_mm ? _("mm") : _("mil"));
-  label = gtk_label_new ("");
-  gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
-  gtk_label_set_markup (GTK_LABEL (label), str);
-  g_free (str);
-
-  gtk_box_pack_start (GTK_BOX (config_sizes_vbox), label, FALSE, FALSE, 4);
-
 
   /* ---- Board Size ---- */
   vbox = ghid_category_vbox (config_sizes_vbox, _("Board Size"),
@@ -1041,23 +1035,18 @@ config_sizes_tab_create (GtkWidget * tab_vbox)
 
   new_board_width = PCB->MaxWidth;
   new_board_height = PCB->MaxHeight;
-  ghid_table_spin_button (table, 0, 0, NULL,
-			  FROM_PCB_UNITS (PCB->MaxWidth),
-			  FROM_PCB_UNITS (MIN_SIZE),
-			  FROM_PCB_UNITS (MAX_COORD), STEP0_SIZE, STEP1_SIZE,
-			  SPIN_DIGITS, 0, size_spin_button_cb,
+  ghid_table_coord_entry (table, 0, 0, NULL,
+			  PCB->MaxWidth, MIN_SIZE, MAX_COORD,
+			  CE_LARGE, 0, coord_entry_cb,
 			  &new_board_width, FALSE, _("Width"));
 
-  ghid_table_spin_button (table, 1, 0, NULL,
-			  FROM_PCB_UNITS (PCB->MaxHeight),
-			  FROM_PCB_UNITS (MIN_SIZE),
-			  FROM_PCB_UNITS (MAX_COORD), STEP0_SIZE, STEP1_SIZE,
-			  SPIN_DIGITS, 0, size_spin_button_cb,
+  ghid_table_coord_entry (table, 1, 0, NULL,
+			  PCB->MaxHeight, MIN_SIZE, MAX_COORD,
+			  CE_LARGE, 0, coord_entry_cb,
 			  &new_board_height, FALSE, _("Height"));
   ghid_check_button_connected (vbox, &use_board_size_default_button, FALSE,
 			       TRUE, FALSE, FALSE, 0, NULL, NULL,
-			       _
-			       ("Use this board size as the default for new layouts"));
+			       _("Use this board size as the default for new layouts"));
 
   /* ---- Text Scale ---- */
   vbox = ghid_category_vbox (config_sizes_vbox, _("Text Scale"),
@@ -1087,52 +1076,40 @@ config_sizes_tab_create (GtkWidget * tab_vbox)
   gtk_table_set_col_spacings (GTK_TABLE (table), 6);
   gtk_table_set_row_spacings (GTK_TABLE (table), 3);
 
-  ghid_table_spin_button (table, 0, 0, NULL,
-			  FROM_PCB_UNITS (PCB->Bloat),
-			  FROM_PCB_UNITS (MIN_DRC_VALUE),
-			  FROM_PCB_UNITS (MAX_DRC_VALUE), STEP0_SMALL_SIZE,
-			  STEP1_SMALL_SIZE, SPIN_DIGITS, 0,
-			  size_spin_button_cb, &PCB->Bloat, FALSE,
+  ghid_table_coord_entry (table, 0, 0, NULL,
+			  PCB->Bloat, MIN_DRC_VALUE, MAX_DRC_VALUE,
+			  CE_SMALL, 0, coord_entry_cb,
+			  &PCB->Bloat, FALSE,
 			  _("Minimum copper spacing"));
 
-  ghid_table_spin_button (table, 1, 0, NULL,
-			  FROM_PCB_UNITS (PCB->minWid),
-			  FROM_PCB_UNITS (MIN_DRC_VALUE),
-			  FROM_PCB_UNITS (MAX_DRC_VALUE), STEP0_SMALL_SIZE,
-			  STEP1_SMALL_SIZE, SPIN_DIGITS, 0,
-			  size_spin_button_cb, &PCB->minWid, FALSE,
+  ghid_table_coord_entry (table, 1, 0, NULL,
+			  PCB->minWid, MIN_DRC_VALUE, MAX_DRC_VALUE,
+			  CE_SMALL, 0, coord_entry_cb,
+			  &PCB->minWid, FALSE,
 			  _("Minimum copper width"));
 
-  ghid_table_spin_button (table, 2, 0, NULL,
-			  FROM_PCB_UNITS (PCB->Shrink),
-			  FROM_PCB_UNITS (MIN_DRC_VALUE),
-			  FROM_PCB_UNITS (MAX_DRC_VALUE), STEP0_SMALL_SIZE,
-			  STEP1_SMALL_SIZE, SPIN_DIGITS, 0,
-			  size_spin_button_cb, &PCB->Shrink, FALSE,
+  ghid_table_coord_entry (table, 2, 0, NULL,
+			  PCB->Shrink, MIN_DRC_VALUE, MAX_DRC_VALUE,
+			  CE_SMALL, 0, coord_entry_cb,
+			  &PCB->Shrink, FALSE,
 			  _("Minimum touching copper overlap"));
 
-  ghid_table_spin_button (table, 3, 0, NULL,
-			  FROM_PCB_UNITS (PCB->minSlk),
-			  FROM_PCB_UNITS (MIN_DRC_SILK),
-			  FROM_PCB_UNITS (MAX_DRC_SILK), STEP0_SMALL_SIZE,
-			  STEP1_SMALL_SIZE, SPIN_DIGITS, 0,
-			  size_spin_button_cb, &PCB->minSlk, FALSE,
+  ghid_table_coord_entry (table, 3, 0, NULL,
+			  PCB->minSlk, MIN_DRC_VALUE, MAX_DRC_VALUE,
+			  CE_SMALL, 0, coord_entry_cb,
+			  &PCB->minSlk, FALSE,
 			  _("Minimum silk width"));
 
-  ghid_table_spin_button (table, 4, 0, NULL,
-			  FROM_PCB_UNITS (PCB->minDrill),
-			  FROM_PCB_UNITS (MIN_DRC_DRILL),
-			  FROM_PCB_UNITS (MAX_DRC_DRILL), STEP0_SMALL_SIZE,
-			  STEP1_SMALL_SIZE, SPIN_DIGITS, 0,
-			  size_spin_button_cb, &PCB->minDrill, FALSE,
+  ghid_table_coord_entry (table, 4, 0, NULL,
+			  PCB->minDrill, MIN_DRC_VALUE, MAX_DRC_VALUE,
+			  CE_SMALL, 0, coord_entry_cb,
+			  &PCB->minDrill, FALSE,
 			  _("Minimum drill diameter"));
 
-  ghid_table_spin_button (table, 5, 0, NULL,
-			  FROM_PCB_UNITS (PCB->minRing),
-			  FROM_PCB_UNITS (MIN_DRC_RING),
-			  FROM_PCB_UNITS (MAX_DRC_RING), STEP0_SMALL_SIZE,
-			  STEP1_SMALL_SIZE, SPIN_DIGITS, 0,
-			  size_spin_button_cb, &PCB->minRing, FALSE,
+  ghid_table_coord_entry (table, 5, 0, NULL,
+			  PCB->minRing, MIN_DRC_VALUE, MAX_DRC_VALUE,
+			  CE_SMALL, 0, coord_entry_cb,
+			  &PCB->minRing, FALSE,
 			  _("Minimum annular ring"));
 
   ghid_check_button_connected (vbox, &use_drc_sizes_default_button, FALSE,
@@ -1152,23 +1129,18 @@ config_sizes_tab_create (GtkWidget * tab_vbox)
 static GtkWidget *config_increments_vbox, *config_increments_tab_vbox;
 
 static void
-increment_spin_button_cb (GtkSpinButton * spin, void * dst)
+increment_spin_button_cb (GHidCoordEntry * ce, void * dst)
 {
-  gdouble value;
-
-  value = gtk_spin_button_get_value (spin);
-  *(gdouble *)dst = value;			/* Not using PCB units */
-
-
+  *(Coord *)dst = ghid_coord_entry_get_value (ce);
   ghidgui->config_modified = TRUE;
 }
 
 static void
 config_increments_tab_create (GtkWidget * tab_vbox)
 {
-  GtkWidget *vbox, *label;
-  gdouble *target;
-  gchar *str;
+  Increments *incr_mm  = get_increments_struct (METRIC);
+  Increments *incr_mil = get_increments_struct (IMPERIAL);
+  GtkWidget *vbox, *hbox, *table;
 
   /* Need a vbox we can destroy if user changes grid units.
    */
@@ -1181,111 +1153,67 @@ config_increments_tab_create (GtkWidget * tab_vbox)
       config_increments_tab_vbox = tab_vbox;
     }
 
-  str =
-    g_strdup_printf (_
-		     ("Increment/Decrement values to use in <b>%s</b> units mode.\n"),
-		     Settings.grid_units_mm ? _("mm") : _("mil"));
-  label = gtk_label_new ("");
-  gtk_label_set_use_markup (GTK_LABEL (label), TRUE);
-  gtk_label_set_markup (GTK_LABEL (label), str);
-  gtk_box_pack_start (GTK_BOX (config_increments_vbox), label,
-		      FALSE, FALSE, 4);
-  g_free (str);
-
-
-  /* ---- Grid Increment/Decrement ---- */
+#define INCR_ENTRY(row, name, family, type, msg)	\
+  gtk_table_attach_defaults (GTK_TABLE (table),	\
+                             gtk_label_new (name),	\
+                             0, 1, row, row + 1);	\
+  ghid_table_coord_entry (table, row, 1, NULL,	\
+                          incr_##family->type,	\
+                          incr_##family->type##_min,	\
+                          incr_##family->type##_max,	\
+			  CE_SMALL, 0, increment_spin_button_cb,	\
+			  &incr_##family->type, FALSE,	\
+                          msg)
+  
+  /* ---- Metric Settings ---- */
   vbox = ghid_category_vbox (config_increments_vbox,
-			     _("Grid Increment/Decrement"), 4, 2, TRUE, TRUE);
+			     _("Metric Increment Settings"), 4, 2, TRUE, TRUE);
+  hbox = gtk_hbox_new (FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
+  table = gtk_table_new (4, 3, FALSE);
+  gtk_box_pack_start (GTK_BOX (hbox), table, FALSE, FALSE, 0);
+  gtk_table_set_col_spacings (GTK_TABLE (table), 6);
+  gtk_table_set_row_spacings (GTK_TABLE (table), 18);
 
-  /* Grid increment spin button ('g' and '<shift>g').  For mil
-     |  units, range from 1.0 to 25.0.  For mm, range from 0.01 to 1.0
-     |  Step sizes of 5 mil or .05 mm, and .01 mm precision or 1 mil precision.
-   */
-  target = Settings.grid_units_mm ?
-    &Settings.grid_increment_mm : &Settings.grid_increment_mil;
-  ghid_spin_button (vbox, NULL,
-		    GRID_UNITS_VALUE (Settings.grid_increment_mm,
-				      Settings.grid_increment_mil),
-		    GRID_UNITS_VALUE (0.01, 1.0), GRID_UNITS_VALUE (1.0,
-								    25.0),
-		    GRID_UNITS_VALUE (0.05, 5.0), GRID_UNITS_VALUE (0.05,
-								    5.0),
-		    GRID_UNITS_VALUE (2, 0), 0, increment_spin_button_cb,
-		    target, FALSE,
-		    _("For 'g' and '<shift>g' grid change actions"));
+  INCR_ENTRY (0, _("Grid:"), mm, grid,
+              _("For 'g' and '<shift>g' grid change actions"));
+  INCR_ENTRY (1, _("Size:"), mm, size,
+              _("For 's' and '<shift>s' size change actions on lines,\n"
+                "pads, pins and text.\n"
+                "Use '<ctrl>s' and '<shift><ctrl>s' for drill holes."));
+  INCR_ENTRY (2, _("Line:"), mm, line,
+              _("For 'l' and '<shift>l' routing line width change actions"));
+  INCR_ENTRY (3, _("Clear:"), mm, clear,
+              _("For 'k' and '<shift>k' line clearance inside polygon size\n"
+                "change actions"));
 
-
-  /* ---- Size Increment/Decrement ---- */
   vbox = ghid_category_vbox (config_increments_vbox,
-			     _("Size Increment/Decrement"), 4, 2, TRUE, TRUE);
+			     _("Imperial Increment Settings"), 4, 2, TRUE, TRUE);
+  hbox = gtk_hbox_new (FALSE, 0);
+  gtk_box_pack_start (GTK_BOX (vbox), hbox, FALSE, FALSE, 0);
+  table = gtk_table_new (4, 3, FALSE);
+  gtk_box_pack_start (GTK_BOX (hbox), table, FALSE, FALSE, 0);
+  gtk_table_set_col_spacings (GTK_TABLE (table), 6);
+  gtk_table_set_row_spacings (GTK_TABLE (table), 18);
 
-  /* Size increment spin button ('s' and '<shift>s').  For mil
-     |  units, range from 1.0 to 10.0.  For mm, range from 0.01 to 0.5
-     |  Step sizes of 1 mil or .01 mm, and .01 mm precision or 1 mil precision.
-   */
-  target = Settings.grid_units_mm ?
-    &Settings.size_increment_mm : &Settings.size_increment_mil;
-  ghid_spin_button (vbox, NULL,
-		    GRID_UNITS_VALUE (Settings.size_increment_mm,
-				      Settings.size_increment_mil),
-		    GRID_UNITS_VALUE (0.01, 1.0), GRID_UNITS_VALUE (0.5,
-								    10.0),
-		    GRID_UNITS_VALUE (0.01, 1.0), GRID_UNITS_VALUE (0.05,
-								    5.0),
-		    GRID_UNITS_VALUE (2, 0), 0, increment_spin_button_cb,
-		    target, FALSE,
-		    _("For 's' and '<shift>s' size change actions on lines,\n"
-		      "pads, pins and text.\n"
-		      "Use '<ctrl>s' and '<shift><ctrl>s' for drill holes."));
+  INCR_ENTRY (0, _("Grid:"), mil, grid,
+              _("For 'g' and '<shift>g' grid change actions"));
+  INCR_ENTRY (1, _("Size:"), mil, size,
+              _("For 's' and '<shift>s' size change actions on lines,\n"
+                "pads, pins and text.\n"
+                "Use '<ctrl>s' and '<shift><ctrl>s' for drill holes."));
+  INCR_ENTRY (2, _("Line:"), mil, line,
+              _("For 'l' and '<shift>l' routing line width change actions"));
+  INCR_ENTRY (3, _("Clear:"), mil, clear,
+              _("For 'k' and '<shift>k' line clearance inside polygon size\n"
+                "change actions"));
+#undef INCR_ENTRY
 
-  /* ---- Line Increment/Decrement ---- */
   vbox = ghid_category_vbox (config_increments_vbox,
-			     _("Line Increment/Decrement"), 4, 2, TRUE, TRUE);
-
-  /* Line increment spin button ('l' and '<shift>l').  For mil
-     |  units, range from 0.5 to 10.0.  For mm, range from 0.005 to 0.5
-     |  Step sizes of 0.5 mil or .005 mm, and .001 mm precision or 0.1 mil
-     |  precision.
-   */
-  target = Settings.grid_units_mm ?
-    &Settings.line_increment_mm : &Settings.line_increment_mil;
-  ghid_spin_button (vbox, NULL,
-		    GRID_UNITS_VALUE (Settings.line_increment_mm,
-				      Settings.line_increment_mil),
-		    GRID_UNITS_VALUE (0.005, 0.5), GRID_UNITS_VALUE (0.5,
-								     10.0),
-		    GRID_UNITS_VALUE (0.005, 0.5), GRID_UNITS_VALUE (0.05,
-								     5.0),
-		    GRID_UNITS_VALUE (3, 1), 0, increment_spin_button_cb,
-		    target, FALSE,
-		    _
-		    ("For 'l' and '<shift>l' routing line width change actions"));
-
-  /* ---- Clear Increment/Decrement ---- */
-  vbox = ghid_category_vbox (config_increments_vbox,
-			     _("Clear Increment/Decrement"), 4, 2, TRUE,
-			     TRUE);
-
-  /* Clear increment spin button ('l' and '<shift>l').  For mil
-     |  units, range from 0.5 to 10.0.  For mm, range from 0.005 to 0.5
-     |  Step sizes of 0.5 mil or .005 mm, and .001 mm precision or 0.1 mil
-     |  precision.
-   */
-  target = Settings.grid_units_mm ?
-    &Settings.clear_increment_mm : &Settings.clear_increment_mil;
-  ghid_spin_button (vbox, NULL,
-		    GRID_UNITS_VALUE (Settings.clear_increment_mm,
-				      Settings.clear_increment_mil),
-		    GRID_UNITS_VALUE (0.005, 0.5), GRID_UNITS_VALUE (0.5,
-								     10.0),
-		    GRID_UNITS_VALUE (0.005, 0.5), GRID_UNITS_VALUE (0.05,
-								     5.0),
-		    GRID_UNITS_VALUE (3, 1), 0, increment_spin_button_cb,
-		    target, FALSE,
-		    _
-		    ("For 'k' and '<shift>k' line clearance inside polygon size\n"
-		     "change actions"));
-
+			     _("Save as Default"), 4, 2, TRUE, TRUE);
+  ghid_check_button_connected (vbox, &use_increments_default_button, FALSE,
+			       TRUE, FALSE, FALSE, 0, NULL, NULL,
+			       _("Use values as the default for new layouts"));
 
   gtk_widget_show_all (config_increments_vbox);
 }
@@ -1357,7 +1285,7 @@ static gboolean groups_modified, groups_holdoff, layers_applying;
 static gchar *layer_info_text[] = {
   N_("<h>Layer Names\n"),
   N_("You may enter layer names for the layers drawn on the screen.\n"
-     "The special 'component side' and 'solder side' are layers which\n"
+     "The special 'top side' and 'bottom side' are layers which\n"
      "will be printed out, so they must have in their group at least one\n"
      "of the other layers that are drawn on the screen.\n"),
   "\n",
@@ -1371,7 +1299,7 @@ static gchar *layer_info_text[] = {
   "\n",
   N_("For example, for a 4 layer board a useful layer group arrangement\n"
      "can be to have 3 screen displayed layers grouped into the same group\n"
-     "as the 'component side' and 'solder side' printout layers.  Then\n"
+     "as the 'top side' and 'bottom side' printout layers.  Then\n"
      "groups such as signals, ground, and supply traces can be color\n"
      "coded on the screen while printing as a single layer.  For this\n"
      "you would select buttons and enter names on the Setup page to\n"
@@ -1379,23 +1307,23 @@ static gchar *layer_info_text[] = {
   "\n",
   N_("<b>Group 1:"),
   "\n\t",
-  N_("solder"),
+  N_("top"),
   "\n\t",
-  N_("GND-solder"),
+  N_("GND-top"),
   "\n\t",
-  N_("Vcc-solder"),
+  N_("Vcc-top"),
   "\n\t",
-  N_("solder side"),
+  N_("top side"),
   "\n",
   N_("<b>Group 2:"),
   "\n\t",
-  N_("component"),
+  N_("bottom"),
   "\n\t",
-  N_("GND-component"),
+  N_("GND-bottom"),
   "\n\t",
-  N_("Vcc-component"),
+  N_("Vcc-bottom"),
   "\n\t",
-  N_("component side"),
+  N_("bottom side"),
   "\n",
   N_("<b>Group 3:"),
   "\n\t",
@@ -1476,10 +1404,10 @@ config_layers_apply (void)
     {
       layer = &PCB->Data->Layer[i];
       s = ghid_entry_get_text (layer_entry[i]);
-      if (dup_string (&layer->Name, s))
+      if (dup_core_string (&layer->Name, s))
 	layers_modified = TRUE;
 /* FIXME */
-      if (use_as_default && dup_string (&Settings.DefaultLayerName[i], s))
+      if (use_as_default && dup_core_string (&Settings.DefaultLayerName[i], s))
 	ghidgui->config_modified = TRUE;
 
     }
@@ -1510,21 +1438,21 @@ config_layers_apply (void)
 	}
 
       /* do some cross-checking
-         |  solder-side and component-side must be in different groups
-         |  solder-side and component-side must not be the only one in the group
+         |  top-side and bottom-side must be in different groups
+         |  top-side and bottom-side must not be the only one in the group
        */
       if (layer_groups.Number[soldergroup] <= 1
 	  || layer_groups.Number[componentgroup] <= 1)
 	{
 	  Message (_
-		   ("Both 'solder side' or 'component side' layers must have at least\n"
+		   ("Both, 'top side' and 'bottom side' layer must have at least\n"
 		    "\tone other layer in their group.\n"));
 	  return;
 	}
       else if (soldergroup == componentgroup)
 	{
 	  Message (_
-		   ("The 'solder side' and 'component side' layers are not allowed\n"
+		   ("The 'top side' and 'bottom side' layers are not allowed\n"
 		    "\tto be in the same layer group #\n"));
 	  return;
 	}
@@ -1535,7 +1463,7 @@ config_layers_apply (void)
   if (use_as_default)
     {
       s = make_layer_group_string (&PCB->LayerGroups);
-      if (dup_string (&Settings.Groups, s))
+      if (dup_core_string (&Settings.Groups, s))
 	{
 	  ParseGroupString (Settings.Groups, &Settings.LayerGroups, max_copper_layer);
 	  ghidgui->config_modified = TRUE;
@@ -1574,7 +1502,7 @@ layer_name_entry_cb(GtkWidget *entry, gpointer data)
 
 	layer = &PCB->Data->Layer[i];
 	name = ghid_entry_get_text(entry);
-	if (dup_string (&layer->Name, name))
+	if (dup_core_string (&layer->Name, name))
 		ghid_layer_buttons_update();
 }
 
@@ -1635,9 +1563,9 @@ ghid_config_groups_changed(void)
   for (layer = 0; layer < max_copper_layer + 2; ++layer)
     {
       if (layer == component_silk_layer)
-	name = _("component side");
+	name = _("top side");
       else if (layer == solder_silk_layer)
-	name = _("solder side");
+	name = _("bottom side");
       else
 	name = (gchar *) UNKNOWN (PCB->Data->Layer[layer].Name);
 
@@ -1826,7 +1754,7 @@ config_color_defaults_cb (gpointer data)
     {
       cc = (ConfigColor *) list->data;
       ha = cc->attributes;
-      dup_string ((char **) ha->value, ha->default_val.str_value);
+      dup_core_string ((char **) ha->value, ha->default_val.str_value);
       cc->color_is_mapped = FALSE;
       ghid_set_special_colors (ha);
     }
@@ -1874,6 +1802,7 @@ config_color_load_cb (gpointer data)
   gtk_widget_destroy (config_colors_vbox);
   config_colors_tab_create (config_colors_tab_vbox);
 
+  ghid_layer_buttons_color_update ();
   ghid_invalidate_all();
 }
 
@@ -2078,7 +2007,7 @@ config_page_create (GtkTreeStore * tree, GtkTreeIter * iter,
 
   vbox = gtk_vbox_new (FALSE, 0);
   gtk_notebook_append_page (notebook, vbox, NULL);
-  page = g_list_length (notebook->children) - 1;
+  page = gtk_notebook_get_n_pages (notebook) - 1;
   gtk_tree_store_set (tree, iter, CONFIG_PAGE_COLUMN, page, -1);
   return vbox;
 }
@@ -2086,10 +2015,12 @@ config_page_create (GtkTreeStore * tree, GtkTreeIter * iter,
 void
 ghid_config_handle_units_changed (void)
 {
+  gchar *text = pcb_g_strdup_printf ("<b>%s</b>",
+                                     Settings.grid_unit->in_suffix);
   ghid_set_cursor_position_labels ();
-  gtk_label_set_markup (GTK_LABEL (ghidgui->grid_units_label),
-			Settings.grid_units_mm ?
-			_("<b>mm</b> ") : _("<b>mil</b> "));
+  gtk_label_set_markup (GTK_LABEL (ghidgui->grid_units_label), text);
+  g_free (text);
+
   if (config_sizes_vbox)
     {
       gtk_widget_destroy (config_sizes_vbox);
@@ -2270,7 +2201,7 @@ ghid_config_window_show (void)
   gtk_box_pack_start (GTK_BOX (main_vbox), hbox, FALSE, FALSE, 0);
 
   button = gtk_button_new_from_stock (GTK_STOCK_OK);
-  GTK_WIDGET_SET_FLAGS (button, GTK_CAN_DEFAULT);
+  gtk_widget_set_can_default (button, TRUE);
   g_signal_connect (G_OBJECT (button), "clicked",
 		    G_CALLBACK (config_close_cb), NULL);
   gtk_box_pack_start (GTK_BOX (hbox), button, TRUE, TRUE, 0);

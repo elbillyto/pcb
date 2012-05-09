@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /*
  *                            COPYRIGHT
  *
@@ -61,9 +59,6 @@
 #include <dmalloc.h>
 #endif
 
-RCSID ("$Id$");
-
-
 #define TRIEDFIRST 0x1
 #define BESTFOUND 0x2
 
@@ -72,10 +67,10 @@ RCSID ("$Id$");
  */
 static bool FindPad (char *, char *, ConnectionType *, bool);
 static bool ParseConnection (char *, char *, char *);
-static bool DrawShortestRats (NetListTypePtr, void (*)(register ConnectionTypePtr, register ConnectionTypePtr, register RouteStyleTypePtr));
-static bool GatherSubnets (NetListTypePtr, bool, bool);
-static bool CheckShorts (LibraryMenuTypePtr);
-static void TransferNet (NetListTypePtr, NetTypePtr, NetTypePtr);
+static bool DrawShortestRats (NetListType *, void (*)(register ConnectionType *, register ConnectionType *, register RouteStyleType *));
+static bool GatherSubnets (NetListType *, bool, bool);
+static bool CheckShorts (LibraryMenuType *);
+static void TransferNet (NetListType *, NetType *, NetType *);
 
 /* ---------------------------------------------------------------------------
  * some local identifiers
@@ -122,7 +117,7 @@ ParseConnection (char *InString, char *ElementName, char *PinNum)
 static bool
 FindPad (char *ElementName, char *PinNum, ConnectionType * conn, bool Same)
 {
-  ElementTypePtr element;
+  ElementType *element;
   GList *i;
 
   if ((element = SearchElementByName (PCB->Data, ElementName)) == NULL)
@@ -217,13 +212,13 @@ SeekPad (LibraryEntryType * entry, ConnectionType * conn, bool Same)
  * Read the library-netlist build a true Netlist structure
  */
 
-NetListTypePtr
-ProcNetlist (LibraryTypePtr net_menu)
+NetListType *
+ProcNetlist (LibraryType *net_menu)
 {
-  ConnectionTypePtr connection;
+  ConnectionType *connection;
   ConnectionType LastPoint;
-  NetTypePtr net;
-  static NetListTypePtr Wantlist = NULL;
+  NetType *net;
+  static NetListType *Wantlist = NULL;
 
   if (!net_menu->MenuN)
     return (NULL);
@@ -235,7 +230,7 @@ ProcNetlist (LibraryTypePtr net_menu)
   SLayer = GetLayerGroupNumberByNumber (solder_silk_layer);
   CLayer = GetLayerGroupNumberByNumber (component_silk_layer);
 
-  Wantlist = (NetListTypePtr)calloc (1, sizeof (NetListType));
+  Wantlist = (NetListType *)calloc (1, sizeof (NetListType));
   if (Wantlist)
     {
       ALLPIN_LOOP (PCB->Data);
@@ -276,13 +271,13 @@ ProcNetlist (LibraryTypePtr net_menu)
 	{
 	  if (SeekPad (entry, &LastPoint, false))
 	    {
-	      if (TEST_FLAG (DRCFLAG, (PinTypePtr) LastPoint.ptr2))
+	      if (TEST_FLAG (DRCFLAG, (PinType *) LastPoint.ptr2))
 		Message (_
 			 ("Error! Element %s pin %s appears multiple times in the netlist file.\n"),
-			 NAMEONPCB_NAME ((ElementTypePtr) LastPoint.ptr1),
+			 NAMEONPCB_NAME ((ElementType *) LastPoint.ptr1),
 			 (LastPoint.type ==
-			  PIN_TYPE) ? ((PinTypePtr) LastPoint.ptr2)->
-			 Number : ((PadTypePtr) LastPoint.ptr2)->Number);
+			  PIN_TYPE) ? ((PinType *) LastPoint.ptr2)->
+			 Number : ((PadType *) LastPoint.ptr2)->Number);
 	      else
 		{
 		  connection = GetConnectionMemory (net);
@@ -290,11 +285,11 @@ ProcNetlist (LibraryTypePtr net_menu)
 		  /* indicate expect net */
 		  connection->menu = menu;
 		  /* mark as visited */
-		  SET_FLAG (DRCFLAG, (PinTypePtr) LastPoint.ptr2);
+		  SET_FLAG (DRCFLAG, (PinType *) LastPoint.ptr2);
 		  if (LastPoint.type == PIN_TYPE)
-		    ((PinTypePtr) LastPoint.ptr2)->Spare = (void *) menu;
+		    ((PinType *) LastPoint.ptr2)->Spare = (void *) menu;
 		  else
-		    ((PadTypePtr) LastPoint.ptr2)->Spare = (void *) menu;
+		    ((PadType *) LastPoint.ptr2)->Spare = (void *) menu;
 		}
 	    }
 	  else
@@ -307,11 +302,11 @@ ProcNetlist (LibraryTypePtr net_menu)
 	      /* indicate expect net */
 	      connection->menu = menu;
 	      /* mark as visited */
-	      SET_FLAG (DRCFLAG, (PinTypePtr) LastPoint.ptr2);
+	      SET_FLAG (DRCFLAG, (PinType *) LastPoint.ptr2);
 	      if (LastPoint.type == PIN_TYPE)
-		((PinTypePtr) LastPoint.ptr2)->Spare = (void *) menu;
+		((PinType *) LastPoint.ptr2)->Spare = (void *) menu;
 	      else
-		((PadTypePtr) LastPoint.ptr2)->Spare = (void *) menu;
+		((PadType *) LastPoint.ptr2)->Spare = (void *) menu;
 	    }
 	}
 	END_LOOP;
@@ -337,9 +332,9 @@ ProcNetlist (LibraryTypePtr net_menu)
  * and then remove the first net from its netlist
  */
 static void
-TransferNet (NetListTypePtr Netl, NetTypePtr SourceNet, NetTypePtr DestNet)
+TransferNet (NetListType *Netl, NetType *SourceNet, NetType *DestNet)
 {
-  ConnectionTypePtr conn;
+  ConnectionType *conn;
 
   /* It would be worth checking if SourceNet is NULL here to avoid a segfault. Seb James. */
   CONNECTION_LOOP (SourceNet);
@@ -358,10 +353,10 @@ TransferNet (NetListTypePtr Netl, NetTypePtr SourceNet, NetTypePtr DestNet)
 }
 
 static bool
-CheckShorts (LibraryMenuTypePtr theNet)
+CheckShorts (LibraryMenuType *theNet)
 {
   bool newone, warn = false;
-  PointerListTypePtr generic = (PointerListTypePtr)calloc (1, sizeof (PointerListType));
+  PointerListType *generic = (PointerListType *)calloc (1, sizeof (PointerListType));
   /* the first connection was starting point so
    * the menu is always non-null
    */
@@ -398,7 +393,7 @@ CheckShorts (LibraryMenuTypePtr theNet)
 	    *menu = pin->Spare;
 	    Message (_("Warning! Net \"%s\" is shorted to net \"%s\"\n"),
 		     &theNet->Name[2],
-		     &((LibraryMenuTypePtr) (pin->Spare))->Name[2]);
+		     &((LibraryMenuType *) (pin->Spare))->Name[2]);
 	    SET_FLAG (WARNFLAG, pin);
 	  }
       }
@@ -434,7 +429,7 @@ CheckShorts (LibraryMenuTypePtr theNet)
 	    *menu = pad->Spare;
 	    Message (_("Warning! Net \"%s\" is shorted to net \"%s\"\n"),
 		     &theNet->Name[2],
-		     &((LibraryMenuTypePtr) (pad->Spare))->Name[2]);
+		     &((LibraryMenuType *) (pad->Spare))->Name[2]);
 	    SET_FLAG (WARNFLAG, pad);
 	  }
       }
@@ -453,10 +448,10 @@ CheckShorts (LibraryMenuTypePtr theNet)
  * afterwards there can be many fewer nets with multiple connections each
  */
 static bool
-GatherSubnets (NetListTypePtr Netl, bool NoWarn, bool AndRats)
+GatherSubnets (NetListType *Netl, bool NoWarn, bool AndRats)
 {
-  NetTypePtr a, b;
-  ConnectionTypePtr conn;
+  NetType *a, *b;
+  ConnectionType *conn;
   Cardinal m, n;
   bool Warned = false;
 
@@ -469,14 +464,14 @@ GatherSubnets (NetListTypePtr Netl, bool NoWarn, bool AndRats)
 		   AndRats);
       /* now anybody connected to the first point has DRCFLAG set */
       /* so move those to this subnet */
-      CLEAR_FLAG (DRCFLAG, (PinTypePtr) a->Connection[0].ptr2);
+      CLEAR_FLAG (DRCFLAG, (PinType *) a->Connection[0].ptr2);
       for (n = m + 1; n < Netl->NetN; n++)
 	{
 	  b = &Netl->Net[n];
 	  /* There can be only one connection in net b */
-	  if (TEST_FLAG (DRCFLAG, (PinTypePtr) b->Connection[0].ptr2))
+	  if (TEST_FLAG (DRCFLAG, (PinType *) b->Connection[0].ptr2))
 	    {
-	      CLEAR_FLAG (DRCFLAG, (PinTypePtr) b->Connection[0].ptr2);
+	      CLEAR_FLAG (DRCFLAG, (PinType *) b->Connection[0].ptr2);
 	      TransferNet (Netl, b, a);
 	      /* back up since new subnet is now at old index */
 	      n--;
@@ -487,9 +482,7 @@ GatherSubnets (NetListTypePtr Netl, bool NoWarn, bool AndRats)
       /* don't add non-manhattan lines, the auto-router can't route to them */
       ALLLINE_LOOP (PCB->Data);
       {
-	if (TEST_FLAG (DRCFLAG, line)
-	    && ((line->Point1.X == line->Point2.X)
-		|| (line->Point1.Y == line->Point2.Y)))
+	if (TEST_FLAG (DRCFLAG, line))
 	  {
 	    conn = GetConnectionMemory (a);
 	    conn->X = line->Point1.X;
@@ -559,16 +552,16 @@ GatherSubnets (NetListTypePtr Netl, bool NoWarn, bool AndRats)
  */
 
 static bool
-DrawShortestRats (NetListTypePtr Netl, void (*funcp) (register ConnectionTypePtr, register ConnectionTypePtr, register RouteStyleTypePtr))
+DrawShortestRats (NetListType *Netl, void (*funcp) (register ConnectionType *, register ConnectionType *, register RouteStyleType *))
 {
-  RatTypePtr line;
+  RatType *line;
   register float distance, temp;
-  register ConnectionTypePtr conn1, conn2, firstpoint, secondpoint;
-  PolygonTypePtr polygon;
+  register ConnectionType *conn1, *conn2, *firstpoint, *secondpoint;
+  PolygonType *polygon;
   bool changed = false;
   bool havepoints;
   Cardinal n, m, j;
-  NetTypePtr next, subnet, theSubnet = NULL;
+  NetType *next, *subnet, *theSubnet = NULL;
 
   /* This is just a sanity check, to make sure we're passed
    * *something*.
@@ -640,7 +633,7 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) (register ConnectionTypePtr
 		   * via in the Net to make that connection.
 		   */
 		  if (conn1->type == POLYGON_TYPE &&
-		      (polygon = (PolygonTypePtr)conn1->ptr2) &&
+		      (polygon = (PolygonType *)conn1->ptr2) &&
 		      !(distance == 0 &&
 		        firstpoint && firstpoint->type == VIA_TYPE) &&
 		      IsPointInPolygonIgnoreHoles (conn2->X, conn2->Y, polygon))
@@ -652,7 +645,7 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) (register ConnectionTypePtr
 		      havepoints = true;
 		    }
 		  else if (conn2->type == POLYGON_TYPE &&
-		      (polygon = (PolygonTypePtr)conn2->ptr2) &&
+		      (polygon = (PolygonType *)conn2->ptr2) &&
 		      !(distance == 0 &&
 		        firstpoint && firstpoint->type == VIA_TYPE) &&
 		      IsPointInPolygonIgnoreHoles (conn1->X, conn1->Y, polygon))
@@ -728,11 +721,11 @@ DrawShortestRats (NetListTypePtr Netl, void (*funcp) (register ConnectionTypePtr
  *  if SelectedOnly is true, it will only draw rats to selected pins and pads
  */
 bool
-AddAllRats (bool SelectedOnly, void (*funcp) (register ConnectionTypePtr, register ConnectionTypePtr, register RouteStyleTypePtr))
+AddAllRats (bool SelectedOnly, void (*funcp) (register ConnectionType *, register ConnectionType *, register RouteStyleType *))
 {
-  NetListTypePtr Nets, Wantlist;
-  NetTypePtr lonesome;
-  ConnectionTypePtr onepin;
+  NetListType *Nets, *Wantlist;
+  NetType *lonesome;
+  ConnectionType *onepin;
   bool changed, Warned = false;
 
   /* the netlist library has the text form
@@ -750,7 +743,7 @@ AddAllRats (bool SelectedOnly, void (*funcp) (register ConnectionTypePtr, regist
   /* initialize finding engine */
   InitConnectionLookup ();
   SaveFindFlag (DRCFLAG);
-  Nets = (NetListTypePtr)calloc (1, sizeof (NetListType));
+  Nets = (NetListType *)calloc (1, sizeof (NetListType));
   /* now we build another netlist (Nets) for each
    * net in Wantlist that shows how it actually looks now,
    * then fill in any missing connections with rat lines.
@@ -768,7 +761,7 @@ AddAllRats (bool SelectedOnly, void (*funcp) (register ConnectionTypePtr, regist
     CONNECTION_LOOP (net);
     {
       if (!SelectedOnly
-	  || TEST_FLAG (SELECTEDFLAG, (PinTypePtr) connection->ptr2))
+	  || TEST_FLAG (SELECTEDFLAG, (PinType *) connection->ptr2))
 	{
 	  lonesome = GetNetMemory (Nets);
 	  onepin = GetConnectionMemory (lonesome);
@@ -825,9 +818,9 @@ NetListListType
 CollectSubnets (bool SelectedOnly)
 {
   NetListListType result = { 0, 0, NULL };
-  NetListTypePtr Nets, Wantlist;
-  NetTypePtr lonesome;
-  ConnectionTypePtr onepin;
+  NetListType *Nets, *Wantlist;
+  NetType *lonesome;
+  ConnectionType *onepin;
 
   /* the netlist library has the text form
    * ProcNetlist fills in the Netlist
@@ -861,7 +854,7 @@ CollectSubnets (bool SelectedOnly)
     CONNECTION_LOOP (net);
     {
       if (!SelectedOnly
-	  || TEST_FLAG (SELECTEDFLAG, (PinTypePtr) connection->ptr2))
+	  || TEST_FLAG (SELECTEDFLAG, (PinType *) connection->ptr2))
 	{
 	  lonesome = GetNetMemory (Nets);
 	  onepin = GetConnectionMemory (lonesome);
@@ -902,7 +895,7 @@ rat_used (char *name)
   /* These next two functions moved from the original netlist.c as part of the
      |  gui code separation for the Gtk port.
    */
-RatTypePtr
+RatType *
 AddNet (void)
 {
   static int ratDrawn = 0;
@@ -911,8 +904,8 @@ AddNet (void)
   char ratname[20];
   int found;
   void *ptr1, *ptr2, *ptr3;
-  LibraryMenuTypePtr menu;
-  LibraryEntryTypePtr entry;
+  LibraryMenuType *menu;
+  LibraryEntryType *entry;
 
   if (Crosshair.AttachedLine.Point1.X == Crosshair.AttachedLine.Point2.X
       && Crosshair.AttachedLine.Point1.Y == Crosshair.AttachedLine.Point2.Y)
@@ -926,15 +919,15 @@ AddNet (void)
       Message (_("No pad/pin under rat line\n"));
       return (NULL);
     }
-  if (NAMEONPCB_NAME ((ElementTypePtr) ptr1) == NULL
-      || *NAMEONPCB_NAME ((ElementTypePtr) ptr1) == 0)
+  if (NAMEONPCB_NAME ((ElementType *) ptr1) == NULL
+      || *NAMEONPCB_NAME ((ElementType *) ptr1) == 0)
     {
       Message (_("You must name the starting element first\n"));
       return (NULL);
     }
 
   /* will work for pins to since the FLAG is common */
-  group1 = (TEST_FLAG (ONSOLDERFLAG, (PadTypePtr) ptr2) ?
+  group1 = (TEST_FLAG (ONSOLDERFLAG, (PadType *) ptr2) ?
 	    GetLayerGroupNumberByNumber (solder_silk_layer) :
 	    GetLayerGroupNumberByNumber (component_silk_layer));
   strcpy (name1, ConnectionName (found, ptr1, ptr2));
@@ -946,13 +939,13 @@ AddNet (void)
       Message (_("No pad/pin under rat line\n"));
       return (NULL);
     }
-  if (NAMEONPCB_NAME ((ElementTypePtr) ptr1) == NULL
-      || *NAMEONPCB_NAME ((ElementTypePtr) ptr1) == 0)
+  if (NAMEONPCB_NAME ((ElementType *) ptr1) == NULL
+      || *NAMEONPCB_NAME ((ElementType *) ptr1) == 0)
     {
       Message (_("You must name the ending element first\n"));
       return (NULL);
     }
-  group2 = (TEST_FLAG (ONSOLDERFLAG, (PadTypePtr) ptr2) ?
+  group2 = (TEST_FLAG (ONSOLDERFLAG, (PadType *) ptr2) ?
 	    GetLayerGroupNumberByNumber (solder_silk_layer) :
 	    GetLayerGroupNumberByNumber (component_silk_layer));
   name2 = ConnectionName (found, ptr1, ptr2);
@@ -1020,15 +1013,15 @@ ConnectionName (int type, void *ptr1, void *ptr2)
   switch (type)
     {
     case PIN_TYPE:
-      num = ((PinTypePtr) ptr2)->Number;
+      num = ((PinType *) ptr2)->Number;
       break;
     case PAD_TYPE:
-      num = ((PadTypePtr) ptr2)->Number;
+      num = ((PadType *) ptr2)->Number;
       break;
     default:
       return (NULL);
     }
-  strcpy (name, UNKNOWN (NAMEONPCB_NAME ((ElementTypePtr) ptr1)));
+  strcpy (name, UNKNOWN (NAMEONPCB_NAME ((ElementType *) ptr1)));
   strcat (name, "-");
   strcat (name, UNKNOWN (num));
   return (name);

@@ -71,12 +71,16 @@ button_name_to_num (const char *name)
     return 4;
   else if (strcasecmp (name, "down") == 0)
     return 5;
+  else if (strcasecmp (name, "scroll-left") == 0)
+    return 6;
+  else if (strcasecmp (name, "scroll-right") == 0)
+    return 7;
   else
     return atoi (name);
 }
 
 void
-load_mouse_resource (Resource *res)
+load_mouse_resource (const Resource *res)
 {
   int bi, mi, a;
   int action_count;

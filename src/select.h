@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for select routines
  */
 
-#ifndef	__SELECT_INCLUDED__
-#define	__SELECT_INCLUDED__
+#ifndef	PCB_SELECT_H
+#define	PCB_SELECT_H
 
 #include "global.h"
 
@@ -37,11 +36,10 @@
 	(VIA_TYPE | LINE_TYPE | TEXT_TYPE | POLYGON_TYPE | ELEMENT_TYPE |	\
 	 PIN_TYPE | PAD_TYPE | ELEMENTNAME_TYPE | RATLINE_TYPE | ARC_TYPE)
 
-void SelectPin (LibraryEntryTypePtr entry, bool toggle);
 bool SelectObject (void);
-bool SelectBlock (BoxTypePtr, bool);
-bool SelectedOperation (ObjectFunctionTypePtr, bool, int);
-void *ObjectOperation (ObjectFunctionTypePtr, int, void *, void *, void *);
+bool SelectBlock (BoxType *, bool);
+bool SelectedOperation (ObjectFunctionType *, bool, int);
+void *ObjectOperation (ObjectFunctionType *, int, void *, void *, void *);
 bool SelectConnection (bool);
 
 #if defined(HAVE_REGCOMP) || defined(HAVE_RE_COMP)

@@ -23,14 +23,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for inserting points into objects
  */
 
-#ifndef	__LINE_INCLUDED__
-#define	__LINE_INCLUDED__
+#ifndef	PCB_LINE_H
+#define	PCB_LINE_H
 
 #include "global.h"
 
@@ -38,7 +37,7 @@
  * prototypes
  */
 void AdjustAttachedLine (void);
-void AdjustTwoLine (int);
-void FortyFiveLine (AttachedLineTypePtr);
+void AdjustTwoLine (bool);
+void FortyFiveLine (AttachedLineType *);
 void EnforceLineDRC (void);
 #endif

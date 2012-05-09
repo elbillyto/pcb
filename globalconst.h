@@ -22,7 +22,6 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* global constants
@@ -33,7 +32,15 @@
 #ifndef	__GLOBALCONST_INCLUDED__
 #define	__GLOBALCONST_INCLUDED__
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <limits.h>
+
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#endif
 
 /* ---------------------------------------------------------------------------
  * some file-, directory- and environment names
@@ -54,13 +61,13 @@
 /* ---------------------------------------------------------------------------
  * frame between the groundplane and the copper
  */
-#define	GROUNDPLANEFRAME	15	/* unit == mil */
-#define MASKFRAME               3       /* unit == mil */
+#define	GROUNDPLANEFRAME	MIL_TO_COORD(15)
+#define MASKFRAME               MIL_TO_COORD(3)
 
 /* ---------------------------------------------------------------------------
  * some limit specifications
  */
-#define LARGE_VALUE		10000000 /* maximum extent of board and elements */
+#define LARGE_VALUE		(COORD_MAX / 2 - 1) /* maximum extent of board and elements */
  
 #define	MAX_LAYER		16	/* max number of layer, check source */
 					/* code for more changes, a *lot* more changes */
@@ -115,6 +122,8 @@
 						/* line points */
 #define	MAX_POLYGON_POINT_DISTANCE	0	/* maximum distance when searching */
 						/* polygon points */
+#define	MAX_ARC_POINT_DISTANCE		0	/* maximum distance when searching */
+						/* arc points */
 #define	MAX_ELEMENTNAMES		3	/* number of supported names of */
 						/* an element */
 #define	MAX_LIBRARY_LINE_LENGTH		255	/* maximum line length in the */
@@ -125,6 +134,8 @@
 #define	MIN_GRID_DISTANCE		4	/* minimum distance between point */
 						/* to enable grid drawing */
 	/* size of diamond element mark */
-#define EMARK_SIZE	1000
-#define GBX_MAXAPERTURECOUNT	2560
+#define EMARK_SIZE	MIL_TO_COORD (10)
+
+/* (Approximate) capheight size of the default PCB font */
+#define FONT_CAPHEIGHT  MIL_TO_COORD (45)
 #endif

@@ -1,7 +1,4 @@
 #!/bin/sh
-#
-# $Id$
-#
 
 # This script is used to extract all elements from an "oldlib" (M4)
 # style library and place them in individual "newlib" style files.
@@ -194,8 +191,16 @@ first == 1 {
 	line=$0;
 	split(line, a, "[:]");
 
-	# pick out the name of the footprint
+	template = a[1];
+	package = a[2];
 	comp = a[3];
+	comment = a[4];
+
+	# pick out the name of the footprint
+	match (comment, /(.*)\[(.*)\]/, fp);
+	comp = fp[2];
+	comment = a[3] ", " fp[1];
+
 	txtcomp = comp;
 	urlcomp = comp;
 
@@ -203,7 +208,6 @@ first == 1 {
 	gsub(/ /, "%20", urlcomp);
 	gsub(/ /, "\\ ", comp);
 
-	comment = a[4];
 
 	# extract the footprint
 	# path library template value package

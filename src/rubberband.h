@@ -22,14 +22,13 @@
  *  Thomas Nau, Schlehenweg 15, 88471 Baustetten, Germany
  *  Thomas.Nau@rz.uni-ulm.de
  *
- *  RCS: $Id$
  */
 
 /* prototypes for rubberband routines
  */
 
-#ifndef	__RUBBERBAND_INCLUDED__
-#define	__RUBBERBAND_INCLUDED__
+#ifndef	PCB_RUBBERBAND_H
+#define	PCB_RUBBERBAND_H
 
 #include "global.h"
 
